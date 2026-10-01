@@ -204,3 +204,38 @@ CREATE TABLE IF NOT EXISTS sync_state (
   value TEXT NOT NULL
 );
 
+-- Session Metrics & Adaptive Learning Ledger
+CREATE TABLE IF NOT EXISTS agent_sessions (
+  id TEXT PRIMARY KEY,
+  collection_id TEXT NOT NULL REFERENCES collections(id),
+  profile_id TEXT NOT NULL REFERENCES profiles(id),
+  agent_id TEXT NOT NULL,
+  grant_id TEXT,
+  started_at TEXT NOT NULL,
+  ended_at TEXT,
+  total_tool_calls INTEGER NOT NULL DEFAULT 0,
+  total_edits INTEGER NOT NULL DEFAULT 0,
+  total_diff_lines INTEGER NOT NULL DEFAULT 0,
+  risks_cited INTEGER NOT NULL DEFAULT 0,
+  risks_prevented INTEGER NOT NULL DEFAULT 0,
+  review_loops INTEGER NOT NULL DEFAULT 0,
+  first_pass_clean INTEGER NOT NULL DEFAULT 1,
+  status TEXT NOT NULL DEFAULT 'active'
+);
+
+CREATE INDEX IF NOT EXISTS agent_sessions_collection ON agent_sessions(collection_id, started_at DESC);
+
+CREATE TABLE IF NOT EXISTS session_events (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  session_id TEXT NOT NULL REFERENCES agent_sessions(id),
+  timestamp TEXT NOT NULL,
+  event_kind TEXT NOT NULL,
+  target_path TEXT NOT NULL DEFAULT '',
+  query_or_tool TEXT NOT NULL DEFAULT '',
+  detail_json TEXT NOT NULL DEFAULT '{}'
+);
+
+CREATE INDEX IF NOT EXISTS session_events_session ON session_events(session_id, id ASC);
+CREATE INDEX IF NOT EXISTS session_events_kind ON session_events(event_kind, timestamp DESC);
+
+

@@ -3,7 +3,7 @@ use std::fs::OpenOptions;
 use std::path::Path;
 
 const SCHEMA_SQL: &str = include_str!("schema.sql");
-pub const CURRENT_SCHEMA_VERSION: i32 = 4;
+pub const CURRENT_SCHEMA_VERSION: i32 = 5;
 
 pub struct Database {
     conn: Connection,
@@ -112,6 +112,7 @@ impl Database {
     }
 
     fn ensure_identities(&self, collection_id: &str, profile_id: &str) -> Result<()> {
+        self.conn.execute_batch(SCHEMA_SQL)?;
         self.conn.execute(
             "INSERT INTO collections (id) VALUES (?1) ON CONFLICT(id) DO NOTHING;",
             [collection_id],

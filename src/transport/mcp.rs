@@ -1,4 +1,4 @@
-use crate::core::{DecisionWorkflow, GrantStore, RiskWorkflow};
+use crate::core::{DecisionWorkflow, GrantStore, RiskWorkflow, SessionManager};
 use crate::domain::BrowseOptions;
 use crate::storage::Queries;
 use rusqlite::Connection;
@@ -46,6 +46,16 @@ impl McpServer {
         let mut stdout = std::io::stdout();
         let reader = std::io::BufReader::new(stdin.lock());
 
+        // Initialize active session for this stdio server connection
+        let active_session = SessionManager::start_session(
+            conn,
+            collection_id,
+            profile_id,
+            "mcp_agent",
+            None,
+        ).ok();
+        let active_session_id = active_session.as_ref().map(|s| s.id.as_str());
+
         for line in reader.lines() {
             let line = line?;
             if line.trim().is_empty() {
@@ -53,7 +63,7 @@ impl McpServer {
             }
 
             if let Ok(req) = serde_json::from_str::<JsonRpcRequest>(&line) {
-                if let Some(resp) = Self::handle_request(root, conn, collection_id, profile_id, req) {
+                if let Some(resp) = Self::handle_request_with_session(root, conn, collection_id, profile_id, active_session_id, req) {
                     let mut out = serde_json::to_string(&resp).map_err(|e| {
                         std::io::Error::new(std::io::ErrorKind::InvalidData, e)
                     })?;
@@ -62,6 +72,10 @@ impl McpServer {
                     stdout.flush()?;
                 }
             }
+        }
+
+        if let Some(ref sess) = active_session {
+            let _ = SessionManager::end_session(conn, &sess.id, "completed");
         }
 
         Ok(())
@@ -73,6 +87,17 @@ impl McpServer {
         conn: &Connection,
         collection_id: &str,
         profile_id: &str,
+        req: JsonRpcRequest,
+    ) -> Option<JsonRpcResponse> {
+        Self::handle_request_with_session(root, conn, collection_id, profile_id, None, req)
+    }
+
+    pub fn handle_request_with_session<P: AsRef<Path>>(
+        root: P,
+        conn: &Connection,
+        collection_id: &str,
+        profile_id: &str,
+        session_id: Option<&str>,
         req: JsonRpcRequest,
     ) -> Option<JsonRpcResponse> {
         let root = root.as_ref();
@@ -116,7 +141,7 @@ impl McpServer {
             }),
 
             "tools/call" => {
-                let result = Self::handle_tool_call(root, conn, collection_id, profile_id, req.params);
+                let result = Self::handle_tool_call(root, conn, collection_id, profile_id, session_id, req.params);
                 match result {
                     Ok(val) => Some(JsonRpcResponse {
                         jsonrpc: "2.0",
@@ -363,7 +388,70 @@ impl McpServer {
                     "required": ["risk_id", "rationale", "grant_id"]
                 }
             }),
+            json!({
+                "name": "get_session_briefing",
+                "description": "Zero-ceremony warm-start context briefing. Returns active invariants (ADRs), high-priority risks, recent churn hotspots, friction warnings, and knowledge debt in 1 single shot.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "grant_scope": {
+                            "type": "string",
+                            "description": "Optional active authority grant scope pattern (e.g. 'src/**')"
+                        }
+                    }
+                }
+            }),
+            json!({
+                "name": "get_session_scorecard",
+                "description": "Returns session efficiency and effectiveness metrics, including tool-to-edit ratio, review loop oscillations, and knowledge gaps.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "session_id": {
+                            "type": "string",
+                            "description": "Optional session ID. If omitted, returns metrics for the current active session."
+                        }
+                    }
+                }
+            }),
+            json!({
+                "name": "record_session_metric",
+                "description": "Record a file edit event or review oscillation in the session ledger to monitor coding velocity and detect review loops.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "path": {
+                            "type": "string",
+                            "description": "Root-relative path to the edited file"
+                        },
+                        "diff_lines": {
+                            "type": "integer",
+                            "description": "Number of lines changed in this edit (default: 0)"
+                        }
+                    },
+                    "required": ["path"]
+                }
+            }),
         ]
+    }
+
+    fn ensure_session_id(
+        conn: &Connection,
+        collection_id: &str,
+        profile_id: &str,
+        session_id: Option<&str>,
+    ) -> Option<String> {
+        if let Some(id) = session_id {
+            return Some(id.to_string());
+        }
+        if let Ok(sessions) = Queries::list_sessions(conn, collection_id, 5) {
+            if let Some(active) = sessions.into_iter().find(|s| s.status == "active") {
+                return Some(active.id);
+            }
+        }
+        SessionManager::start_session(conn, collection_id, profile_id, "agent_mcp", None)
+            .map(|s| s.id)
+            .ok()
     }
 
     fn handle_tool_call(
@@ -371,6 +459,7 @@ impl McpServer {
         conn: &Connection,
         collection_id: &str,
         profile_id: &str,
+        session_id: Option<&str>,
         params: Option<Value>,
     ) -> Result<Value, String> {
         let params = params.ok_or_else(|| "Missing params for tools/call".to_string())?;
@@ -379,6 +468,7 @@ impl McpServer {
             .and_then(|v| v.as_str())
             .ok_or_else(|| "Missing tool name in tools/call".to_string())?;
         let args = params.get("arguments").cloned().unwrap_or(json!({}));
+        let current_sess_id = Self::ensure_session_id(conn, collection_id, profile_id, session_id);
 
         match tool_name {
             "check_work" => {
@@ -401,6 +491,16 @@ impl McpServer {
 
                 let check = Queries::check_work(conn, collection_id, &files, version, env)
                     .map_err(|e| format!("Failed to check work: {}", e))?;
+
+                if let Some(ref sess_id) = current_sess_id {
+                    let first_file = files.first().map(|s| s.as_str()).unwrap_or("");
+                    let _ = SessionManager::record_tool_call(conn, sess_id, "check_work", first_file, "{}");
+                    for m in &check.matches {
+                        if !m.suppressed {
+                            let _ = SessionManager::record_risk_cited(conn, sess_id, first_file, &m.document.title);
+                        }
+                    }
+                }
 
                 let serialized = serde_json::to_string_pretty(&check)
                     .map_err(|e| format!("Serialization error: {}", e))?;
@@ -438,6 +538,11 @@ impl McpServer {
                 )
                 .map_err(|e| format!("Failed to search: {}", e))?;
 
+                if let Some(ref sess_id) = current_sess_id {
+                    let _ = SessionManager::record_tool_call(conn, sess_id, "search", "", query);
+                    let _ = SessionManager::record_search(conn, sess_id, query, hits.len());
+                }
+
                 let serialized = serde_json::to_string_pretty(&hits)
                     .map_err(|e| format!("Serialization error: {}", e))?;
 
@@ -455,6 +560,10 @@ impl McpServer {
             "browse" => {
                 let category = args.get("category").and_then(|v| v.as_str()).unwrap_or("all").to_string();
                 let topic = args.get("topic").and_then(|v| v.as_str()).map(String::from);
+
+                if let Some(ref sess_id) = current_sess_id {
+                    let _ = SessionManager::record_tool_call(conn, sess_id, "browse", "", &category);
+                }
 
                 let opts = BrowseOptions {
                     category,
@@ -490,6 +599,10 @@ impl McpServer {
                     .get("id")
                     .and_then(|v| v.as_str())
                     .ok_or_else(|| "Missing required argument 'id' for get_document".to_string())?;
+
+                if let Some(ref sess_id) = current_sess_id {
+                    let _ = SessionManager::record_tool_call(conn, sess_id, "get_document", doc_id, "{}");
+                }
 
                 let doc = Queries::get_document(conn, doc_id)
                     .map_err(|e| format!("Failed to get document: {}", e))?;
@@ -530,6 +643,10 @@ impl McpServer {
                     .and_then(|v| v.as_str())
                     .ok_or_else(|| "Missing required argument 'content' for remember".to_string())?;
 
+                if let Some(ref sess_id) = current_sess_id {
+                    let _ = SessionManager::record_tool_call(conn, sess_id, "remember", "", title);
+                }
+
                 let new_id = uuid::Uuid::now_v7().to_string();
                 Queries::remember(conn, &new_id, profile_id, title, content, "note")
                     .map_err(|e| format!("Failed to save memory: {}", e))?;
@@ -563,6 +680,10 @@ impl McpServer {
                     .get("grant_id")
                     .and_then(|v| v.as_str())
                     .and_then(|s| uuid::Uuid::parse_str(s).ok());
+
+                if let Some(ref sess_id) = current_sess_id {
+                    let _ = SessionManager::record_tool_call(conn, sess_id, "draft_decision", "", title);
+                }
 
                 let actor = GrantStore::resolve_actor(root, Some(author), grant_id, Some(author))
                     .map_err(|e| format!("Failed to resolve actor: {}", e))?;
@@ -619,6 +740,10 @@ impl McpServer {
                     .map_err(|_| "Invalid grant_id UUID format".to_string())?;
                 let agent_id = args.get("agent_id").and_then(|v| v.as_str()).unwrap_or("agent");
                 let supersedes = args.get("supersedes").and_then(|v| v.as_str());
+
+                if let Some(ref sess_id) = current_sess_id {
+                    let _ = SessionManager::record_tool_call(conn, sess_id, "accept_decision", path, "");
+                }
 
                 let actor = GrantStore::resolve_actor(root, Some(agent_id), Some(grant_id), None)?;
 
@@ -694,6 +819,11 @@ impl McpServer {
                     return Err("Missing required argument 'paths' (must be non-empty array) for draft_risk".to_string());
                 }
 
+                if let Some(ref sess_id) = current_sess_id {
+                    let target_path = paths.first().map(|s| s.as_str()).unwrap_or("");
+                    let _ = SessionManager::record_tool_call(conn, sess_id, "draft_risk", target_path, title);
+                }
+
                 let versions: Vec<String> = args
                     .get("versions")
                     .and_then(|v| v.as_array())
@@ -756,7 +886,7 @@ impl McpServer {
                         "content": [
                             {
                                 "type": "text",
-                                "text": format!("Refused risk draft: {}", err)
+                                "text": format!("Refused draft risk: {}", err)
                             }
                         ],
                         "isError": true
@@ -780,6 +910,11 @@ impl McpServer {
                 let grant_id = uuid::Uuid::parse_str(grant_id_str)
                     .map_err(|_| "Invalid grant_id UUID format".to_string())?;
                 let agent_id = args.get("agent_id").and_then(|v| v.as_str()).unwrap_or("agent");
+
+                if let Some(ref sess_id) = current_sess_id {
+                    let _ = SessionManager::record_tool_call(conn, sess_id, "acknowledge_risk", risk_id, rationale);
+                    let _ = SessionManager::record_risk_prevented(conn, sess_id, risk_id, rationale);
+                }
 
                 let actor = GrantStore::resolve_actor(root, Some(agent_id), Some(grant_id), None)?;
 
@@ -813,6 +948,89 @@ impl McpServer {
                         "isError": true
                     })),
                 }
+            }
+
+            "get_session_briefing" => {
+                let grant_scope = args.get("grant_scope").and_then(|v| v.as_str());
+                let briefing = SessionManager::generate_briefing(conn, collection_id, grant_scope)
+                    .map_err(|e| format!("Failed to generate briefing: {}", e))?;
+
+                if let Some(ref sess_id) = current_sess_id {
+                    let _ = SessionManager::record_tool_call(conn, sess_id, "get_session_briefing", "", "{}");
+                }
+
+                let serialized = serde_json::to_string_pretty(&briefing)
+                    .map_err(|e| format!("Serialization error: {}", e))?;
+
+                Ok(json!({
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": serialized
+                        }
+                    ],
+                    "isError": false
+                }))
+            }
+
+            "get_session_scorecard" => {
+                let target_id = args
+                    .get("session_id")
+                    .and_then(|v| v.as_str())
+                    .or(current_sess_id.as_deref())
+                    .ok_or_else(|| "No active session ID found".to_string())?;
+
+                let scorecard = SessionManager::compute_scorecard(conn, target_id)
+                    .map_err(|e| format!("Failed to compute scorecard: {}", e))?;
+
+                let serialized = serde_json::to_string_pretty(&scorecard)
+                    .map_err(|e| format!("Serialization error: {}", e))?;
+
+                Ok(json!({
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": serialized
+                        }
+                    ],
+                    "isError": false
+                }))
+            }
+
+            "record_session_metric" => {
+                let path = args
+                    .get("path")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| "Missing required argument 'path' for record_session_metric".to_string())?;
+
+                let diff_lines = args
+                    .get("diff_lines")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0) as u32;
+
+                let sess_id = current_sess_id
+                    .as_deref()
+                    .ok_or_else(|| "No active session available to record metrics".to_string())?;
+
+                let is_loop = SessionManager::record_file_edit(conn, sess_id, path, diff_lines)
+                    .map_err(|e| format!("Failed to record file edit: {}", e))?;
+
+                let resp_payload = serde_json::json!({
+                    "session_id": sess_id,
+                    "path": path,
+                    "diff_lines": diff_lines,
+                    "review_oscillation_detected": is_loop
+                });
+
+                Ok(json!({
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": serde_json::to_string_pretty(&resp_payload).unwrap_or_default()
+                        }
+                    ],
+                    "isError": false
+                }))
             }
 
             _ => Err(format!("Unknown tool '{}'", tool_name)),
@@ -1043,5 +1261,68 @@ mod tests {
         assert_eq!(ack_json["status"], "acknowledged");
         assert_eq!(ack_json["owner"], "wiqar"); // Human principal is owner!
         assert_eq!(ack_json["delegated_agent"], "opencode");
+    }
+
+    #[test]
+    fn test_mcp_session_briefing_scorecard_and_metric() {
+        let temp_dir = std::env::temp_dir().join(format!("hyperkb-mcp-sess-{}", uuid::Uuid::now_v7()));
+        let _ = std::fs::create_dir_all(&temp_dir);
+        let db = Database::open_in_memory("coll_test", "prof_test").unwrap();
+
+        // 1. Request briefing
+        let brief_req = JsonRpcRequest {
+            jsonrpc: "2.0".into(),
+            id: Some(json!(9)),
+            method: "tools/call".into(),
+            params: Some(json!({
+                "name": "get_session_briefing",
+                "arguments": {
+                    "grant_scope": "src/**"
+                }
+            })),
+        };
+        let brief_resp = McpServer::handle_request(&temp_dir, db.conn(), "coll_test", "prof_test", brief_req).unwrap();
+        let brief_text = brief_resp.result.unwrap()["content"][0]["text"].as_str().unwrap().to_string();
+        assert!(brief_text.contains("HyperKB Session Briefing"));
+        assert!(brief_text.contains("src/**"));
+
+        // 2. Record edits to src/db.rs (3 times to trigger oscillation detection)
+        for i in 1..=3 {
+            let metric_req = JsonRpcRequest {
+                jsonrpc: "2.0".into(),
+                id: Some(json!(10 + i)),
+                method: "tools/call".into(),
+                params: Some(json!({
+                    "name": "record_session_metric",
+                    "arguments": {
+                        "path": "src/db.rs",
+                        "diff_lines": 20
+                    }
+                })),
+            };
+            let metric_resp = McpServer::handle_request(&temp_dir, db.conn(), "coll_test", "prof_test", metric_req).unwrap();
+            let metric_json: Value = serde_json::from_str(metric_resp.result.unwrap()["content"][0]["text"].as_str().unwrap()).unwrap();
+            if i == 3 {
+                assert_eq!(metric_json["review_oscillation_detected"], true);
+            } else {
+                assert_eq!(metric_json["review_oscillation_detected"], false);
+            }
+        }
+
+        // 3. Request scorecard
+        let scorecard_req = JsonRpcRequest {
+            jsonrpc: "2.0".into(),
+            id: Some(json!(20)),
+            method: "tools/call".into(),
+            params: Some(json!({
+                "name": "get_session_scorecard",
+                "arguments": {}
+            })),
+        };
+        let scorecard_resp = McpServer::handle_request(&temp_dir, db.conn(), "coll_test", "prof_test", scorecard_req).unwrap();
+        let scorecard_json: Value = serde_json::from_str(scorecard_resp.result.unwrap()["content"][0]["text"].as_str().unwrap()).unwrap();
+        assert_eq!(scorecard_json["review_loops_detected"], 1);
+        let hotspots = scorecard_json["friction_hotspots"].as_array().unwrap();
+        assert_eq!(hotspots[0].as_str().unwrap(), "src/db.rs");
     }
 }

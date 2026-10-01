@@ -2,6 +2,7 @@ use chrono::Utc;
 use clap::{Parser, Subcommand};
 use hyperkb_rs::core::{
     Archeology, DecisionWorkflow, Git, GrantStore, MaintenanceManager, RiskWorkflow, Scanner,
+    SessionManager,
 };
 use hyperkb_rs::domain::{ActionKind, Actor, BrowseOptions, GrantConstraints, RepoManifest};
 use hyperkb_rs::storage::{Database, Queries};
@@ -162,6 +163,40 @@ enum Commands {
         /// Responsible human owner
         #[arg(short, long, default_value = "Developer")]
         owner: String,
+    },
+    /// Get the warm-start context briefing (invariants, risks, churn hotspots, friction warnings)
+    Brief {
+        /// Optional active authority grant scope pattern
+        #[arg(short, long)]
+        scope: Option<String>,
+    },
+    /// View session effectiveness metrics, coding velocity, and review loop oscillations
+    Metrics {
+        /// Optional specific session ID (defaults to latest session)
+        #[arg(short, long)]
+        session_id: Option<String>,
+        /// Output metrics as JSON
+        #[arg(long)]
+        json: bool,
+    },
+    /// Inspect or list agent session records
+    Session {
+        #[command(subcommand)]
+        command: SessionCommands,
+    },
+}
+
+#[derive(Subcommand)]
+enum SessionCommands {
+    /// List recent agent sessions
+    List {
+        #[arg(short, long, default_value_t = 10)]
+        limit: usize,
+    },
+    /// Show details, events, and scorecard for a specific session
+    Show {
+        /// Session ID (e.g. sess_01...)
+        id: String,
     },
 }
 
@@ -636,6 +671,93 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     println!("✓ AuthorityGrant '{}' revoked and removed.", uid);
                 } else {
                     println!("Grant '{}' not found.", uid);
+                }
+            }
+        },
+        Some(Commands::Brief { scope }) => {
+            let briefing = SessionManager::generate_briefing(db.conn(), collection_id, scope.as_deref())
+                .map_err(|e| format!("Failed to generate briefing: {}", e))?;
+            println!("{}", briefing.formatted_markdown);
+        }
+        Some(Commands::Metrics { session_id, json }) => {
+            let target_id = match session_id {
+                Some(id) => id,
+                None => {
+                    let sessions = Queries::list_sessions(db.conn(), collection_id, 1)?;
+                    sessions
+                        .into_iter()
+                        .next()
+                        .map(|s| s.id)
+                        .ok_or_else(|| "No agent sessions recorded yet in this repository.".to_string())?
+                }
+            };
+            let scorecard = SessionManager::compute_scorecard(db.conn(), &target_id)
+                .map_err(|e| format!("Failed to compute scorecard: {}", e))?;
+
+            if json {
+                println!("{}", serde_json::to_string_pretty(&scorecard)?);
+            } else {
+                println!("=== HyperKB Session Scorecard ===");
+                println!("Session ID:              {}", scorecard.session_id);
+                println!("Duration:                {}s", scorecard.duration_seconds);
+                println!("Tool-to-Edit Ratio:      {:.1} (Healthy: 2.0 - 4.0)", scorecard.tool_to_edit_ratio);
+                println!("Coding Effectiveness:    {:.0}%", scorecard.coding_effectiveness * 100.0);
+                println!("Knowledge Hit Rate:      {:.0}%", scorecard.knowledge_hit_rate * 100.0);
+                println!("Review Loops Detected:   {}", scorecard.review_loops_detected);
+                println!("Risks Handled/Prevented: {}", scorecard.risks_handled);
+                if !scorecard.friction_hotspots.is_empty() {
+                    println!("\nFriction Hotspots (Churn Re-edits):");
+                    for path in &scorecard.friction_hotspots {
+                        println!("  ⚠️  {}", path);
+                    }
+                }
+                if !scorecard.zero_hit_queries.is_empty() {
+                    println!("\nKnowledge Debt (Zero-Hit Search Queries):");
+                    for q in &scorecard.zero_hit_queries {
+                        println!("  ❓  \"{}\"", q);
+                    }
+                }
+            }
+        }
+        Some(Commands::Session { command }) => match command {
+            SessionCommands::List { limit } => {
+                let sessions = Queries::list_sessions(db.conn(), collection_id, limit)?;
+                if sessions.is_empty() {
+                    println!("No agent sessions recorded yet in collection '{}'.", collection_id);
+                } else {
+                    println!("Recent Agent Sessions ({}) for collection '{}':", sessions.len(), collection_id);
+                    for s in sessions {
+                        println!(
+                            "• {} | Agent: {:<12} | Status: {:<9} | Started: {}",
+                            s.id, s.agent_id, s.status, s.started_at
+                        );
+                        println!(
+                            "    Tools: {:<3} | Edits: {:<3} | Diff Lines: {:<4} | Loops: {}",
+                            s.total_tool_calls, s.total_edits, s.total_diff_lines, s.review_loops
+                        );
+                    }
+                }
+            }
+            SessionCommands::Show { id } => {
+                let session = Queries::get_session(db.conn(), &id)?
+                    .ok_or_else(|| format!("Session '{}' not found", id))?;
+                let events = Queries::get_session_events(db.conn(), &id)?;
+                let scorecard = SessionManager::compute_scorecard(db.conn(), &id)
+                    .map_err(|e| format!("Failed to compute scorecard: {}", e))?;
+
+                println!("Session ID:    {}", session.id);
+                println!("Agent:         {}", session.agent_id);
+                println!("Status:        {}", session.status);
+                println!("Started:       {}", session.started_at);
+                if let Some(ended) = session.ended_at {
+                    println!("Ended:         {}", ended);
+                }
+                println!("Effectiveness: {:.0}%", scorecard.coding_effectiveness * 100.0);
+                println!("Tool Ratio:    {:.1}", scorecard.tool_to_edit_ratio);
+                println!("Review Loops:  {}", scorecard.review_loops_detected);
+                println!("\nEvent Log ({} events):", events.len());
+                for ev in events {
+                    println!("  [{}] {:<18} path='{}' query/tool='{}'", ev.timestamp, ev.event_kind, ev.target_path, ev.query_or_tool);
                 }
             }
         },
