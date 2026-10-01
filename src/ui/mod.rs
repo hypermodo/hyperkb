@@ -22,7 +22,7 @@ use std::io::{self, Write};
 use std::panic;
 use std::path::Path;
 use std::time::Duration;
-use views::{DirectivesView, ExploreView, HelpModal, ReaderView, SessionsView, SettingsView, WorkView};
+use views::{ActionPaletteModal, DirectivesView, ExploreView, HelpModal, IssueGrantModal, NewDirectiveModal, ReaderView, SessionsView, SettingsView, WorkView};
 use crate::storage::Database;
 
 pub fn run(root: &Path, db: &Database, collection_id: &str, profile_id: &str) -> io::Result<()> {
@@ -105,7 +105,13 @@ fn run_loop(
 
             Footer::render(frame, app, chunks[2]);
 
-            if app.show_help {
+            if app.show_action_palette {
+                ActionPaletteModal::render(frame, app, area);
+            } else if app.show_new_directive_modal {
+                NewDirectiveModal::render(frame, app, area);
+            } else if app.show_issue_grant_modal {
+                IssueGrantModal::render(frame, app, area);
+            } else if app.show_help {
                 HelpModal::render(frame, app, area);
             }
 
@@ -170,7 +176,164 @@ fn run_loop(
                         app.status_message = None;
                     }
 
-                    if app.show_help {
+                    if app.show_action_palette {
+                        match key.code {
+                            KeyCode::Esc => {
+                                app.show_action_palette = false;
+                            }
+                            KeyCode::Down | KeyCode::Char('j') => {
+                                let actions = app.filtered_actions();
+                                if !actions.is_empty() {
+                                    app.action_palette_selected_idx = (app.action_palette_selected_idx + 1) % actions.len();
+                                }
+                            }
+                            KeyCode::Up | KeyCode::Char('k') => {
+                                let actions = app.filtered_actions();
+                                if !actions.is_empty() {
+                                    if app.action_palette_selected_idx == 0 {
+                                        app.action_palette_selected_idx = actions.len() - 1;
+                                    } else {
+                                        app.action_palette_selected_idx -= 1;
+                                    }
+                                }
+                            }
+                            KeyCode::Enter => {
+                                let actions = app.filtered_actions();
+                                if let Some(item) = actions.get(app.action_palette_selected_idx) {
+                                    let id = item.id;
+                                    match app.execute_action_palette_item(id, db) {
+                                        Ok(msg) => app.status_message = Some(msg),
+                                        Err(err) => app.status_message = Some(format!("Error: {}", err)),
+                                    }
+                                }
+                            }
+                            KeyCode::Backspace => {
+                                app.action_palette_query.pop();
+                                app.action_palette_selected_idx = 0;
+                            }
+                            KeyCode::Char(c) => {
+                                app.action_palette_query.push(c);
+                                app.action_palette_selected_idx = 0;
+                            }
+                            _ => {}
+                        }
+                    } else if app.show_new_directive_modal {
+                        match key.code {
+                            KeyCode::Esc => {
+                                app.show_new_directive_modal = false;
+                            }
+                            KeyCode::Tab => {
+                                app.new_directive_field = (app.new_directive_field + 1) % 5;
+                            }
+                            KeyCode::BackTab => {
+                                if app.new_directive_field == 0 {
+                                    app.new_directive_field = 4;
+                                } else {
+                                    app.new_directive_field -= 1;
+                                }
+                            }
+                            KeyCode::Char(' ') => {
+                                if app.new_directive_field == 1 {
+                                    app.new_directive_category_idx = (app.new_directive_category_idx + 1) % 4;
+                                } else if app.new_directive_field == 3 {
+                                    app.new_directive_enforcement_idx = (app.new_directive_enforcement_idx + 1) % 2;
+                                } else if app.new_directive_field == 0 {
+                                    app.new_directive_title.push(' ');
+                                } else if app.new_directive_field == 2 {
+                                    app.new_directive_scope.push(' ');
+                                } else if app.new_directive_field == 4 {
+                                    app.new_directive_rule.push(' ');
+                                }
+                            }
+                            KeyCode::Backspace => {
+                                if app.new_directive_field == 0 {
+                                    app.new_directive_title.pop();
+                                } else if app.new_directive_field == 2 {
+                                    app.new_directive_scope.pop();
+                                } else if app.new_directive_field == 4 {
+                                    app.new_directive_rule.pop();
+                                }
+                            }
+                            KeyCode::Enter => {
+                                match app.draft_new_directive(db) {
+                                    Ok(msg) => app.status_message = Some(msg),
+                                    Err(err) => app.status_message = Some(format!("Error: {}", err)),
+                                }
+                            }
+                            KeyCode::Char(c) => {
+                                if app.new_directive_field == 0 {
+                                    app.new_directive_title.push(c);
+                                } else if app.new_directive_field == 1 {
+                                    app.new_directive_category_idx = (app.new_directive_category_idx + 1) % 4;
+                                } else if app.new_directive_field == 2 {
+                                    app.new_directive_scope.push(c);
+                                } else if app.new_directive_field == 3 {
+                                    app.new_directive_enforcement_idx = (app.new_directive_enforcement_idx + 1) % 2;
+                                } else if app.new_directive_field == 4 {
+                                    app.new_directive_rule.push(c);
+                                }
+                            }
+                            _ => {}
+                        }
+                    } else if app.show_issue_grant_modal {
+                        match key.code {
+                            KeyCode::Esc => {
+                                app.show_issue_grant_modal = false;
+                            }
+                            KeyCode::Tab => {
+                                app.new_grant_field = (app.new_grant_field + 1) % 3;
+                            }
+                            KeyCode::BackTab => {
+                                if app.new_grant_field == 0 {
+                                    app.new_grant_field = 2;
+                                } else {
+                                    app.new_grant_field -= 1;
+                                }
+                            }
+                            KeyCode::Char(' ') => {
+                                if app.new_grant_field == 1 {
+                                    app.new_grant_preset_idx = (app.new_grant_preset_idx + 1) % views::IssueGrantModal::PRESETS.len();
+                                } else if app.new_grant_field == 2 {
+                                    app.new_grant_ttl_hours = match app.new_grant_ttl_hours {
+                                        0 => 1,
+                                        1 => 4,
+                                        4 => 8,
+                                        8 => 24,
+                                        _ => 0,
+                                    };
+                                } else if app.new_grant_field == 0 {
+                                    app.new_grant_grantee.push(' ');
+                                }
+                            }
+                            KeyCode::Backspace => {
+                                if app.new_grant_field == 0 {
+                                    app.new_grant_grantee.pop();
+                                }
+                            }
+                            KeyCode::Enter => {
+                                match app.issue_new_grant() {
+                                    Ok(msg) => app.status_message = Some(msg),
+                                    Err(err) => app.status_message = Some(format!("Error: {}", err)),
+                                }
+                            }
+                            KeyCode::Char(c) => {
+                                if app.new_grant_field == 0 {
+                                    app.new_grant_grantee.push(c);
+                                } else if app.new_grant_field == 1 {
+                                    app.new_grant_preset_idx = (app.new_grant_preset_idx + 1) % views::IssueGrantModal::PRESETS.len();
+                                } else if app.new_grant_field == 2 {
+                                    app.new_grant_ttl_hours = match app.new_grant_ttl_hours {
+                                        0 => 1,
+                                        1 => 4,
+                                        4 => 8,
+                                        8 => 24,
+                                        _ => 0,
+                                    };
+                                }
+                            }
+                            _ => {}
+                        }
+                    } else if app.show_help {
                         match key.code {
                             KeyCode::Esc | KeyCode::Char('?') | KeyCode::Char('q') => {
                                 app.show_help = false;
@@ -214,6 +377,17 @@ fn run_loop(
                     } else {
                         match key.code {
                             KeyCode::Char('q') => app.should_quit = true,
+                            KeyCode::Char('p') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                                app.show_action_palette = true;
+                                app.action_palette_query.clear();
+                                app.action_palette_selected_idx = 0;
+                            }
+                            KeyCode::Char('o') | KeyCode::Char('O') => {
+                                match app.open_active_document_in_editor() {
+                                    Ok(msg) => app.status_message = Some(msg),
+                                    Err(err) => app.status_message = Some(err),
+                                }
+                            }
                             KeyCode::Char('?') | KeyCode::F(1) => app.toggle_help(),
                             KeyCode::Char('h') if app.active_tab != ActiveTab::Settings => app.toggle_help(),
                             KeyCode::Char('y') | KeyCode::Char('Y') => {
@@ -244,6 +418,9 @@ fn run_loop(
                             }
                             KeyCode::Char('e') | KeyCode::Char('E') if app.active_tab == ActiveTab::Sessions => {
                                 app.toggle_scoring_methodology();
+                            }
+                            KeyCode::Char('g') | KeyCode::Char('G') if app.active_tab == ActiveTab::Sessions => {
+                                app.toggle_governance_tab_mode();
                             }
                             KeyCode::Char('1') => app.switch_tab(ActiveTab::Work),
                             KeyCode::Char('2') => app.switch_tab(ActiveTab::Explore),
@@ -303,6 +480,10 @@ fn run_loop(
                                             let _ = terminal.backend_mut().flush();
                                         }
                                     }
+                                } else {
+                                    app.show_action_palette = true;
+                                    app.action_palette_query.clear();
+                                    app.action_palette_selected_idx = 0;
                                 }
                             }
                             KeyCode::Enter => {
@@ -324,11 +505,33 @@ fn run_loop(
                                     app.next_directive_category(db);
                                 }
                             }
+                            KeyCode::Char('n') | KeyCode::Char('N') if app.active_tab == ActiveTab::Directives => {
+                                app.show_new_directive_modal = true;
+                                app.new_directive_field = 0;
+                                app.new_directive_title.clear();
+                                app.new_directive_rule.clear();
+                                app.new_directive_scope = "*".to_string();
+                            }
                             KeyCode::Char('r') | KeyCode::Char('R') if app.active_tab == ActiveTab::Directives => {
-                                let _ = app.retire_selected_directive(root, db);
+                                match app.toggle_selected_directive_status(db) {
+                                    Ok(msg) => app.status_message = Some(msg),
+                                    Err(err) => app.status_message = Some(err),
+                                }
+                            }
+                            KeyCode::Char('n') | KeyCode::Char('N') if app.active_tab == ActiveTab::Sessions && app.governance_tab_mode == app::GovernanceTabMode::Grants => {
+                                app.show_issue_grant_modal = true;
+                                app.new_grant_field = 0;
+                                app.new_grant_grantee.clear();
+                            }
+                            KeyCode::Char('r') | KeyCode::Char('R') if app.active_tab == ActiveTab::Sessions && app.governance_tab_mode == app::GovernanceTabMode::Grants => {
+                                match app.revoke_selected_grant() {
+                                    Ok(msg) => app.status_message = Some(msg),
+                                    Err(err) => app.status_message = Some(err),
+                                }
                             }
                             KeyCode::Char('a') | KeyCode::Char('A') if app.active_tab == ActiveTab::Directives => {
-                                app.status_message = Some("To create a directive: run 'hyperkb directive new' or MCP tool 'draft_directive'".to_string());
+                                app.show_new_directive_modal = true;
+                                app.new_directive_field = 0;
                             }
                             KeyCode::Char('/') => {
                                 app.is_filtering = true;
@@ -349,6 +552,51 @@ fn run_loop(
                     let row = mouse.row;
                     let size = terminal.size()?;
                     let area = ratatui::layout::Rect::new(0, 0, size.width, size.height);
+
+                    // If Action Palette modal is open, dismiss when clicking outside
+                    if app.show_action_palette {
+                        let modal = ActionPaletteModal::modal_area(area);
+                        let inside = col >= modal.x
+                            && col < modal.x + modal.width
+                            && row >= modal.y
+                            && row < modal.y + modal.height;
+                        if let MouseEventKind::Down(MouseButton::Left) = mouse.kind {
+                            if !inside {
+                                app.show_action_palette = false;
+                            }
+                        }
+                        continue;
+                    }
+
+                    // If New Directive modal is open, dismiss when clicking outside
+                    if app.show_new_directive_modal {
+                        let modal = NewDirectiveModal::modal_area(area);
+                        let inside = col >= modal.x
+                            && col < modal.x + modal.width
+                            && row >= modal.y
+                            && row < modal.y + modal.height;
+                        if let MouseEventKind::Down(MouseButton::Left) = mouse.kind {
+                            if !inside {
+                                app.show_new_directive_modal = false;
+                            }
+                        }
+                        continue;
+                    }
+
+                    // If Issue Grant modal is open, dismiss when clicking outside
+                    if app.show_issue_grant_modal {
+                        let modal = IssueGrantModal::modal_area(area);
+                        let inside = col >= modal.x
+                            && col < modal.x + modal.width
+                            && row >= modal.y
+                            && row < modal.y + modal.height;
+                        if let MouseEventKind::Down(MouseButton::Left) = mouse.kind {
+                            if !inside {
+                                app.show_issue_grant_modal = false;
+                            }
+                        }
+                        continue;
+                    }
 
                     // If Help modal is currently open, isolate all mouse actions to the modal overlay.
                     if app.show_help {

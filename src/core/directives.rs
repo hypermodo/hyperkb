@@ -143,6 +143,60 @@ impl DirectiveWorkflow {
         Ok(true)
     }
 
+    pub fn reactivate_directive<P: AsRef<Path>>(
+        root: P,
+        conn: &Connection,
+        id: &str,
+    ) -> Result<bool, String> {
+        let found = Queries::activate_directive(conn, id)
+            .map_err(|e| format!("Database error reactivating directive: {}", e))?;
+
+        if !found {
+            return Ok(false);
+        }
+
+        // Also update file status on disk if present
+        let root_path = root.as_ref();
+        let manifest = RepoManifest::load_or_default(root_path);
+        let dir_path = root_path.join(&manifest.directives_path);
+
+        if dir_path.exists() {
+            if let Ok(entries) = fs::read_dir(dir_path) {
+                for entry in entries.flatten() {
+                    let path = entry.path();
+                    if path.extension().map_or(false, |ext| ext == "md") {
+                        if let Ok(raw) = fs::read_to_string(&path) {
+                            if let Ok(mut d) = Directive::parse_markdown(&raw, &manifest.collection_id) {
+                                if d.id == id {
+                                    d.status = "active".to_string();
+                                    let _ = fs::write(&path, d.to_markdown().as_bytes());
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(true)
+    }
+
+    pub fn toggle_directive_status<P: AsRef<Path>>(
+        root: P,
+        conn: &Connection,
+        id: &str,
+        current_status: &str,
+    ) -> Result<String, String> {
+        if current_status == "active" {
+            Self::retire_directive(root, conn, id)?;
+            Ok("retired".to_string())
+        } else {
+            Self::reactivate_directive(root, conn, id)?;
+            Ok("active".to_string())
+        }
+    }
+
     pub fn audit_directives<P: AsRef<Path>>(
         root: P,
         conn: &Connection,
@@ -243,6 +297,21 @@ mod tests {
 
         let after = Queries::get_directive(db.conn(), &dir.id).unwrap().unwrap();
         assert_eq!(after.status, "retired");
+
+        // Reactivate
+        let reactivated = DirectiveWorkflow::reactivate_directive(&temp_dir, db.conn(), &dir.id).unwrap();
+        assert!(reactivated);
+
+        let after_reactivate = Queries::get_directive(db.conn(), &dir.id).unwrap().unwrap();
+        assert_eq!(after_reactivate.status, "active");
+
+        // Toggle: active -> retired
+        let status1 = DirectiveWorkflow::toggle_directive_status(&temp_dir, db.conn(), &dir.id, "active").unwrap();
+        assert_eq!(status1, "retired");
+
+        // Toggle: retired -> active
+        let status2 = DirectiveWorkflow::toggle_directive_status(&temp_dir, db.conn(), &dir.id, "retired").unwrap();
+        assert_eq!(status2, "active");
 
         let _ = fs::remove_dir_all(&temp_dir);
     }

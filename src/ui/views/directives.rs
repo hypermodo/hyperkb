@@ -81,13 +81,21 @@ impl DirectivesView {
             })
             .collect();
 
-        let list_title = format!(" Directives ({}) ", app.directives.len());
+        let list_title = format!(" Directives ({}) [Cat: {}] ", app.directives.len(), app.directive_category.to_uppercase());
         let list_block = Block::default()
             .borders(Borders::ALL)
             .border_style(Style::default().fg(border_color))
             .style(Style::default().bg(t.bg_panel()).fg(t.text_primary()))
             .padding(Padding::new(2, 2, 1, 1))
-            .title(Span::styled(list_title, t.title()));
+            .title(Span::styled(list_title, t.title()))
+            .title_bottom(Line::from(vec![
+                Span::styled(" [n] ", t.key_badge()),
+                Span::styled("New • ", Style::default().fg(t.text_muted())),
+                Span::styled("[r] ", t.key_badge()),
+                Span::styled("Toggle Active/Retire • ", Style::default().fg(t.text_muted())),
+                Span::styled("[c] ", t.key_badge()),
+                Span::styled("Cat", Style::default().fg(t.text_muted())),
+            ]));
 
         if items.is_empty() {
             let empty_text = vec![
@@ -98,9 +106,9 @@ impl DirectivesView {
                 )),
                 Line::from(""),
                 Line::from(vec![
-                    Span::styled("Use ", Style::default().fg(t.text_primary())),
-                    Span::styled("hyperkb directive new", Style::default().fg(t.accent())),
-                    Span::styled(" to draft one.", Style::default().fg(t.text_primary())),
+                    Span::styled("Press ", Style::default().fg(t.text_primary())),
+                    Span::styled("[n]", t.key_badge()),
+                    Span::styled(" to draft a new directive instantly.", Style::default().fg(t.text_primary())),
                 ]),
             ];
             let p = Paragraph::new(empty_text).block(list_block);
@@ -124,7 +132,15 @@ impl DirectivesView {
             .border_style(Style::default().fg(border_color))
             .style(Style::default().bg(t.bg_panel()).fg(t.text_primary()))
             .padding(Padding::new(2, 2, 1, 1))
-            .title(Span::styled(" Directive Card [Tab: focus, Enter: Reader, r: Retire, y: Copy] ", t.title()));
+            .title(Span::styled(" Directive Card [TUI: Governance | IDE: Prose ([o])] ", t.title()))
+            .title_bottom(Line::from(vec![
+                Span::styled(" [o] ", t.key_badge()),
+                Span::styled("Open in Editor • ", Style::default().fg(t.text_muted())),
+                Span::styled("[y] ", t.key_badge()),
+                Span::styled("Copy Markdown • ", Style::default().fg(t.text_muted())),
+                Span::styled("[r] ", t.key_badge()),
+                Span::styled("Toggle Active/Retired", Style::default().fg(t.text_muted())),
+            ]));
 
         if let Some(dir) = app.selected_directive() {
             let mut text = vec![

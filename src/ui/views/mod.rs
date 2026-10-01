@@ -1,14 +1,20 @@
+pub mod action_palette;
 pub mod directives;
 pub mod explore;
 pub mod help;
+pub mod issue_grant;
+pub mod new_directive;
 pub mod reader;
 pub mod sessions;
 pub mod settings;
 pub mod work;
 
+pub use action_palette::ActionPaletteModal;
 pub use directives::DirectivesView;
 pub use explore::ExploreView;
 pub use help::HelpModal;
+pub use issue_grant::IssueGrantModal;
+pub use new_directive::NewDirectiveModal;
 pub use reader::ReaderView;
 pub use sessions::SessionsView;
 pub use settings::SettingsView;

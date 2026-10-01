@@ -1,7 +1,86 @@
-use crate::domain::{AgentSession, BrowseOptions, Directive, Document, RepoManifest, RiskMatch};
+use crate::domain::{
+    AgentSession, AuthorityGrant, BrowseOptions, Directive, Document, RepoManifest, RiskMatch,
+};
 use crate::storage::{Database, Queries};
 use crate::ui::theme::ThemeMode;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GovernanceTabMode {
+    Sessions,
+    Grants,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ActionPaletteItem {
+    pub id: &'static str,
+    pub title: &'static str,
+    pub shortcut: &'static str,
+    pub description: &'static str,
+}
+
+pub static ACTION_PALETTE_ITEMS: &[ActionPaletteItem] = &[
+    ActionPaletteItem {
+        id: "check_work",
+        title: "Run Git Check-Work (Audit Staged & Changed Files)",
+        shortcut: "Space / c",
+        description: "Audit working tree and index against cited risks and architectural directives",
+    },
+    ActionPaletteItem {
+        id: "new_directive",
+        title: "New Policy Directive (Wizard)",
+        shortcut: "n",
+        description: "Define a new repo invariant, behavior rule, or security guardrail",
+    },
+    ActionPaletteItem {
+        id: "issue_grant",
+        title: "Issue Agent Authority Grant",
+        shortcut: "n",
+        description: "Delegate scoped capability tokens to AI agents and sub-agents",
+    },
+    ActionPaletteItem {
+        id: "audit_kb",
+        title: "Run KB & Directives Linter Audit",
+        shortcut: "a",
+        description: "Verify document bloat, file hierarchy depth, and schema validity",
+    },
+    ActionPaletteItem {
+        id: "open_editor",
+        title: "Open Active File in External Editor",
+        shortcut: "o",
+        description: "Launch current markdown document in external IDE (code / $EDITOR)",
+    },
+    ActionPaletteItem {
+        id: "backup",
+        title: "Create Point-in-Time Backup Snapshot",
+        shortcut: "B",
+        description: "Create an atomic verified snapshot in .hyperkb/backups",
+    },
+    ActionPaletteItem {
+        id: "compact",
+        title: "Compact Database & WAL Journal",
+        shortcut: "C",
+        description: "Vacuum SQLite database and truncate WAL log to reclaim disk space",
+    },
+    ActionPaletteItem {
+        id: "toggle_theme",
+        title: "Cycle Visual Theme",
+        shortcut: "T",
+        description: "Switch between Cyberpunk, Modern, Nord, Tokyo Night, and Light themes",
+    },
+    ActionPaletteItem {
+        id: "toggle_mouse",
+        title: "Toggle Mouse Mode",
+        shortcut: "m",
+        description: "Switch between Click Navigation (ON) and Native Drag Selection (OFF)",
+    },
+    ActionPaletteItem {
+        id: "view_help",
+        title: "View System Documentation & Shortcuts",
+        shortcut: "? / F1",
+        description: "Open the interactive documentation manual",
+    },
+];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ActiveTab {
@@ -88,10 +167,37 @@ pub struct App {
     pub preview_scroll_offset: usize,
     pub show_raw: bool,
 
-    // Search filter state
     pub is_filtering: bool,
     pub filter_query: String,
     pub status_message: Option<String>,
+
+    pub root: PathBuf,
+
+    // Governance & Grants state
+    pub governance_tab_mode: GovernanceTabMode,
+    pub grants: Vec<AuthorityGrant>,
+    pub selected_grant_idx: usize,
+
+    // Directive creation modal state
+    pub show_new_directive_modal: bool,
+    pub new_directive_title: String,
+    pub new_directive_category_idx: usize,
+    pub new_directive_scope: String,
+    pub new_directive_enforcement_idx: usize,
+    pub new_directive_rule: String,
+    pub new_directive_field: usize,
+
+    // Issue grant modal state
+    pub show_issue_grant_modal: bool,
+    pub new_grant_grantee: String,
+    pub new_grant_preset_idx: usize,
+    pub new_grant_ttl_hours: u32,
+    pub new_grant_field: usize,
+
+    // Action Palette modal state
+    pub show_action_palette: bool,
+    pub action_palette_query: String,
+    pub action_palette_selected_idx: usize,
 }
 
 impl App {
@@ -141,6 +247,25 @@ impl App {
             drag_current: None,
             is_dragging: false,
             last_selected_text: None,
+            root,
+            governance_tab_mode: GovernanceTabMode::Sessions,
+            grants: Vec::new(),
+            selected_grant_idx: 0,
+            show_new_directive_modal: false,
+            new_directive_title: String::new(),
+            new_directive_category_idx: 0,
+            new_directive_scope: "*".to_string(),
+            new_directive_enforcement_idx: 0,
+            new_directive_rule: String::new(),
+            new_directive_field: 0,
+            show_issue_grant_modal: false,
+            new_grant_grantee: String::new(),
+            new_grant_preset_idx: 0,
+            new_grant_ttl_hours: 4,
+            new_grant_field: 0,
+            show_action_palette: false,
+            action_palette_query: String::new(),
+            action_palette_selected_idx: 0,
         }
     }
 
@@ -274,6 +399,13 @@ impl App {
                 self.selected_session_idx = self.sessions.len() - 1;
             }
         }
+
+        if let Ok(grants) = crate::core::GrantStore::list_grants(&self.root) {
+            self.grants = grants;
+            if self.selected_grant_idx >= self.grants.len() && !self.grants.is_empty() {
+                self.selected_grant_idx = self.grants.len() - 1;
+            }
+        }
     }
 
     pub const CATEGORIES: &'static [&'static str] = &["all", "decisions", "risks", "specs", "plans"];
@@ -380,11 +512,23 @@ impl App {
                 }
             }
             ActiveTab::Sessions => {
-                if self.focused_pane == FocusedPane::Detail {
-                    self.session_preview_scroll += 2;
-                } else if !self.sessions.is_empty() {
-                    self.selected_session_idx = (self.selected_session_idx + 1) % self.sessions.len();
-                    self.session_preview_scroll = 0;
+                match self.governance_tab_mode {
+                    GovernanceTabMode::Sessions => {
+                        if self.focused_pane == FocusedPane::Detail {
+                            self.session_preview_scroll += 2;
+                        } else if !self.sessions.is_empty() {
+                            self.selected_session_idx = (self.selected_session_idx + 1) % self.sessions.len();
+                            self.session_preview_scroll = 0;
+                        }
+                    }
+                    GovernanceTabMode::Grants => {
+                        if self.focused_pane == FocusedPane::Detail {
+                            self.session_preview_scroll += 2;
+                        } else if !self.grants.is_empty() {
+                            self.selected_grant_idx = (self.selected_grant_idx + 1) % self.grants.len();
+                            self.session_preview_scroll = 0;
+                        }
+                    }
                 }
             }
             ActiveTab::Settings => {
@@ -445,15 +589,31 @@ impl App {
                 }
             }
             ActiveTab::Sessions => {
-                if self.focused_pane == FocusedPane::Detail {
-                    self.session_preview_scroll = self.session_preview_scroll.saturating_sub(2);
-                } else if !self.sessions.is_empty() {
-                    if self.selected_session_idx == 0 {
-                        self.selected_session_idx = self.sessions.len() - 1;
-                    } else {
-                        self.selected_session_idx -= 1;
+                match self.governance_tab_mode {
+                    GovernanceTabMode::Sessions => {
+                        if self.focused_pane == FocusedPane::Detail {
+                            self.session_preview_scroll = self.session_preview_scroll.saturating_sub(2);
+                        } else if !self.sessions.is_empty() {
+                            if self.selected_session_idx == 0 {
+                                self.selected_session_idx = self.sessions.len() - 1;
+                            } else {
+                                self.selected_session_idx -= 1;
+                            }
+                            self.session_preview_scroll = 0;
+                        }
                     }
-                    self.session_preview_scroll = 0;
+                    GovernanceTabMode::Grants => {
+                        if self.focused_pane == FocusedPane::Detail {
+                            self.session_preview_scroll = self.session_preview_scroll.saturating_sub(2);
+                        } else if !self.grants.is_empty() {
+                            if self.selected_grant_idx == 0 {
+                                self.selected_grant_idx = self.grants.len() - 1;
+                            } else {
+                                self.selected_grant_idx -= 1;
+                            }
+                            self.session_preview_scroll = 0;
+                        }
+                    }
                 }
             }
             ActiveTab::Settings => {
@@ -498,11 +658,23 @@ impl App {
                 }
             }
             ActiveTab::Sessions => {
-                if self.focused_pane == FocusedPane::Detail {
-                    self.session_preview_scroll += 15;
-                } else if !self.sessions.is_empty() {
-                    self.selected_session_idx = (self.selected_session_idx + 8).min(self.sessions.len() - 1);
-                    self.session_preview_scroll = 0;
+                match self.governance_tab_mode {
+                    GovernanceTabMode::Sessions => {
+                        if self.focused_pane == FocusedPane::Detail {
+                            self.session_preview_scroll += 15;
+                        } else if !self.sessions.is_empty() {
+                            self.selected_session_idx = (self.selected_session_idx + 8).min(self.sessions.len() - 1);
+                            self.session_preview_scroll = 0;
+                        }
+                    }
+                    GovernanceTabMode::Grants => {
+                        if self.focused_pane == FocusedPane::Detail {
+                            self.session_preview_scroll += 15;
+                        } else if !self.grants.is_empty() {
+                            self.selected_grant_idx = (self.selected_grant_idx + 8).min(self.grants.len() - 1);
+                            self.session_preview_scroll = 0;
+                        }
+                    }
                 }
             }
             ActiveTab::Settings => {
@@ -541,11 +713,23 @@ impl App {
                 }
             }
             ActiveTab::Sessions => {
-                if self.focused_pane == FocusedPane::Detail {
-                    self.session_preview_scroll = self.session_preview_scroll.saturating_sub(15);
-                } else if !self.sessions.is_empty() {
-                    self.selected_session_idx = self.selected_session_idx.saturating_sub(8);
-                    self.session_preview_scroll = 0;
+                match self.governance_tab_mode {
+                    GovernanceTabMode::Sessions => {
+                        if self.focused_pane == FocusedPane::Detail {
+                            self.session_preview_scroll = self.session_preview_scroll.saturating_sub(15);
+                        } else if !self.sessions.is_empty() {
+                            self.selected_session_idx = self.selected_session_idx.saturating_sub(8);
+                            self.session_preview_scroll = 0;
+                        }
+                    }
+                    GovernanceTabMode::Grants => {
+                        if self.focused_pane == FocusedPane::Detail {
+                            self.session_preview_scroll = self.session_preview_scroll.saturating_sub(15);
+                        } else if !self.grants.is_empty() {
+                            self.selected_grant_idx = self.selected_grant_idx.saturating_sub(8);
+                            self.session_preview_scroll = 0;
+                        }
+                    }
                 }
             }
             ActiveTab::Settings => {
@@ -742,7 +926,7 @@ impl App {
             }
             ActiveTab::Directives => {
                 if let Some(dir) = self.selected_directive() {
-                    (dir.content.clone(), format!("Directive '{}'", dir.title))
+                    (dir.to_markdown(), format!("Directive '{}'", dir.title))
                 } else {
                     return Err("No directive selected to copy".to_string());
                 }
@@ -769,7 +953,14 @@ impl App {
                 }
             }
             ActiveTab::Sessions => {
-                if let Some(sess) = self.selected_session() {
+                if self.governance_tab_mode == GovernanceTabMode::Grants {
+                    if let Some(grant) = self.selected_grant() {
+                        let text = serde_json::to_string_pretty(grant).unwrap_or_else(|_| grant.grant_id.to_string());
+                        (text, format!("Authority Grant '{}' ({})", grant.grantee, &grant.grant_id.to_string()[..8]))
+                    } else {
+                        return Err("No authority grant selected to copy".to_string());
+                    }
+                } else if let Some(sess) = self.selected_session() {
                     let edit_ratio = if sess.total_edits == 0 {
                         sess.total_tool_calls as f64
                     } else {
@@ -850,6 +1041,330 @@ impl App {
         let mut stdout = std::io::stdout();
         let _ = stdout.write_all(osc52.as_bytes());
         let _ = stdout.flush();
+    }
+
+    pub fn selected_grant(&self) -> Option<&crate::domain::AuthorityGrant> {
+        self.grants.get(self.selected_grant_idx)
+    }
+
+    pub fn toggle_governance_tab_mode(&mut self) {
+        self.governance_tab_mode = match self.governance_tab_mode {
+            GovernanceTabMode::Sessions => GovernanceTabMode::Grants,
+            GovernanceTabMode::Grants => GovernanceTabMode::Sessions,
+        };
+        self.focused_pane = FocusedPane::List;
+    }
+
+    pub fn draft_new_directive(&mut self, db: &Database) -> Result<String, String> {
+        let title = self.new_directive_title.trim().to_string();
+        if title.is_empty() {
+            return Err("Directive title cannot be empty".to_string());
+        }
+        let categories = ["architecture", "behavior", "deployment", "security"];
+        let category = categories.get(self.new_directive_category_idx).unwrap_or(&"behavior");
+        let enforcements = ["check_work", "briefing", "pre_commit"];
+        let enforcement = enforcements.get(self.new_directive_enforcement_idx).unwrap_or(&"check_work");
+        let scope_str = self.new_directive_scope.trim();
+        let scope = if scope_str.is_empty() || scope_str == "*" {
+            vec!["*".to_string()]
+        } else {
+            scope_str.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect()
+        };
+        let rule = self.new_directive_rule.trim();
+        let content = if rule.is_empty() {
+            format!("## Directive: {}\n\nEnforce {} invariants across {:?}.", title, category, scope)
+        } else {
+            format!("## Directive: {}\n\n{}\n", title, rule)
+        };
+        let author = std::env::var("USER").unwrap_or_else(|_| "Developer".to_string());
+
+        let res = crate::core::DirectiveWorkflow::draft_directive(
+            &self.root,
+            db.conn(),
+            &self.collection_id,
+            &title,
+            category,
+            &author,
+            scope,
+            enforcement,
+            None,
+            &content,
+        )?;
+
+        self.refresh_data(db);
+        if let Some(pos) = self.directives.iter().position(|d| d.id == res.id) {
+            self.selected_directive_idx = pos;
+        }
+
+        self.show_new_directive_modal = false;
+        self.new_directive_title.clear();
+        self.new_directive_rule.clear();
+        self.new_directive_scope = "*".to_string();
+
+        Ok(format!("Directive '{}' ({}) created & active", title, res.id))
+    }
+
+    pub fn toggle_selected_directive_status(&mut self, db: &Database) -> Result<String, String> {
+        if let Some(d) = self.selected_directive() {
+            let id = d.id.clone();
+            let current = d.status.clone();
+            let new_status = crate::core::DirectiveWorkflow::toggle_directive_status(&self.root, db.conn(), &id, &current)?;
+            self.refresh_data(db);
+            Ok(format!("Directive '{}' status changed to: {}", id, new_status.to_uppercase()))
+        } else {
+            Err("No directive selected to toggle".to_string())
+        }
+    }
+
+    pub fn issue_new_grant(&mut self) -> Result<String, String> {
+        let grantee = if self.new_grant_grantee.trim().is_empty() {
+            "agent_collaborator".to_string()
+        } else {
+            self.new_grant_grantee.trim().to_string()
+        };
+        let authorizer = std::env::var("USER").unwrap_or_else(|_| "Developer".to_string());
+
+        let (allowed_actions, allowed_scope_patterns, max_diff) = match self.new_grant_preset_idx {
+            0 => (
+                vec![crate::domain::ActionKind::ProposeDecision, crate::domain::ActionKind::AutoRepair],
+                vec!["src/ui/**".to_string(), "docs/specs/**".to_string()],
+                250,
+            ),
+            1 => (
+                vec![crate::domain::ActionKind::ProposeDecision, crate::domain::ActionKind::AcceptDecision],
+                vec!["docs/**".to_string()],
+                400,
+            ),
+            2 => (
+                vec![
+                    crate::domain::ActionKind::ProposeDecision,
+                    crate::domain::ActionKind::AcceptDecision,
+                    crate::domain::ActionKind::AcknowledgeRisk,
+                    crate::domain::ActionKind::AutoRepair,
+                ],
+                vec!["*".to_string()],
+                500,
+            ),
+            _ => (
+                vec![crate::domain::ActionKind::ProposeDecision],
+                vec!["src/**".to_string()],
+                200,
+            ),
+        };
+
+        let ttl = if self.new_grant_ttl_hours == 0 { None } else { Some(self.new_grant_ttl_hours as i64) };
+        let expires_at = ttl.map(|h| chrono::Utc::now() + chrono::Duration::hours(h));
+
+        let constraints = crate::domain::GrantConstraints {
+            max_line_diff: Some(max_diff),
+            require_tests_pass: false,
+            allow_supersede: true,
+            expires_at,
+        };
+
+        let grant = crate::core::GrantStore::issue_grant(
+            &self.root,
+            &grantee,
+            &authorizer,
+            allowed_actions,
+            allowed_scope_patterns,
+            constraints,
+        )?;
+
+        Self::copy_text_to_clipboard(&grant.grant_id.to_string());
+
+        if let Ok(grants) = crate::core::GrantStore::list_grants(&self.root) {
+            self.grants = grants;
+        }
+        self.selected_grant_idx = 0;
+        self.show_issue_grant_modal = false;
+        self.new_grant_grantee.clear();
+
+        Ok(format!("Issued Grant '{}' for {} (UUID copied to clipboard)", &grant.grant_id.to_string()[..8], grantee))
+    }
+
+    pub fn revoke_selected_grant(&mut self) -> Result<String, String> {
+        if let Some(grant) = self.selected_grant() {
+            let gid = grant.grant_id;
+            crate::core::GrantStore::revoke_grant(&self.root, gid)?;
+            if let Ok(grants) = crate::core::GrantStore::list_grants(&self.root) {
+                self.grants = grants;
+            }
+            if self.selected_grant_idx >= self.grants.len() && !self.grants.is_empty() {
+                self.selected_grant_idx = self.grants.len() - 1;
+            }
+            Ok(format!("Revoked Grant '{}'", gid))
+        } else {
+            Err("No grant selected to revoke".to_string())
+        }
+    }
+
+    pub fn get_active_document_path(&self) -> Option<PathBuf> {
+        match self.active_tab {
+            ActiveTab::Reader => self.current_document.as_ref().map(|d| self.root.join(&d.path)),
+            ActiveTab::Explore => self.selected_document().map(|d| self.root.join(&d.path)),
+            ActiveTab::Work => self.selected_risk().map(|r| self.root.join(&r.document.path)),
+            ActiveTab::Directives => {
+                if let Some(d) = self.selected_directive() {
+                    let dir_path = self.root.join(&self.manifest.directives_path);
+                    if let Ok(entries) = std::fs::read_dir(&dir_path) {
+                        for entry in entries.flatten() {
+                            let path = entry.path();
+                            if path.extension().map_or(false, |ext| ext == "md") {
+                                if let Ok(raw) = std::fs::read_to_string(&path) {
+                                    if raw.contains(&d.id) {
+                                        return Some(path);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                None
+            }
+            _ => None,
+        }
+    }
+
+    pub fn open_active_document_in_editor(&mut self) -> Result<String, String> {
+        if let Some(path) = self.get_active_document_path() {
+            let path_str = path.to_string_lossy().to_string();
+            let editor = std::env::var("VISUAL")
+                .or_else(|_| std::env::var("EDITOR"))
+                .unwrap_or_else(|_| "code".to_string());
+
+            let mut cmd = std::process::Command::new(&editor);
+            cmd.arg(&path);
+            if cmd.spawn().is_ok() {
+                return Ok(format!("Opened '{}' in {}", path.file_name().unwrap_or_default().to_string_lossy(), editor));
+            }
+
+            #[cfg(target_os = "macos")]
+            {
+                if std::process::Command::new("open").arg(&path).spawn().is_ok() {
+                    return Ok(format!("Opened '{}' in default application", path.file_name().unwrap_or_default().to_string_lossy()));
+                }
+            }
+
+            #[cfg(target_os = "linux")]
+            {
+                if std::process::Command::new("xdg-open").arg(&path).spawn().is_ok() {
+                    return Ok(format!("Opened '{}' in default application", path.file_name().unwrap_or_default().to_string_lossy()));
+                }
+            }
+
+            Err(format!("Could not launch external editor for {}", path_str))
+        } else {
+            Err("No active file selected to open in external editor".to_string())
+        }
+    }
+
+    pub fn filtered_actions(&self) -> Vec<&'static ActionPaletteItem> {
+        let q = self.action_palette_query.to_lowercase();
+        ACTION_PALETTE_ITEMS
+            .iter()
+            .filter(|item| {
+                if q.is_empty() {
+                    true
+                } else {
+                    item.title.to_lowercase().contains(&q)
+                        || item.description.to_lowercase().contains(&q)
+                        || item.id.to_lowercase().contains(&q)
+                }
+            })
+            .collect()
+    }
+
+    pub fn execute_action_palette_item(&mut self, action_id: &str, db: &Database) -> Result<String, String> {
+        self.show_action_palette = false;
+        match action_id {
+            "check_work" => {
+                let staged = crate::core::Git::staged_files(&self.root).unwrap_or_default();
+                let changed = crate::core::Git::changed_files(&self.root).unwrap_or_default();
+                let mut all_files = staged;
+                for f in changed {
+                    if !all_files.contains(&f) {
+                        all_files.push(f);
+                    }
+                }
+                if all_files.is_empty() {
+                    Ok("Git Check-Work: Clean. Working tree and index have no pending changes.".to_string())
+                } else {
+                    match Queries::check_work(db.conn(), &self.collection_id, &all_files, None, None) {
+                        Ok(report) => {
+                            if report.matches.is_empty() && report.hygiene_warnings.is_empty() {
+                                Ok(format!("Git Check-Work: Clean across {} changed file(s). No risks cited.", all_files.len()))
+                            } else {
+                                Ok(format!(
+                                    "Git Check-Work: {} file(s) checked. Warnings: {} hygiene, {} risks cited.",
+                                    all_files.len(),
+                                    report.hygiene_warnings.len(),
+                                    report.matches.len()
+                                ))
+                            }
+                        }
+                        Err(e) => Err(format!("Check-work error: {}", e)),
+                    }
+                }
+            }
+            "new_directive" => {
+                self.switch_tab(ActiveTab::Directives);
+                self.show_new_directive_modal = true;
+                self.new_directive_field = 0;
+                Ok("New Directive Wizard opened".to_string())
+            }
+            "issue_grant" => {
+                self.switch_tab(ActiveTab::Sessions);
+                self.governance_tab_mode = GovernanceTabMode::Grants;
+                self.show_issue_grant_modal = true;
+                self.new_grant_field = 0;
+                Ok("Issue Agent Authority Grant Wizard opened".to_string())
+            }
+            "audit_kb" => {
+                let docs_dir = self.root.join(&self.manifest.docs_root);
+                let report = crate::core::KbLinter::audit_directory(&docs_dir).unwrap_or_default();
+                let dir_report = crate::core::DirectiveWorkflow::audit_directives(&self.root, db.conn(), &self.collection_id);
+                let dir_count = dir_report.map(|r| r.active_directives).unwrap_or(0);
+                Ok(format!(
+                    "KB Audit Complete: {} docs checked, {} issues flagged. Active Directives: {}.",
+                    report.total_documents,
+                    report.schema_errors.len() + report.bloat_warnings.len(),
+                    dir_count
+                ))
+            }
+            "open_editor" => {
+                self.open_active_document_in_editor()
+            }
+            "backup" => {
+                let rep = crate::core::MaintenanceManager::create_backup(
+                    &self.root,
+                    db,
+                    &self.collection_id,
+                    &self.profile_id,
+                    2,
+                )?;
+                Ok(format!("Backup snapshot created at {}", rep.path))
+            }
+            "compact" => {
+                db.conn()
+                    .execute_batch("VACUUM; PRAGMA wal_checkpoint(TRUNCATE);")
+                    .map_err(|e| format!("Compaction error: {}", e))?;
+                Ok("Database VACUUM & WAL journal truncation complete".to_string())
+            }
+            "toggle_theme" => {
+                self.next_theme();
+                Ok(format!("Active Theme: {}", self.theme.as_str()))
+            }
+            "toggle_mouse" => {
+                let on = self.toggle_mouse();
+                Ok(format!("Mouse Mode: {}", if on { "ON (Click Navigation & Drag Copy)" } else { "OFF (Native Selection)" }))
+            }
+            "view_help" => {
+                self.show_help = true;
+                Ok("Documentation & Shortcuts opened".to_string())
+            }
+            _ => Err(format!("Unknown action '{}'", action_id)),
+        }
     }
 }
 
@@ -1015,5 +1530,35 @@ mod tests {
 
         // Test clipboard helper does not panic
         App::copy_text_to_clipboard("Never fail on customer data");
+    }
+
+    #[test]
+    fn test_action_palette_filtering() {
+        let mut app = App::new("test", "test");
+        assert_eq!(app.filtered_actions().len(), ACTION_PALETTE_ITEMS.len());
+
+        app.action_palette_query = "check".to_string();
+        let filtered = app.filtered_actions();
+        assert!(!filtered.is_empty());
+        assert!(filtered.iter().any(|item| item.id == "check_work"));
+
+        app.action_palette_query = "grant".to_string();
+        let filtered = app.filtered_actions();
+        assert!(filtered.iter().any(|item| item.id == "issue_grant"));
+
+        app.action_palette_query = "xyznonexistent".to_string();
+        assert!(app.filtered_actions().is_empty());
+    }
+
+    #[test]
+    fn test_governance_tab_mode_and_grants() {
+        let mut app = App::new("test", "test");
+        assert_eq!(app.governance_tab_mode, GovernanceTabMode::Sessions);
+
+        app.toggle_governance_tab_mode();
+        assert_eq!(app.governance_tab_mode, GovernanceTabMode::Grants);
+
+        app.toggle_governance_tab_mode();
+        assert_eq!(app.governance_tab_mode, GovernanceTabMode::Sessions);
     }
 }

@@ -1,4 +1,4 @@
-use crate::ui::app::{App, FocusedPane};
+use crate::ui::app::{App, FocusedPane, GovernanceTabMode};
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Modifier, Style},
@@ -17,8 +17,16 @@ impl SessionsView {
             .constraints([Constraint::Length(list_width), Constraint::Min(40)])
             .split(area);
 
-        Self::render_sessions_list(frame, app, chunks[0]);
-        Self::render_session_scorecard(frame, app, chunks[1]);
+        match app.governance_tab_mode {
+            GovernanceTabMode::Sessions => {
+                Self::render_sessions_list(frame, app, chunks[0]);
+                Self::render_session_scorecard(frame, app, chunks[1]);
+            }
+            GovernanceTabMode::Grants => {
+                Self::render_grants_list(frame, app, chunks[0]);
+                Self::render_grant_detail(frame, app, chunks[1]);
+            }
+        }
     }
 
     fn render_sessions_list(frame: &mut Frame, app: &App, area: Rect) {
@@ -89,7 +97,13 @@ impl SessionsView {
             .border_style(Style::default().fg(border_color))
             .style(Style::default().bg(t.bg_panel()).fg(t.text_primary()))
             .padding(Padding::new(2, 2, 1, 1))
-            .title(Span::styled(list_title, t.title()));
+            .title(Span::styled(list_title, t.title()))
+            .title_bottom(Line::from(vec![
+                Span::styled(" [g] ", t.key_badge()),
+                Span::styled("Switch to Grants • ", Style::default().fg(t.text_muted())),
+                Span::styled("[y] ", t.key_badge()),
+                Span::styled("Copy Scorecard", Style::default().fg(t.text_muted())),
+            ]));
 
         if items.is_empty() {
             let empty_text = vec![
@@ -396,6 +410,284 @@ impl SessionsView {
                 Line::from(Span::styled("No session selected.", Style::default().fg(t.text_muted()))),
                 Line::from(""),
                 Line::from(Span::styled("Select an agent session from the left list to inspect telemetry and metrics.", Style::default().fg(t.text_muted()))),
+            ];
+            let paragraph = Paragraph::new(empty_card)
+                .block(block);
+            frame.render_widget(paragraph, area);
+        }
+    }
+
+    fn render_grants_list(frame: &mut Frame, app: &App, area: Rect) {
+        let t = &app.theme;
+        let border_color = if app.focused_pane == FocusedPane::List {
+            t.border_focused()
+        } else {
+            t.border()
+        };
+
+        let now = chrono::Utc::now();
+        let items: Vec<ListItem> = app
+            .grants
+            .iter()
+            .enumerate()
+            .map(|(idx, grant)| {
+                let is_selected = idx == app.selected_grant_idx;
+                let is_expired = grant.constraints.expires_at.map(|exp| exp < now).unwrap_or(false);
+
+                let (badge_text, badge_style) = if is_expired {
+                    ("✕ EXPIRED ", Style::default().fg(t.status_superseded()))
+                } else {
+                    ("● ACTIVE ", t.badge_accepted())
+                };
+
+                let title = Span::styled(
+                    &grant.grantee,
+                    if is_selected {
+                        t.selected_row()
+                    } else {
+                        Style::default().fg(t.text_primary()).add_modifier(Modifier::BOLD)
+                    },
+                );
+
+                let short_id = format!("{:.8}", grant.grant_id);
+                let id_badge = Span::styled(
+                    format!("[{}] ", short_id),
+                    Style::default().fg(t.accent()),
+                );
+
+                let scopes = if grant.allowed_scope_patterns.is_empty() {
+                    "* (all)".to_string()
+                } else {
+                    grant.allowed_scope_patterns.join(", ")
+                };
+
+                let sub_info = Span::styled(
+                    format!("   scopes: {} | actions: {}", scopes, grant.allowed_actions.len()),
+                    Style::default().fg(t.text_muted()),
+                );
+
+                ListItem::new(vec![
+                    Line::from(vec![
+                        Span::styled(badge_text, badge_style),
+                        id_badge,
+                        title,
+                    ]),
+                    Line::from(sub_info),
+                    Line::from(""),
+                ])
+            })
+            .collect();
+
+        let list_title = format!(" Authority Grants ({}) ", app.grants.len());
+        let list_block = Block::default()
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(border_color))
+            .style(Style::default().bg(t.bg_panel()).fg(t.text_primary()))
+            .padding(Padding::new(2, 2, 1, 1))
+            .title(Span::styled(list_title, t.title()))
+            .title_bottom(Line::from(vec![
+                Span::styled(" [g] ", t.key_badge()),
+                Span::styled("Sessions • ", Style::default().fg(t.text_muted())),
+                Span::styled("[n] ", t.key_badge()),
+                Span::styled("Issue • ", Style::default().fg(t.text_muted())),
+                Span::styled("[r] ", t.key_badge()),
+                Span::styled("Revoke • ", Style::default().fg(t.text_muted())),
+                Span::styled("[y] ", t.key_badge()),
+                Span::styled("Copy", Style::default().fg(t.text_muted())),
+            ]));
+
+        if items.is_empty() {
+            let empty_text = vec![
+                Line::from(""),
+                Line::from(Span::styled(
+                    "No authority grants active in .hyperkb/grants.",
+                    Style::default().fg(t.text_muted()),
+                )),
+                Line::from(""),
+                Line::from(vec![
+                    Span::styled("Press ", Style::default().fg(t.text_primary())),
+                    Span::styled("[n]", t.key_badge()),
+                    Span::styled(" to issue an agent grant with scope and diff bounds.", Style::default().fg(t.text_primary())),
+                ]),
+            ];
+            let p = Paragraph::new(empty_text).block(list_block);
+            frame.render_widget(p, area);
+        } else {
+            let list = List::new(items).block(list_block);
+            frame.render_widget(list, area);
+        }
+    }
+
+    fn render_grant_detail(frame: &mut Frame, app: &App, area: Rect) {
+        let t = &app.theme;
+        let border_color = if app.focused_pane == FocusedPane::Detail {
+            t.border_focused()
+        } else {
+            t.border()
+        };
+
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(border_color))
+            .style(Style::default().bg(t.bg_panel()).fg(t.text_primary()))
+            .padding(Padding::new(2, 2, 1, 1))
+            .title(Span::styled(" Authority Grant Inspector [Zero-Trust Boundary] ", t.title()))
+            .title_bottom(Line::from(vec![
+                Span::styled(" [n] ", t.key_badge()),
+                Span::styled("Issue New • ", Style::default().fg(t.text_muted())),
+                Span::styled("[r] ", t.key_badge()),
+                Span::styled("Revoke • ", Style::default().fg(t.text_muted())),
+                Span::styled("[y] ", t.key_badge()),
+                Span::styled("Copy JSON / UUID Token • ", Style::default().fg(t.text_muted())),
+                Span::styled("[g] ", t.key_badge()),
+                Span::styled("Switch Mode", Style::default().fg(t.text_muted())),
+            ]));
+
+        if let Some(grant) = app.selected_grant() {
+            let now = chrono::Utc::now();
+            let is_expired = grant.constraints.expires_at.map(|exp| exp < now).unwrap_or(false);
+
+            let expiry_str = match grant.constraints.expires_at {
+                None => "Permanent (no expiry limit)".to_string(),
+                Some(exp) => {
+                    if exp < now {
+                        format!("Expired at {}", exp.format("%Y-%m-%d %H:%M:%S UTC"))
+                    } else {
+                        let diff = exp - now;
+                        format!("Expires in {}h {}m ({})", diff.num_hours(), diff.num_minutes() % 60, exp.format("%H:%M:%S UTC"))
+                    }
+                }
+            };
+
+            let actions_spans: Vec<Span> = grant
+                .allowed_actions
+                .iter()
+                .map(|a| {
+                    Span::styled(
+                        format!(" [{:?}] ", a),
+                        Style::default().fg(t.status_accepted()).add_modifier(Modifier::BOLD),
+                    )
+                })
+                .collect();
+
+            let scopes_spans: Vec<Span> = if grant.allowed_scope_patterns.is_empty() {
+                vec![Span::styled(" [* (all workspace)] ", Style::default().fg(t.status_proposed()))]
+            } else {
+                grant
+                    .allowed_scope_patterns
+                    .iter()
+                    .map(|s| {
+                        Span::styled(
+                            format!(" `{}` ", s),
+                            Style::default().fg(t.accent()).add_modifier(Modifier::BOLD),
+                        )
+                    })
+                    .collect()
+            };
+
+            let text = vec![
+                Line::from(vec![
+                    Span::styled("Grantee Agent: ", Style::default().fg(t.text_muted())),
+                    Span::styled(&grant.grantee, Style::default().fg(t.accent()).add_modifier(Modifier::BOLD)),
+                    Span::raw("    "),
+                    Span::styled("Granted By: ", Style::default().fg(t.text_muted())),
+                    Span::styled(&grant.granted_by, Style::default().fg(t.text_primary()).add_modifier(Modifier::BOLD)),
+                ]),
+                Line::from(""),
+                Line::from(vec![
+                    Span::styled("Grant ID:      ", Style::default().fg(t.text_muted())),
+                    Span::styled(grant.grant_id.to_string(), Style::default().fg(t.status_proposed()).add_modifier(Modifier::BOLD)),
+                ]),
+                Line::from(vec![
+                    Span::styled("Created At:    ", Style::default().fg(t.text_muted())),
+                    Span::styled(grant.created_at.to_rfc3339(), Style::default().fg(t.text_muted())),
+                ]),
+                Line::from(vec![
+                    Span::styled("Expiration:    ", Style::default().fg(t.text_muted())),
+                    Span::styled(
+                        expiry_str,
+                        if is_expired {
+                            Style::default().fg(t.status_risk()).add_modifier(Modifier::BOLD)
+                        } else {
+                            Style::default().fg(t.status_accepted())
+                        },
+                    ),
+                ]),
+                Line::from(""),
+                Line::from(Span::styled(
+                    if is_expired {
+                        "  [REVOKED / EXPIRED] This authority grant is inactive. Agents cannot use this token."
+                    } else {
+                        "  [ACTIVE DELEGATION] Zero-trust guardrails verified. Invariant checks strictly enforced."
+                    },
+                    if is_expired {
+                        Style::default().fg(t.status_risk()).add_modifier(Modifier::BOLD)
+                    } else {
+                        t.badge_accepted()
+                    },
+                )),
+                Line::from(""),
+                Line::from(Span::styled(
+                    "────────────────────────────────────────────────────────────────────────────",
+                    Style::default().fg(t.border()),
+                )),
+                Line::from(""),
+                Line::from(Span::styled("ALLOWED ACTIONS & CAPABILITIES", t.section_header())),
+                Line::from(actions_spans),
+                Line::from(""),
+                Line::from(Span::styled("ALLOWED SCOPE FILE PATTERNS", t.section_header())),
+                Line::from(scopes_spans),
+                Line::from(""),
+                Line::from(Span::styled("SAFETY & INTEGRITY CONSTRAINTS", t.section_header())),
+                Line::from(vec![
+                    Span::styled("  • Max Line Diff:      ", Style::default().fg(t.text_muted())),
+                    Span::styled(
+                        grant.constraints.max_line_diff.map(|d| format!("{} lines per patch", d)).unwrap_or_else(|| "Unrestricted".to_string()),
+                        Style::default().fg(t.text_primary()).add_modifier(Modifier::BOLD),
+                    ),
+                ]),
+                Line::from(vec![
+                    Span::styled("  • Require Tests Pass: ", Style::default().fg(t.text_muted())),
+                    Span::styled(
+                        if grant.constraints.require_tests_pass { "Enforced (true)" } else { "Optional (false)" },
+                        Style::default().fg(t.text_primary()),
+                    ),
+                ]),
+                Line::from(vec![
+                    Span::styled("  • Allow Supersede:    ", Style::default().fg(t.text_muted())),
+                    Span::styled(
+                        if grant.constraints.allow_supersede { "Allowed (true)" } else { "Disallowed (false)" },
+                        Style::default().fg(t.text_primary()),
+                    ),
+                ]),
+                Line::from(""),
+                Line::from(Span::styled(
+                    "────────────────────────────────────────────────────────────────────────────",
+                    Style::default().fg(t.border()),
+                )),
+                Line::from(""),
+                Line::from(Span::styled("HARNESS INTEGRATION HINT", t.section_header())),
+                Line::from(vec![
+                    Span::styled("  Pass this Grant ID to your AI agent or MCP client: ", Style::default().fg(t.text_primary())),
+                    Span::styled(grant.grant_id.to_string(), Style::default().fg(t.accent()).add_modifier(Modifier::BOLD)),
+                ]),
+                Line::from(Span::styled(
+                    "  Press [y] to copy complete Grant JSON specification to your clipboard.",
+                    Style::default().fg(t.text_muted()),
+                )),
+            ];
+
+            let paragraph = Paragraph::new(text)
+                .block(block)
+                .scroll((app.session_preview_scroll as u16, 0))
+                .wrap(Wrap { trim: false });
+            frame.render_widget(paragraph, area);
+        } else {
+            let empty_card = vec![
+                Line::from(""),
+                Line::from(Span::styled("No authority grant selected.", Style::default().fg(t.text_muted()))),
+                Line::from(""),
+                Line::from(Span::styled("Select a grant from the left list or press [n] to issue a new grant.", Style::default().fg(t.text_muted()))),
             ];
             let paragraph = Paragraph::new(empty_card)
                 .block(block);

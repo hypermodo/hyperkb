@@ -968,6 +968,11 @@ impl Queries {
         Ok(affected > 0)
     }
 
+    pub fn activate_directive(conn: &Connection, id: &str) -> Result<bool> {
+        let affected = conn.execute("UPDATE directives SET status = 'active' WHERE id = ?1;", [id])?;
+        Ok(affected > 0)
+    }
+
     pub fn supersede_directive(conn: &Connection, old_id: &str, new_id: &str) -> Result<()> {
         conn.execute(
             "UPDATE directives SET status = 'superseded', supersedes = ?2 WHERE id = ?1;",
