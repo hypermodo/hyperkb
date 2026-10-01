@@ -51,7 +51,7 @@ impl HelpModal {
             ]),
             Line::from(vec![
                 Span::styled("  [ Space ] / Ctrl+P   ", t.key_badge()),
-                Span::styled("Open Action Palette & Tool Launcher (check-work, new-directive, grants, audit)", Style::default().fg(t.status_accepted()).add_modifier(Modifier::BOLD)),
+                Span::styled("Open KB Lifecycle & Operations Palette (check-work, directives, grants, index, backup, compact)", Style::default().fg(t.status_accepted()).add_modifier(Modifier::BOLD)),
             ]),
             Line::from(vec![
                 Span::styled("  [ o ]                ", t.key_badge()),
@@ -87,7 +87,7 @@ impl HelpModal {
             Line::from(""),
             Line::from(vec![
                 Span::styled("  [ Space ] / Ctrl+P   ", t.key_badge()),
-                Span::styled("Action Palette: Instant modal launcher for checks, audits, backups, and tools", Style::default().fg(t.text_primary())),
+                Span::styled("KB Lifecycle Palette: Instant modal launcher for policy directives, grants, audits, indexing & DB operations", Style::default().fg(t.text_primary())),
             ]),
             Line::from(vec![
                 Span::styled("  [ o ]                ", t.key_badge()),
@@ -341,7 +341,7 @@ impl HelpModal {
             "1. KEYBOARD NAVIGATION & TABS",
             "-----------------------------",
             "  [ 1 ] - [ 5 ]        Switch tabs (Work, Explore, Directives, Governance & Sessions, Settings)",
-            "  [ Space ] / Ctrl+P   Open Action Palette & Tool Launcher (check-work, new-directive, grants, audit)",
+            "  [ Space ] / Ctrl+P   Open KB Lifecycle & Operations Palette (check-work, directives, grants, index, backup, compact)",
             "  [ o ]                Jump to External Editor: Open active file in $EDITOR / VS Code / Cursor",
             "  [ Tab ]              Toggle focus between List selection and Detail preview",
             "  [ j ] / [ k ]        Navigate records and tree items up / down (or Arrow keys)",
@@ -355,7 +355,7 @@ impl HelpModal {
             "",
             "2. WORKFLOW ACTIONS & SHORTCUTS",
             "-------------------------------",
-            "  [ Space ] / Ctrl+P   Action Palette: Instant modal launcher for checks, audits, backups, and tools",
+            "  [ Space ] / Ctrl+P   KB Lifecycle Palette: Instant modal launcher for policy directives, grants, audits, indexing & DB operations",
             "  [ o ]                External Editor Jump: Launch external IDE ($EDITOR) for heavy prose editing",
             "  [ y ]                Yank / Copy active doc, directive prompt, grant token/JSON, or scorecard",
             "  [ m ]                Toggle Mouse Mode: ON (Click Nav & Visual Drag-Copy) / OFF (Native Text Selection)",

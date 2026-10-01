@@ -40,17 +40,19 @@ HyperKB provides a harness- and LLM-agnostic delegation system. Delegate authori
 - **Instant Revocation (`[r]`)**: Immediately revoke any grant from disk.
 - **UUID & Token Yank (`[y]`)**: Auto-copies grant token UUID or JSON specification to system clipboard.
 
-### 3. Modern Action Palette (`[Space]` or `[Ctrl+P]`)
-An instant launcher modal inspired by modern IDE command palettes and Raycast:
+### 3. KB Lifecycle & Operations Palette (`[Space]` or `[Ctrl+P]`)
+An instant launcher modal focused strictly on the lifecycle of the knowledge base, policies, and database operations:
 - **`check-work`**: Audit git changes against active risks and standing directives.
 - **`new-directive`**: Launch inline directive creation wizard.
+- **`toggle-directive-status`**: Retire obsolete directive or reactivate rule into pre-commit enforcement gate.
 - **`issue-grant`**: Launch agent authority delegation wizard.
-- **`audit-kb`**: Audit repository knowledge base for bloat, broken links, and schema hygiene.
-- **`open-editor`**: Launch external IDE (`$EDITOR`) on the currently selected document.
+- **`revoke-grant`**: Immediately revoke and invalidate an agent capability grant token.
+- **`audit-kb`**: Audit repository knowledge base for bloat, file hierarchy depth, and schema validity.
+- **`reindex-kb`**: Scan docs directory and incrementally update full-text SQLite FTS5 search index.
+- **`bootstrap-risks`**: Run Git archeology to discover incident hotspots & draft proactive risk cards.
+- **`open-editor`**: Launch external IDE (`$EDITOR` / `code`) on the currently selected document.
 - **`backup`**: Create atomic snapshot backup in `.hyperkb/backups/`.
-- **`compact`**: Run database `VACUUM` and truncate WAL journals.
-- **`toggle-theme`**: Cycle through visual themes (Cyberpunk, Modern, Nord, Tokyo Night, Light).
-- **`toggle-mouse`**: Toggle between native terminal text selection and in-TUI click navigation.
+- **`compact`**: Run SQLite database `VACUUM` and truncate WAL journals.
 
 ### 4. External Editor Jump (`[o]`)
 HyperKB keeps the cockpit lightweight and focused on governance. Press `[o]` on any decision, directive, risk, or session to spawn your preferred editor (`$VISUAL`, `$EDITOR`, or `code`) without tearing down the TUI.
@@ -67,7 +69,7 @@ Designed to work across all terminal emulators (macOS Terminal, iTerm2, Alacritt
 
 | Key | Context | Action |
 | :--- | :--- | :--- |
-| `[Space]` or `Ctrl+P` | Global | Open Action Palette & Tool Launcher |
+| `[Space]` or `Ctrl+P` | Global | Open KB Lifecycle & Operations Palette |
 | `[o]` | Global | Open active document in external editor / IDE |
 | `[1] - [5]` | Global | Switch tabs (Work, Explore, Directives, Governance & Sessions, Settings) |
 | `[Tab]` | Global | Toggle focus between List selection and Detail preview |
