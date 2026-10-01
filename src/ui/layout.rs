@@ -126,20 +126,18 @@ impl Header {
         };
 
         let paragraph = Paragraph::new(vec![
+            Line::from(""),
             Line::from(tab_spans),
+            Line::from(""),
             Line::from(sub_spans),
-        ])
-        .block(
-            Block::default()
-                .borders(Borders::BOTTOM)
-                .border_style(Style::default().fg(Theme::BORDER)),
-        );
+            Line::from(""),
+        ]);
 
         frame.render_widget(paragraph, area);
     }
 
     pub fn handle_click(app: &mut App, db: &crate::storage::Database, col: u16, row: u16) -> bool {
-        if row == 0 {
+        if row == 1 {
             let prefix_len = (9 + 2 + app.collection_id.len() + 2 + 4) as u16;
             let tabs = [
                 (ActiveTab::Work, "[1] Work & Risks"),
@@ -163,7 +161,7 @@ impl Header {
                     return true;
                 }
             }
-        } else if row == 1 {
+        } else if row == 3 {
             match app.active_tab {
                 ActiveTab::Directives => {
                     // "  Policy Taxonomy:  [c] " is 24 chars

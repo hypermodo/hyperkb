@@ -245,7 +245,7 @@ impl SessionBriefing {
         }
 
         if !active_directives.is_empty() {
-            out.push_str("### 📜 Standing Directives (Rule of 5)\n");
+            out.push_str("### Standing Directives (Rule of 5)\n");
             for d in active_directives {
                 out.push_str(&format!("- {}\n", d));
             }
@@ -253,7 +253,7 @@ impl SessionBriefing {
         }
 
         if !friction_warnings.is_empty() {
-            out.push_str("### ⚠️ Friction Hotspots & Review Warnings\n");
+            out.push_str("### Friction Hotspots & Review Warnings\n");
             for w in friction_warnings {
                 out.push_str(&format!("- {}\n", w));
             }
@@ -261,7 +261,7 @@ impl SessionBriefing {
         }
 
         if !active_invariants.is_empty() {
-            out.push_str("### 🔒 Architectural Invariants (Accepted ADRs)\n");
+            out.push_str("### Architectural Invariants (Accepted ADRs)\n");
             for inv in active_invariants {
                 out.push_str(&format!("- {}\n", inv));
             }
@@ -269,7 +269,7 @@ impl SessionBriefing {
         }
 
         if !active_risks.is_empty() {
-            out.push_str("### 🚨 High-Priority Risks\n");
+            out.push_str("### High-Priority Risks\n");
             for r in active_risks {
                 out.push_str(&format!("- {}\n", r));
             }
@@ -277,7 +277,7 @@ impl SessionBriefing {
         }
 
         if !recent_hotspots.is_empty() {
-            out.push_str("### 🎯 Recent Touched Paths\n");
+            out.push_str("### Recent Touched Paths\n");
             for h in recent_hotspots {
                 out.push_str(&format!("- `{}`\n", h));
             }
@@ -285,7 +285,7 @@ impl SessionBriefing {
         }
 
         if !knowledge_debt.is_empty() {
-            out.push_str("### ❓ Knowledge Debt (Unanswered Queries)\n");
+            out.push_str("### Knowledge Debt (Unanswered Queries)\n");
             for q in knowledge_debt {
                 out.push_str(&format!("- \"{}\"\n", q));
             }

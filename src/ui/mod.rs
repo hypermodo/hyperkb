@@ -64,11 +64,11 @@ fn run_loop<B: ratatui::backend::Backend>(
         terminal.draw(|frame| {
             let area = frame.area();
 
-            // Main vertical layout: Header (3 rows), Content (Remaining), Footer (2 rows)
+            // Main vertical layout: Header (5 rows with generous breathing room), Content (Remaining), Footer (2 rows)
             let chunks = Layout::default()
                 .direction(Direction::Vertical)
                 .constraints([
-                    Constraint::Length(3),
+                    Constraint::Length(5),
                     Constraint::Min(5),
                     Constraint::Length(2),
                 ])
@@ -179,12 +179,12 @@ fn run_loop<B: ratatui::backend::Backend>(
                                 app.status_message = None;
                             }
 
-                            // 1. Header clicks (row 0: tabs, row 1: taxonomy/category filter pills)
-                            if row <= 1 {
+                            // 1. Header clicks (row 1: tabs, row 3: taxonomy/category filter pills)
+                            if row <= 4 {
                                 Header::handle_click(app, db, col, row);
                             }
                             // 2. Main content clicks
-                            else if row >= 3 && row < area.height.saturating_sub(2) {
+                            else if row >= 5 && row < area.height.saturating_sub(2) {
                                 let list_width = match app.active_tab {
                                     ActiveTab::Work => area.width * 45 / 100,
                                     ActiveTab::Reader => 0,
@@ -193,7 +193,7 @@ fn run_loop<B: ratatui::backend::Backend>(
 
                                 if col < list_width {
                                     app.focused_pane = crate::ui::app::FocusedPane::List;
-                                    let rel_row = row - 3;
+                                    let rel_row = row - 5;
                                     if rel_row >= 1 {
                                         match app.active_tab {
                                             ActiveTab::Directives => {

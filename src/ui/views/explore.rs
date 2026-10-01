@@ -189,19 +189,23 @@ impl ExploreView {
                 let is_selected = idx == app.selected_tree_idx;
                 match item {
                     ExploreTreeItem::Folder { name, doc_count, is_collapsed, .. } => {
-                        let arrow = if *is_collapsed { "▶ " } else { "▼ " };
+                        let (icon, icon_style) = if *is_collapsed {
+                            ("[+] ", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD))
+                        } else {
+                            ("[-] ", Style::default().fg(Theme::ACCENT).add_modifier(Modifier::BOLD))
+                        };
                         let folder_style = if is_selected {
                             Theme::selected_row()
                         } else {
-                            Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
+                            Style::default().fg(Color::White).add_modifier(Modifier::BOLD)
                         };
 
                         ListItem::new(vec![
                             Line::from(vec![
-                                Span::styled(arrow, Style::default().fg(Color::Yellow)),
-                                Span::styled("📁 ", Style::default()),
-                                Span::styled(name, folder_style),
                                 Span::raw(" "),
+                                Span::styled(icon, icon_style),
+                                Span::styled(format!("{}/", name), folder_style),
+                                Span::raw("  "),
                                 Span::styled(format!("({} docs)", doc_count), Style::default().fg(Theme::TEXT_MUTED)),
                             ]),
                             Line::from(""),
@@ -226,7 +230,7 @@ impl ExploreView {
 
                         ListItem::new(vec![
                             Line::from(vec![
-                                Span::raw("    "),
+                                Span::raw("      "),
                                 Span::styled(badge_text, badge_style),
                                 Span::styled(title, doc_style),
                             ]),
@@ -237,7 +241,7 @@ impl ExploreView {
             })
             .collect();
 
-        let title_text = format!(" Folder Tree [t: List View, Enter/Space: Expand] ({}) ", app.documents.len());
+        let title_text = format!(" Tree View [t: List View, Space: Expand] ({}) ", app.documents.len());
         let list = List::new(items)
             .block(
                 Block::default()
@@ -272,7 +276,7 @@ impl ExploreView {
                     let block = Block::default()
                         .borders(Borders::ALL)
                         .border_style(Style::default().fg(border_color))
-                        .title(Span::styled(" Folder Overview ", title_style));
+                        .title(Span::styled(format!(" Directory: {}/ ", name), title_style));
 
                     let matching_docs: Vec<&crate::domain::Document> = app.documents.iter().filter(|d| {
                         let f = std::path::Path::new(&d.path).parent().map(|p| p.to_string_lossy().to_string()).unwrap_or_default();
@@ -283,13 +287,13 @@ impl ExploreView {
                     let mut text = vec![
                         Line::from(""),
                         Line::from(vec![
-                            Span::styled("  📁 Folder: ", Style::default().fg(Theme::TEXT_MUTED)),
-                            Span::styled(&name, Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+                            Span::styled("  Directory: ", Style::default().fg(Theme::TEXT_MUTED).add_modifier(Modifier::BOLD)),
+                            Span::styled(format!("{}/", name), Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
                             Span::raw("   "),
                             Span::styled(format!("({} documents)", doc_count), Style::default().fg(Color::Cyan)),
                         ]),
                         Line::from(""),
-                        Line::from(Span::styled("  ────── Documents in this Folder ──────", Style::default().fg(Theme::BORDER))),
+                        Line::from(Span::styled("  ────── Documents in this Directory ──────", Style::default().fg(Theme::BORDER))),
                         Line::from(""),
                     ];
 

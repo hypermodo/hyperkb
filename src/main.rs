@@ -497,7 +497,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
 
                 if !check.hygiene_warnings.is_empty() {
-                    println!("⚠️  Comment Hygiene Warnings:");
+                    println!("[!] Comment Hygiene Warnings:");
                     for w in &check.hygiene_warnings {
                         println!("  - {}", w);
                     }
@@ -505,9 +505,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
 
                 if check.matches.is_empty() {
-                    println!("✓ Clean: No cited open risks or path hazards detected.");
+                    println!("Clean: No cited open risks or path hazards detected.");
                 } else {
-                    println!("⚠️  Found {} cited risk(s):", check.matches.len());
+                    println!("[!] Found {} cited risk(s):", check.matches.len());
                     for m in &check.matches {
                         let status_tag = if m.suppressed {
                             "[SUPPRESSED]"
@@ -842,13 +842,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 if !scorecard.friction_hotspots.is_empty() {
                     println!("\nFriction Hotspots (Churn Re-edits):");
                     for path in &scorecard.friction_hotspots {
-                        println!("  ⚠️  {}", path);
+                        println!("  - {}", path);
                     }
                 }
                 if !scorecard.zero_hit_queries.is_empty() {
                     println!("\nKnowledge Debt (Zero-Hit Search Queries):");
                     for q in &scorecard.zero_hit_queries {
-                        println!("  ❓  \"{}\"", q);
+                        println!("  - \"{}\"", q);
                     }
                 }
             }
@@ -975,7 +975,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     println!();
 
                     if !report.bloat_warnings.is_empty() {
-                        println!("⚠️  Rule Bloat Warnings:");
+                        println!("Rule Bloat Warnings:");
                         for w in &report.bloat_warnings {
                             println!("  - {}", w);
                         }
@@ -983,7 +983,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
 
                     if !report.stale_directives.is_empty() {
-                        println!("⚠️  Stale Scope Warnings:");
+                        println!("Stale Scope Warnings:");
                         for w in &report.stale_directives {
                             println!("  - {}", w);
                         }
@@ -991,7 +991,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
 
                     if report.bloat_warnings.is_empty() && report.stale_directives.is_empty() {
-                        println!("✓ Hygiene Clean: All active directives are scoped, fresh, and within the Rule of 5 threshold.");
+                        println!("Clean: All active directives are scoped, fresh, and within the Rule of 5 threshold.");
                     }
                 }
             }
@@ -1054,7 +1054,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     println!();
 
                     if !report.bloat_warnings.is_empty() {
-                        println!("⚠️  Document Bloat Warnings (>250 lines / >2000 words):");
+                        println!("Document Bloat Warnings (>250 lines / >2000 words):");
                         for w in &report.bloat_warnings {
                             println!("  - {}", w);
                         }
@@ -1062,7 +1062,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
 
                     if !report.depth_warnings.is_empty() {
-                        println!("⚠️  Folder Depth Warnings (>3 levels):");
+                        println!("Folder Depth Warnings (>3 levels):");
                         for w in &report.depth_warnings {
                             println!("  - {}", w);
                         }
@@ -1070,7 +1070,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
 
                     if !report.schema_errors.is_empty() {
-                        println!("⚠️  Metadata Schema Errors:");
+                        println!("Metadata Schema Errors:");
                         for w in &report.schema_errors {
                             println!("  - {}", w);
                         }
@@ -1078,7 +1078,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
 
                     if !report.stale_warnings.is_empty() {
-                        println!("⚠️  Stale Proposals (>90 days in proposed status):");
+                        println!("Stale Proposals (>90 days in proposed status):");
                         for w in &report.stale_warnings {
                             println!("  - {}", w);
                         }
@@ -1086,7 +1086,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
 
                     if report.is_clean() {
-                        println!("✓ KB Clean: All documents comply with line count (<250), word count (<2000), nesting depth (≤3), and frontmatter schema.");
+                        println!("Clean: All documents comply with line count (<250), word count (<2000), nesting depth (≤3), and frontmatter schema.");
                         println!();
                     }
                 }
@@ -1100,7 +1100,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     println!();
 
                     if !report.bloat_warnings.is_empty() {
-                        println!("⚠️  Rule Bloat Warnings:");
+                        println!("Rule Bloat Warnings:");
                         for w in &report.bloat_warnings {
                             println!("  - {}", w);
                         }
@@ -1108,7 +1108,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
 
                     if !report.stale_directives.is_empty() {
-                        println!("⚠️  Stale Scope Warnings:");
+                        println!("Stale Scope Warnings:");
                         for w in &report.stale_directives {
                             println!("  - {}", w);
                         }
@@ -1116,7 +1116,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
 
                     if report.bloat_warnings.is_empty() && report.stale_directives.is_empty() {
-                        println!("✓ Hygiene Clean: All active directives are scoped, fresh, and within the Rule of 5 threshold.");
+                        println!("Clean: All active directives are scoped, fresh, and within the Rule of 5 threshold.");
                     }
                 }
             }

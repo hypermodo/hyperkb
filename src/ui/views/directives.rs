@@ -178,7 +178,7 @@ impl DirectivesView {
             if dir.status == "retired" {
                 text.push(Line::from(""));
                 text.push(Line::from(Span::styled(
-                    "  ⚠️  NOTICE: This directive is RETIRED and no longer active in briefings or pre-commit checks.",
+                    "  [NOTICE] This directive is RETIRED and no longer active in briefings or pre-commit checks.",
                     Style::default().fg(Theme::STATUS_RISK_OPEN).add_modifier(Modifier::BOLD),
                 )));
             }
