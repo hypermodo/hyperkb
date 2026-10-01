@@ -12,7 +12,7 @@ pub struct SessionsView;
 
 impl SessionsView {
     pub fn render(frame: &mut Frame, app: &App, area: Rect) {
-        let list_width = (area.width * 38 / 100).clamp(34, 50);
+        let list_width = (area.width * 38 / 100).clamp(36, 68);
         let chunks = Layout::default()
             .direction(Direction::Horizontal)
             .constraints([Constraint::Length(list_width), Constraint::Min(40)])
@@ -65,8 +65,8 @@ impl SessionsView {
 
                 let sub_info = Span::styled(
                     format!(
-                        "   edits: {} | tools: {} | diff: {} lines",
-                        sess.total_edits, sess.total_tool_calls, sess.total_diff_lines
+                        "   dur: {} | edits: {} | tools: {} | diff: {} lines",
+                        sess.formatted_duration(), sess.total_edits, sess.total_tool_calls, sess.total_diff_lines
                     ),
                     Style::default().fg(Theme::TEXT_MUTED),
                 );
@@ -162,22 +162,38 @@ impl SessionsView {
             };
 
             let text = vec![
+                Line::from(""), // Top breathing room
                 Line::from(vec![
-                    Span::styled("Session ID: ", Style::default().add_modifier(Modifier::BOLD)),
+                    Span::styled("  Session ID: ", Style::default().fg(Theme::TEXT_MUTED)),
                     Span::styled(&sess.id, Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
                 ]),
                 Line::from(vec![
-                    Span::styled("Agent: ", Style::default().add_modifier(Modifier::BOLD)),
-                    Span::styled(&sess.agent_id, Style::default().fg(Color::White)),
+                    Span::styled("  Agent: ", Style::default().fg(Theme::TEXT_MUTED)),
+                    Span::styled(&sess.agent_id, Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
                     Span::raw("   |   "),
-                    Span::styled("Status: ", Style::default().add_modifier(Modifier::BOLD)),
-                    Span::styled(&sess.status, Style::default().fg(Color::Yellow)),
+                    Span::styled("Status: ", Style::default().fg(Theme::TEXT_MUTED)),
+                    Span::styled(
+                        &sess.status,
+                        if sess.status == "completed" {
+                            Theme::STATUS_ACCEPTED
+                        } else if sess.status == "active" {
+                            Color::Yellow
+                        } else {
+                            Theme::STATUS_RISK_OPEN
+                        },
+                    ),
+                    Span::raw("   |   "),
+                    Span::styled("Duration: ", Style::default().fg(Theme::TEXT_MUTED)),
+                    Span::styled(
+                        sess.formatted_duration(),
+                        Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+                    ),
                 ]),
                 Line::from(vec![
-                    Span::styled("Started: ", Style::default().add_modifier(Modifier::BOLD)),
+                    Span::styled("  Started: ", Style::default().fg(Theme::TEXT_MUTED)),
                     Span::styled(&sess.started_at, Style::default().fg(Theme::TEXT_MUTED)),
                     Span::raw("   |   "),
-                    Span::styled("Ended: ", Style::default().add_modifier(Modifier::BOLD)),
+                    Span::styled("Ended: ", Style::default().fg(Theme::TEXT_MUTED)),
                     Span::styled(
                         sess.ended_at.as_deref().unwrap_or("In progress"),
                         Style::default().fg(Theme::TEXT_MUTED),
@@ -185,12 +201,12 @@ impl SessionsView {
                 ]),
                 Line::from(""),
                 Line::from(Span::styled(
-                    "────── Performance & Effectiveness ──────",
+                    "  ────── Performance & Effectiveness ──────",
                     Style::default().fg(Theme::BORDER),
                 )),
                 Line::from(""),
                 Line::from(vec![
-                    Span::styled("Coding Effectiveness Score: ", Style::default().add_modifier(Modifier::BOLD)),
+                    Span::styled("  Coding Effectiveness Score: ", Style::default().add_modifier(Modifier::BOLD)),
                     Span::styled(
                         format!("{}% ", score_pct),
                         Style::default().fg(score_color).add_modifier(Modifier::BOLD),
@@ -207,7 +223,7 @@ impl SessionsView {
                     ),
                 ]),
                 Line::from(vec![
-                    Span::styled("Tool-to-Edit Ratio: ", Style::default().add_modifier(Modifier::BOLD)),
+                    Span::styled("  Tool-to-Edit Ratio: ", Style::default().add_modifier(Modifier::BOLD)),
                     Span::styled(format!("{:.1} calls/edit", edit_ratio), Style::default().fg(Color::White)),
                     Span::raw("   "),
                     Span::styled(
@@ -216,11 +232,11 @@ impl SessionsView {
                     ),
                 ]),
                 Line::from(vec![
-                    Span::styled("Total Diff Volume: ", Style::default().add_modifier(Modifier::BOLD)),
+                    Span::styled("  Total Diff Volume: ", Style::default().add_modifier(Modifier::BOLD)),
                     Span::styled(format!("{} lines", sess.total_diff_lines), Style::default().fg(Color::White)),
                 ]),
                 Line::from(vec![
-                    Span::styled("Review Oscillations (Loops): ", Style::default().add_modifier(Modifier::BOLD)),
+                    Span::styled("  Review Oscillations (Loops): ", Style::default().add_modifier(Modifier::BOLD)),
                     Span::styled(
                         format!("{} loops", sess.review_loops),
                         if sess.review_loops > 0 {
@@ -231,7 +247,7 @@ impl SessionsView {
                     ),
                 ]),
                 Line::from(vec![
-                    Span::styled("First Pass Clean: ", Style::default().add_modifier(Modifier::BOLD)),
+                    Span::styled("  First Pass Clean: ", Style::default().add_modifier(Modifier::BOLD)),
                     Span::styled(
                         if sess.first_pass_clean { "YES (Zero Review Cycles)" } else { "NO (Required Iteration)" },
                         if sess.first_pass_clean {
@@ -243,18 +259,18 @@ impl SessionsView {
                 ]),
                 Line::from(""),
                 Line::from(Span::styled(
-                    "────── Risk Interception & Governance ──────",
+                    "  ────── Risk Interception & Governance ──────",
                     Style::default().fg(Theme::BORDER),
                 )),
                 Line::from(""),
                 Line::from(vec![
-                    Span::styled("Risks Prevented: ", Style::default().add_modifier(Modifier::BOLD)),
+                    Span::styled("  Risks Prevented: ", Style::default().add_modifier(Modifier::BOLD)),
                     Span::styled(
                         format!("{} prevented", sess.risks_prevented),
                         Style::default().fg(Theme::STATUS_ACCEPTED).add_modifier(Modifier::BOLD),
                     ),
                     Span::raw("   |   "),
-                    Span::styled("Risks Cited: ", Style::default().add_modifier(Modifier::BOLD)),
+                    Span::styled("  Risks Cited: ", Style::default().add_modifier(Modifier::BOLD)),
                     Span::styled(
                         format!("{} cited", sess.risks_cited),
                         if sess.risks_cited > 0 {
@@ -265,7 +281,7 @@ impl SessionsView {
                     ),
                 ]),
                 Line::from(vec![
-                    Span::styled("Delegation Grant: ", Style::default().add_modifier(Modifier::BOLD)),
+                    Span::styled("  Delegation Grant: ", Style::default().add_modifier(Modifier::BOLD)),
                     Span::styled(
                         sess.grant_id.as_deref().unwrap_or("None (Standard agent scope)"),
                         Style::default().fg(Color::LightBlue),

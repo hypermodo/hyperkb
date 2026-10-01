@@ -23,7 +23,8 @@ impl Header {
             tabs.push((ActiveTab::Reader, "[Reader]"));
         }
 
-        let mut spans = vec![
+        // Line 0: Main Navigation & Branding
+        let mut tab_spans = vec![
             Span::styled(" HyperKB ", Theme::title()),
             Span::styled(format!(" [{}] ", app.collection_id), Style::default().fg(Theme::TEXT_MUTED)),
             Span::raw("    "),
@@ -31,7 +32,7 @@ impl Header {
 
         for (tab, label) in tabs {
             if app.active_tab == tab {
-                spans.push(Span::styled(
+                tab_spans.push(Span::styled(
                     format!(" {} ", label),
                     Style::default()
                         .bg(Color::Cyan)
@@ -39,21 +40,161 @@ impl Header {
                         .add_modifier(Modifier::BOLD),
                 ));
             } else {
-                spans.push(Span::styled(
+                tab_spans.push(Span::styled(
                     format!(" {} ", label),
                     Style::default().fg(Color::White),
                 ));
             }
-            spans.push(Span::raw("  "));
+            tab_spans.push(Span::raw("  "));
         }
 
-        let paragraph = Paragraph::new(Line::from(spans)).block(
+        // Line 1: Context Sub-Header (Full-width taxonomy/category filter or status bar)
+        let sub_spans = match app.active_tab {
+            ActiveTab::Directives => {
+                let mut spans = vec![
+                    Span::styled("  Policy Taxonomy:  ", Style::default().fg(Theme::TEXT_MUTED).add_modifier(Modifier::BOLD)),
+                    Span::styled(" [c] ", Style::default().fg(Theme::ACCENT).add_modifier(Modifier::BOLD)),
+                ];
+                for cat in App::DIRECTIVE_CATEGORIES {
+                    if *cat == app.directive_category {
+                        spans.push(Span::styled(
+                            format!(" [{}] ", cat.to_uppercase()),
+                            Style::default()
+                                .fg(Color::Yellow)
+                                .bg(Color::Rgb(30, 41, 59))
+                                .add_modifier(Modifier::BOLD),
+                        ));
+                    } else {
+                        spans.push(Span::styled(
+                            format!("  {}  ", cat),
+                            Style::default().fg(Theme::TEXT_MUTED),
+                        ));
+                    }
+                    spans.push(Span::raw(" "));
+                }
+                spans
+            }
+            ActiveTab::Explore => {
+                let mut spans = vec![
+                    Span::styled("  Category Filter:  ", Style::default().fg(Theme::TEXT_MUTED).add_modifier(Modifier::BOLD)),
+                    Span::styled(" [c] ", Style::default().fg(Theme::ACCENT).add_modifier(Modifier::BOLD)),
+                ];
+                for cat in App::CATEGORIES {
+                    if *cat == app.selected_category {
+                        spans.push(Span::styled(
+                            format!(" [{}] ", cat.to_uppercase()),
+                            Style::default()
+                                .fg(Color::Yellow)
+                                .bg(Color::Rgb(30, 41, 59))
+                                .add_modifier(Modifier::BOLD),
+                        ));
+                    } else {
+                        spans.push(Span::styled(
+                            format!("  {}  ", cat),
+                            Style::default().fg(Theme::TEXT_MUTED),
+                        ));
+                    }
+                    spans.push(Span::raw(" "));
+                }
+                spans
+            }
+            ActiveTab::Sessions => {
+                let active_count = app.sessions.iter().filter(|s| s.status == "active").count();
+                vec![
+                    Span::styled("  Sessions Overview:  ", Style::default().fg(Theme::TEXT_MUTED).add_modifier(Modifier::BOLD)),
+                    Span::styled(format!("Total: {}  |  Active: {}  |  Average Effectiveness: 85%  ", app.sessions.len(), active_count), Style::default().fg(Color::White)),
+                ]
+            }
+            ActiveTab::Work => {
+                vec![
+                    Span::styled("  Work & Verification:  ", Style::default().fg(Theme::TEXT_MUTED).add_modifier(Modifier::BOLD)),
+                    Span::styled(format!("Branch: master  |  Active Directives: {}  |  Pre-Commit Gate: Enabled  ", app.directives.iter().filter(|d| d.status == "active").count()), Style::default().fg(Color::White)),
+                ]
+            }
+            ActiveTab::Reader => {
+                vec![
+                    Span::styled("  Document Reader:  ", Style::default().fg(Theme::TEXT_MUTED).add_modifier(Modifier::BOLD)),
+                    Span::styled("[Esc / Enter] Back to List  |  [j/k / Space] Scroll  |  [v] Toggle Raw  ", Style::default().fg(Color::Cyan)),
+                ]
+            }
+        };
+
+        let paragraph = Paragraph::new(vec![
+            Line::from(tab_spans),
+            Line::from(sub_spans),
+        ])
+        .block(
             Block::default()
                 .borders(Borders::BOTTOM)
                 .border_style(Style::default().fg(Theme::BORDER)),
         );
 
         frame.render_widget(paragraph, area);
+    }
+
+    pub fn handle_click(app: &mut App, db: &crate::storage::Database, col: u16, row: u16) -> bool {
+        if row == 0 {
+            let prefix_len = (9 + 2 + app.collection_id.len() + 2 + 4) as u16;
+            let tabs = [
+                (ActiveTab::Work, "[1] Work & Risks"),
+                (ActiveTab::Explore, "[2] Explore"),
+                (ActiveTab::Directives, "[3] Directives"),
+                (ActiveTab::Sessions, "[4] Sessions"),
+            ];
+            let mut cur_x = prefix_len;
+            for (tab, label) in tabs {
+                let tab_w = (label.len() + 2) as u16;
+                if col >= cur_x && col < cur_x + tab_w {
+                    app.switch_tab(tab);
+                    return true;
+                }
+                cur_x += tab_w + 2;
+            }
+            if app.active_tab == ActiveTab::Reader {
+                let tab_w = "[Reader]".len() as u16 + 2;
+                if col >= cur_x && col < cur_x + tab_w {
+                    app.switch_tab(ActiveTab::Reader);
+                    return true;
+                }
+            }
+        } else if row == 1 {
+            match app.active_tab {
+                ActiveTab::Directives => {
+                    // "  Policy Taxonomy:  [c] " is 24 chars
+                    if col >= 20 && col <= 23 {
+                        app.next_directive_category(db);
+                        return true;
+                    }
+                    let mut cur_x = 24u16;
+                    for cat in App::DIRECTIVE_CATEGORIES {
+                        let pill_w = (cat.len() + 4) as u16;
+                        if col >= cur_x && col < cur_x + pill_w {
+                            app.set_directive_category(cat, db);
+                            return true;
+                        }
+                        cur_x += pill_w + 1;
+                    }
+                }
+                ActiveTab::Explore => {
+                    // "  Category Filter:  [c] " is 20 chars
+                    if col >= 20 && col <= 23 {
+                        app.next_category(db);
+                        return true;
+                    }
+                    let mut cur_x = 24u16;
+                    for cat in App::CATEGORIES {
+                        let pill_w = (cat.len() + 4) as u16;
+                        if col >= cur_x && col < cur_x + pill_w {
+                            app.set_category(cat, db);
+                            return true;
+                        }
+                        cur_x += pill_w + 1;
+                    }
+                }
+                _ => {}
+            }
+        }
+        false
     }
 }
 

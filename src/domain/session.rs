@@ -47,6 +47,66 @@ impl AgentSession {
             status: "active".to_string(),
         }
     }
+
+    pub fn duration_seconds(&self) -> i64 {
+        let start = DateTime::parse_from_rfc3339(&self.started_at)
+            .map(|dt| dt.with_timezone(&Utc))
+            .unwrap_or_else(|_| Utc::now());
+        let end = self
+            .ended_at
+            .as_deref()
+            .and_then(|e| DateTime::parse_from_rfc3339(e).ok().map(|dt| dt.with_timezone(&Utc)))
+            .unwrap_or_else(Utc::now);
+        (end - start).num_seconds().max(0)
+    }
+
+    pub fn formatted_duration(&self) -> String {
+        let start = DateTime::parse_from_rfc3339(&self.started_at)
+            .map(|dt| dt.with_timezone(&Utc));
+        let end = self
+            .ended_at
+            .as_deref()
+            .and_then(|e| DateTime::parse_from_rfc3339(e).ok().map(|dt| dt.with_timezone(&Utc)));
+
+        let is_running = self.ended_at.is_none() && self.status == "active";
+
+        let (secs, millis) = match (start, end) {
+            (Ok(s), Some(e)) => {
+                let diff = e - s;
+                (diff.num_seconds().max(0), diff.num_milliseconds().max(0))
+            }
+            (Ok(s), None) => {
+                let diff = Utc::now() - s;
+                (diff.num_seconds().max(0), diff.num_milliseconds().max(0))
+            }
+            _ => (0, 0),
+        };
+
+        let dur_str = if secs == 0 {
+            if millis > 0 && millis < 1000 {
+                format!("{}ms", millis)
+            } else {
+                "<1s".to_string()
+            }
+        } else if secs < 60 {
+            format!("{}s", secs)
+        } else if secs < 3600 {
+            let mins = secs / 60;
+            let rem_secs = secs % 60;
+            format!("{}m {:02}s", mins, rem_secs)
+        } else {
+            let hours = secs / 3600;
+            let mins = (secs % 3600) / 60;
+            let rem_secs = secs % 60;
+            format!("{}h {:02}m {:02}s", hours, mins, rem_secs)
+        };
+
+        if is_running {
+            format!("{} (running)", dur_str)
+        } else {
+            dur_str
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -343,5 +403,22 @@ pub mod tests {
         assert!(md.contains("ADR-001: Zero Heavy Async"));
         assert!(md.contains("CRIT-01: Never run unsafe unverified sql"));
         assert!(md.contains("tokio runtime"));
+    }
+
+    #[test]
+    fn test_session_formatted_duration() {
+        let mut session = AgentSession::new("s1", "col", "prof", "agent", None);
+        session.started_at = "2026-10-01T12:00:00Z".to_string();
+        session.ended_at = Some("2026-10-01T12:02:15Z".to_string());
+        assert_eq!(session.formatted_duration(), "2m 15s");
+
+        session.ended_at = Some("2026-10-01T12:00:45Z".to_string());
+        assert_eq!(session.formatted_duration(), "45s");
+
+        session.ended_at = Some("2026-10-01T13:05:08Z".to_string());
+        assert_eq!(session.formatted_duration(), "1h 05m 08s");
+
+        session.ended_at = Some("2026-10-01T12:00:00.250Z".to_string());
+        assert_eq!(session.formatted_duration(), "250ms");
     }
 }

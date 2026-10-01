@@ -12,7 +12,7 @@ pub struct DirectivesView;
 
 impl DirectivesView {
     pub fn render(frame: &mut Frame, app: &App, area: Rect) {
-        let list_width = (area.width * 38 / 100).clamp(34, 50);
+        let list_width = (area.width * 38 / 100).clamp(36, 68);
         let chunks = Layout::default()
             .direction(Direction::Horizontal)
             .constraints([Constraint::Length(list_width), Constraint::Min(40)])
@@ -29,41 +29,6 @@ impl DirectivesView {
             Theme::BORDER
         };
 
-        // Split left column into Category Selector (3 rows) and Directives List (Remaining)
-        let list_chunks = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([Constraint::Length(3), Constraint::Min(5)])
-            .split(area);
-
-        // 1. Category Bar
-        let mut cat_spans = vec![
-            Span::styled(" [c] ", Style::default().fg(Theme::ACCENT).add_modifier(Modifier::BOLD)),
-        ];
-        for cat in App::DIRECTIVE_CATEGORIES {
-            if *cat == app.directive_category {
-                cat_spans.push(Span::styled(
-                    format!(" [{}] ", cat.to_uppercase()),
-                    Style::default()
-                        .fg(Color::Yellow)
-                        .bg(Color::Rgb(30, 41, 59))
-                        .add_modifier(Modifier::BOLD),
-                ));
-            } else {
-                cat_spans.push(Span::styled(
-                    format!("  {}  ", cat),
-                    Style::default().fg(Theme::TEXT_MUTED),
-                ));
-            }
-        }
-
-        let cat_block = Block::default()
-            .borders(Borders::ALL)
-            .border_style(Style::default().fg(Theme::BORDER))
-            .title(Span::styled(" Policy Taxonomy Filter ", Theme::title()));
-        let cat_widget = Paragraph::new(Line::from(cat_spans)).block(cat_block);
-        frame.render_widget(cat_widget, list_chunks[0]);
-
-        // 2. Directives List
         let items: Vec<ListItem> = app
             .directives
             .iter()
@@ -137,10 +102,10 @@ impl DirectivesView {
                 ]),
             ];
             let p = Paragraph::new(empty_text).block(list_block);
-            frame.render_widget(p, list_chunks[1]);
+            frame.render_widget(p, area);
         } else {
             let list = List::new(items).block(list_block);
-            frame.render_widget(list, list_chunks[1]);
+            frame.render_widget(list, area);
         }
     }
 
@@ -164,48 +129,48 @@ impl DirectivesView {
 
         if let Some(dir) = app.selected_directive() {
             let mut text = vec![
+                Line::from(""), // Top breathing room
                 Line::from(vec![
-                    Span::styled("Title: ", Style::default().add_modifier(Modifier::BOLD)),
-                    Span::styled(&dir.title, Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
-                    Span::raw("   "),
-                    Span::styled(format!("({})", dir.id), Style::default().fg(Theme::TEXT_MUTED)),
+                    Span::styled("  ", Style::default()),
+                    Span::styled(&dir.title, Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+                    Span::raw("  "),
+                    Span::styled(format!("[{}]", dir.id), Style::default().fg(Theme::TEXT_MUTED)),
                 ]),
                 Line::from(vec![
-                    Span::styled("Category: ", Style::default().add_modifier(Modifier::BOLD)),
-                    Span::styled(&dir.category, Style::default().fg(Color::Cyan)),
-                    Span::raw("   |   "),
-                    Span::styled("Status: ", Style::default().add_modifier(Modifier::BOLD)),
+                    Span::styled("  Category: ", Style::default().fg(Theme::TEXT_MUTED)),
+                    Span::styled(format!("[{}]", dir.category.to_uppercase()), Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+                    Span::raw("   "),
+                    Span::styled("Status: ", Style::default().fg(Theme::TEXT_MUTED)),
                     Span::styled(
-                        &dir.status,
+                        format!("[{}]", dir.status.to_uppercase()),
                         if dir.status == "active" {
                             Style::default().fg(Theme::STATUS_ACCEPTED).add_modifier(Modifier::BOLD)
                         } else {
                             Style::default().fg(Color::Yellow)
                         },
                     ),
-                    Span::raw("   |   "),
-                    Span::styled("Enforcement: ", Style::default().add_modifier(Modifier::BOLD)),
+                    Span::raw("   "),
+                    Span::styled("Enforcement: ", Style::default().fg(Theme::TEXT_MUTED)),
                     Span::styled(&dir.enforcement, Style::default().fg(Color::LightBlue)),
                 ]),
                 Line::from(vec![
-                    Span::styled("Author: ", Style::default().add_modifier(Modifier::BOLD)),
+                    Span::styled("  Author: ", Style::default().fg(Theme::TEXT_MUTED)),
                     Span::styled(&dir.author, Style::default().fg(Color::White)),
-                    Span::raw("   |   "),
-                    Span::styled("Created: ", Style::default().add_modifier(Modifier::BOLD)),
-                    Span::styled(&dir.created_at, Style::default().fg(Theme::TEXT_MUTED)),
-                ]),
-                Line::from(vec![
-                    Span::styled("Scope Patterns: ", Style::default().add_modifier(Modifier::BOLD)),
+                    Span::raw("   "),
+                    Span::styled("Scope: ", Style::default().fg(Theme::TEXT_MUTED)),
                     Span::styled(
-                        if dir.is_global() { "Global (*)".to_string() } else { dir.scope.join(", ") },
-                        Style::default().fg(Color::Yellow),
+                        if dir.is_global() { "global (*)".to_string() } else { dir.scope.join(", ") },
+                        Style::default().fg(Color::LightYellow),
                     ),
+                    Span::raw("   "),
+                    Span::styled("Created: ", Style::default().fg(Theme::TEXT_MUTED)),
+                    Span::styled(&dir.created_at, Style::default().fg(Theme::TEXT_MUTED)),
                 ]),
             ];
 
             if let Some(ref sup) = dir.supersedes {
                 text.push(Line::from(vec![
-                    Span::styled("Supersedes: ", Style::default().add_modifier(Modifier::BOLD)),
+                    Span::styled("  Supersedes: ", Style::default().fg(Theme::TEXT_MUTED)),
                     Span::styled(sup, Style::default().fg(Theme::STATUS_SUPERSEDED)),
                 ]));
             }
@@ -213,14 +178,14 @@ impl DirectivesView {
             if dir.status == "retired" {
                 text.push(Line::from(""));
                 text.push(Line::from(Span::styled(
-                    "⚠️  NOTICE: This directive is RETIRED and no longer active in briefings or pre-commit checks.",
+                    "  ⚠️  NOTICE: This directive is RETIRED and no longer active in briefings or pre-commit checks.",
                     Style::default().fg(Theme::STATUS_RISK_OPEN).add_modifier(Modifier::BOLD),
                 )));
             }
 
             text.push(Line::from(""));
             text.push(Line::from(Span::styled(
-                "────── Directive Content & Rules ──────",
+                "  ──────────────────────────────────────────────────────────",
                 Style::default().fg(Theme::BORDER),
             )));
             text.push(Line::from(""));

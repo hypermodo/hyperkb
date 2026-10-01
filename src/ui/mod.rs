@@ -6,7 +6,7 @@ pub mod views;
 
 use app::{ActiveTab, App};
 use crossterm::{
-    event::{self, Event, KeyCode, KeyModifiers},
+    event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyModifiers, MouseButton, MouseEventKind},
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
@@ -28,14 +28,14 @@ pub fn run(root: &Path, db: &Database, collection_id: &str, profile_id: &str) ->
     let original_hook = panic::take_hook();
     panic::set_hook(Box::new(move |panic_info| {
         let _ = disable_raw_mode();
-        let _ = execute!(io::stdout(), LeaveAlternateScreen);
+        let _ = execute!(io::stdout(), LeaveAlternateScreen, DisableMouseCapture);
         original_hook(panic_info);
     }));
 
-    // 2. Setup terminal in raw mode & alternate screen buffer
+    // 2. Setup terminal in raw mode & alternate screen buffer with mouse capture enabled
     enable_raw_mode()?;
     let mut stdout = io::stdout();
-    execute!(stdout, EnterAlternateScreen)?;
+    execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
@@ -48,7 +48,7 @@ pub fn run(root: &Path, db: &Database, collection_id: &str, profile_id: &str) ->
 
     // 5. Restore terminal state
     disable_raw_mode()?;
-    execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
+    execute!(terminal.backend_mut(), LeaveAlternateScreen, DisableMouseCapture)?;
     terminal.show_cursor()?;
 
     res
@@ -89,72 +89,152 @@ fn run_loop<B: ratatui::backend::Backend>(
 
         // Non-blocking poll with 16ms timeout (~60 FPS response time, 0% CPU when idle)
         if event::poll(Duration::from_millis(16))? {
-            if let Event::Key(key) = event::read()? {
-                // Global quit shortcuts
-                if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
-                    app.should_quit = true;
-                    break;
-                }
-
-                if app.status_message.is_some() {
-                    app.status_message = None;
-                }
-
-                if app.is_filtering {
-                    match key.code {
-                        KeyCode::Esc => {
-                            app.is_filtering = false;
-                            app.filter_query.clear();
-                        }
-                        KeyCode::Enter => {
-                            app.is_filtering = false;
-                        }
-                        KeyCode::Backspace => {
-                            app.filter_query.pop();
-                        }
-                        KeyCode::Char(c) => {
-                            app.filter_query.push(c);
-                        }
-                        _ => {}
+            match event::read()? {
+                Event::Key(key) => {
+                    // Global quit shortcuts
+                    if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
+                        app.should_quit = true;
+                        break;
                     }
-                } else {
-                    match key.code {
-                        KeyCode::Char('q') => app.should_quit = true,
-                        KeyCode::Char('1') => app.switch_tab(ActiveTab::Work),
-                        KeyCode::Char('2') => app.switch_tab(ActiveTab::Explore),
-                        KeyCode::Char('3') => app.switch_tab(ActiveTab::Directives),
-                        KeyCode::Char('4') => app.switch_tab(ActiveTab::Sessions),
-                        KeyCode::Tab => app.toggle_pane(),
-                        KeyCode::Down | KeyCode::Char('j') => app.next(),
-                        KeyCode::Up | KeyCode::Char('k') => app.prev(),
-                        KeyCode::PageDown => app.page_down(),
-                        KeyCode::PageUp => app.page_up(),
-                        KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => app.page_down(),
-                        KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => app.page_up(),
-                        KeyCode::Char(' ') if app.active_tab == ActiveTab::Reader => app.page_down(),
-                        KeyCode::Enter => app.open_selected(),
-                        KeyCode::Esc => app.go_back(),
-                        KeyCode::Char('v') => app.toggle_raw_view(),
-                        KeyCode::Char('c') | KeyCode::Char('C') => {
-                            if app.active_tab == ActiveTab::Explore {
-                                app.next_category(db);
-                            } else if app.active_tab == ActiveTab::Directives {
-                                app.next_directive_category(db);
+
+                    if app.status_message.is_some() {
+                        app.status_message = None;
+                    }
+
+                    if app.is_filtering {
+                        match key.code {
+                            KeyCode::Esc => {
+                                app.is_filtering = false;
+                                app.filter_query.clear();
+                            }
+                            KeyCode::Enter => {
+                                app.is_filtering = false;
+                            }
+                            KeyCode::Backspace => {
+                                app.filter_query.pop();
+                            }
+                            KeyCode::Char(c) => {
+                                app.filter_query.push(c);
+                            }
+                            _ => {}
+                        }
+                    } else {
+                        match key.code {
+                            KeyCode::Char('q') => app.should_quit = true,
+                            KeyCode::Char('1') => app.switch_tab(ActiveTab::Work),
+                            KeyCode::Char('2') => app.switch_tab(ActiveTab::Explore),
+                            KeyCode::Char('3') => app.switch_tab(ActiveTab::Directives),
+                            KeyCode::Char('4') => app.switch_tab(ActiveTab::Sessions),
+                            KeyCode::Tab => app.toggle_pane(),
+                            KeyCode::Down | KeyCode::Char('j') => app.next(),
+                            KeyCode::Up | KeyCode::Char('k') => app.prev(),
+                            KeyCode::PageDown => app.page_down(),
+                            KeyCode::PageUp => app.page_up(),
+                            KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => app.page_down(),
+                            KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => app.page_up(),
+                            KeyCode::Char(' ') if app.active_tab == ActiveTab::Reader => app.page_down(),
+                            KeyCode::Enter => app.open_selected(),
+                            KeyCode::Esc => app.go_back(),
+                            KeyCode::Char('v') => app.toggle_raw_view(),
+                            KeyCode::Char('c') | KeyCode::Char('C') => {
+                                if app.active_tab == ActiveTab::Explore {
+                                    app.next_category(db);
+                                } else if app.active_tab == ActiveTab::Directives {
+                                    app.next_directive_category(db);
+                                }
+                            }
+                            KeyCode::Char('r') | KeyCode::Char('R') if app.active_tab == ActiveTab::Directives => {
+                                let _ = app.retire_selected_directive(root, db);
+                            }
+                            KeyCode::Char('a') | KeyCode::Char('A') if app.active_tab == ActiveTab::Directives => {
+                                app.status_message = Some("To create a directive: run 'hyperkb directive new' or MCP tool 'draft_directive'".to_string());
+                            }
+                            KeyCode::Char('/') => {
+                                app.is_filtering = true;
+                                app.filter_query.clear();
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+                Event::Mouse(mouse) => {
+                    let col = mouse.column;
+                    let row = mouse.row;
+                    let area = terminal.size()?;
+
+                    match mouse.kind {
+                        MouseEventKind::Down(MouseButton::Left) => {
+                            if app.status_message.is_some() {
+                                app.status_message = None;
+                            }
+
+                            // 1. Header clicks (row 0: tabs, row 1: taxonomy/category filter pills)
+                            if row <= 1 {
+                                Header::handle_click(app, db, col, row);
+                            }
+                            // 2. Main content clicks
+                            else if row >= 3 && row < area.height.saturating_sub(2) {
+                                let list_width = match app.active_tab {
+                                    ActiveTab::Work => area.width * 45 / 100,
+                                    ActiveTab::Reader => 0,
+                                    _ => (area.width * 38 / 100).clamp(36, 68),
+                                };
+
+                                if col < list_width {
+                                    app.focused_pane = crate::ui::app::FocusedPane::List;
+                                    let rel_row = row - 3;
+                                    if rel_row >= 1 {
+                                        let item_idx = ((rel_row - 1) / 3) as usize;
+                                        match app.active_tab {
+                                            ActiveTab::Directives => {
+                                                if item_idx < app.directives.len() {
+                                                    app.selected_directive_idx = item_idx;
+                                                }
+                                            }
+                                            ActiveTab::Sessions => {
+                                                if item_idx < app.sessions.len() {
+                                                    app.selected_session_idx = item_idx;
+                                                }
+                                            }
+                                            ActiveTab::Explore => {
+                                                if item_idx < app.documents.len() {
+                                                    app.selected_doc_idx = item_idx;
+                                                }
+                                            }
+                                            _ => {}
+                                        }
+                                    }
+                                } else {
+                                    app.focused_pane = crate::ui::app::FocusedPane::Detail;
+                                }
+                            }
+                            // 3. Footer clicks
+                            else if row >= area.height.saturating_sub(2) {
+                                if col >= area.width.saturating_sub(12) {
+                                    app.should_quit = true;
+                                }
                             }
                         }
-                        KeyCode::Char('r') | KeyCode::Char('R') if app.active_tab == ActiveTab::Directives => {
-                            let _ = app.retire_selected_directive(root, db);
+                        MouseEventKind::ScrollDown => {
+                            let list_width = (area.width * 38 / 100).clamp(36, 68);
+                            if col < list_width {
+                                app.next();
+                            } else {
+                                app.page_down();
+                            }
                         }
-                        KeyCode::Char('a') | KeyCode::Char('A') if app.active_tab == ActiveTab::Directives => {
-                            app.status_message = Some("To create a directive: run 'hyperkb directive new' or MCP tool 'draft_directive'".to_string());
-                        }
-                        KeyCode::Char('/') => {
-                            app.is_filtering = true;
-                            app.filter_query.clear();
+                        MouseEventKind::ScrollUp => {
+                            let list_width = (area.width * 38 / 100).clamp(36, 68);
+                            if col < list_width {
+                                app.prev();
+                            } else {
+                                app.page_up();
+                            }
                         }
                         _ => {}
                     }
                 }
+                _ => {}
             }
         }
     }

@@ -13,7 +13,7 @@ pub struct ExploreView;
 
 impl ExploreView {
     pub fn render(frame: &mut Frame, app: &App, area: Rect) {
-        let list_width = (area.width * 36 / 100).clamp(32, 46);
+        let list_width = (area.width * 38 / 100).clamp(36, 68);
         let chunks = Layout::default()
             .direction(Direction::Horizontal)
             .constraints([Constraint::Length(list_width), Constraint::Min(40)])
@@ -30,41 +30,6 @@ impl ExploreView {
             Theme::BORDER
         };
 
-        // Split left column into Category Selector (3 rows) and Document List (Remaining)
-        let list_chunks = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([Constraint::Length(3), Constraint::Min(5)])
-            .split(area);
-
-        // 1. Category Bar
-        let mut cat_spans = vec![
-            Span::styled(" [c] ", Style::default().fg(Theme::ACCENT).add_modifier(Modifier::BOLD)),
-        ];
-        for cat in App::CATEGORIES {
-            if *cat == app.selected_category {
-                cat_spans.push(Span::styled(
-                    format!(" [{}] ", cat.to_uppercase()),
-                    Style::default()
-                        .fg(Color::Yellow)
-                        .bg(Color::Rgb(30, 41, 59))
-                        .add_modifier(Modifier::BOLD),
-                ));
-            } else {
-                cat_spans.push(Span::styled(
-                    format!("  {}  ", cat),
-                    Style::default().fg(Theme::TEXT_MUTED),
-                ));
-            }
-        }
-
-        let cat_block = Block::default()
-            .borders(Borders::ALL)
-            .border_style(Style::default().fg(Theme::BORDER))
-            .title(Span::styled(" Category Filter ", Theme::title()));
-        let cat_widget = Paragraph::new(Line::from(cat_spans)).block(cat_block);
-        frame.render_widget(cat_widget, list_chunks[0]);
-
-        // 2. Document List
         let items: Vec<ListItem> = app
             .documents
             .iter()
@@ -126,7 +91,7 @@ impl ExploreView {
             )
             .highlight_style(Theme::selected_row());
 
-        frame.render_widget(list, list_chunks[1]);
+        frame.render_widget(list, area);
     }
 
     fn render_document_preview(frame: &mut Frame, app: &App, area: Rect) {
@@ -149,16 +114,17 @@ impl ExploreView {
 
         if let Some(doc) = app.selected_document() {
             let mut text = vec![
+                Line::from(""), // Top breathing room
                 Line::from(vec![
-                    Span::styled("Title: ", Style::default().add_modifier(Modifier::BOLD)),
-                    Span::styled(&doc.title, Style::default().fg(Color::White)),
+                    Span::styled("  Title: ", Style::default().add_modifier(Modifier::BOLD)),
+                    Span::styled(&doc.title, Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
                 ]),
                 Line::from(vec![
-                    Span::styled("Path: ", Style::default().add_modifier(Modifier::BOLD)),
+                    Span::styled("  Path: ", Style::default().add_modifier(Modifier::BOLD)),
                     Span::styled(&doc.path, Style::default().fg(Theme::ACCENT)),
                 ]),
                 Line::from(vec![
-                    Span::styled("Status: ", Style::default().add_modifier(Modifier::BOLD)),
+                    Span::styled("  Status: ", Style::default().add_modifier(Modifier::BOLD)),
                     Span::styled(doc.status.as_str(), Style::default().fg(Color::Yellow)),
                     Span::raw("   |   "),
                     Span::styled("Kind: ", Style::default().add_modifier(Modifier::BOLD)),
