@@ -1,0 +1,7 @@
+/target
+*.db
+*.db-*
+*.sqlite
+*.sqlite-*
+.hyperkb/
+.DS_Store
