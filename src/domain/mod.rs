@@ -4,7 +4,7 @@ pub mod hlc;
 pub mod memory;
 pub mod risk;
 
-pub use actor::{ActionKind, Actor, AuthorityGrant, GrantConstraints};
+pub use actor::{ActionKind, Actor, AuthorityGrant, DelegationMeta, GrantConstraints};
 pub use document::{
     BrowseOptions, Document, DocumentKind, DocumentStatus, Hit, IndexReport, MoveSuggestion,
     RecordMeta,

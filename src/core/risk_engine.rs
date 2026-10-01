@@ -89,12 +89,15 @@ impl RiskEngine {
                     RiskApplicability::NotApplicable
                 };
 
+                let is_acknowledged = doc.status == crate::domain::DocumentStatus::Acknowledged
+                    || doc.declared_status.as_deref() == Some("acknowledged");
+
                 matches.push(RiskMatch {
                     document: doc.clone(),
                     matched_paths,
                     reason: format!("Matches risk path patterns declared in {}", doc.path),
                     applicability,
-                    acknowledged: false,
+                    acknowledged: is_acknowledged,
                     acknowledgement: None,
                     external_issue_freshness: None,
                 });

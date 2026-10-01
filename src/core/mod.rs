@@ -1,5 +1,6 @@
 pub mod decisions;
 pub mod git;
+pub mod grants;
 pub mod maintenance;
 pub mod metadata;
 pub mod risk_engine;
@@ -8,6 +9,7 @@ pub mod scanner;
 
 pub use decisions::{DecisionDraft, DecisionReview, DecisionWorkflow};
 pub use git::Git;
+pub use grants::GrantStore;
 pub use maintenance::{BackupManifest, BackupReport, MaintenanceManager};
 pub use metadata::{MetadataParser, ParsedMetadata};
 pub use risk_engine::RiskEngine;

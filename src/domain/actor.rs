@@ -32,11 +32,23 @@ impl Default for GrantConstraints {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AuthorityGrant {
     pub grant_id: Uuid,
+    #[serde(default)]
+    pub grantee: String,
     pub granted_by: String,
     pub allowed_actions: Vec<ActionKind>,
     pub allowed_scope_patterns: Vec<String>,
     pub constraints: GrantConstraints,
+    #[serde(default = "Utc::now")]
+    pub created_at: DateTime<Utc>,
     pub signature: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DelegationMeta {
+    pub agent_id: String,
+    pub grant_id: Uuid,
+    pub granted_by: String,
+    pub timestamp: DateTime<Utc>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -56,6 +68,25 @@ impl Actor {
         match self {
             Actor::Human { username } => username,
             Actor::Agent { agent_id, .. } => agent_id,
+        }
+    }
+
+    pub fn responsible_owner(&self) -> &str {
+        match self {
+            Actor::Human { username } => username,
+            Actor::Agent { grant, .. } => &grant.granted_by,
+        }
+    }
+
+    pub fn delegation_meta(&self) -> Option<DelegationMeta> {
+        match self {
+            Actor::Human { .. } => None,
+            Actor::Agent { agent_id, grant, .. } => Some(DelegationMeta {
+                agent_id: agent_id.clone(),
+                grant_id: grant.grant_id,
+                granted_by: grant.granted_by.clone(),
+                timestamp: Utc::now(),
+            }),
         }
     }
 
@@ -96,16 +127,20 @@ mod tests {
             username: "wiqar".into(),
         };
         assert!(actor.can_perform(&ActionKind::AcceptDecision, "docs/decisions/001.md"));
+        assert_eq!(actor.responsible_owner(), "wiqar");
+        assert!(actor.delegation_meta().is_none());
     }
 
     #[test]
     fn test_agent_scope_clamping() {
         let grant = AuthorityGrant {
             grant_id: Uuid::now_v7(),
+            grantee: "opencode".into(),
             granted_by: "wiqar".into(),
             allowed_actions: vec![ActionKind::AutoRepair, ActionKind::AcceptDecision],
             allowed_scope_patterns: vec!["projects/audits/**".into()],
             constraints: GrantConstraints::default(),
+            created_at: Utc::now(),
             signature: None,
         };
         let agent = Actor::Agent {
@@ -117,6 +152,12 @@ mod tests {
         assert!(agent.can_perform(&ActionKind::AcceptDecision, "projects/audits/audit-1.md"));
         assert!(!agent.can_perform(&ActionKind::AcceptDecision, "docs/decisions/core.md"));
         assert!(!agent.can_perform(&ActionKind::AcknowledgeRisk, "projects/audits/audit-1.md"));
+
+        // Verify human is responsible owner and delegation is tracked
+        assert_eq!(agent.responsible_owner(), "wiqar");
+        let del = agent.delegation_meta().unwrap();
+        assert_eq!(del.agent_id, "opencode");
+        assert_eq!(del.granted_by, "wiqar");
     }
 }
 

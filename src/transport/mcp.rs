@@ -1,4 +1,4 @@
-use crate::core::{DecisionWorkflow, RiskWorkflow};
+use crate::core::{DecisionWorkflow, GrantStore, RiskWorkflow};
 use crate::domain::BrowseOptions;
 use crate::storage::Queries;
 use rusqlite::Connection;
@@ -242,7 +242,7 @@ impl McpServer {
             }),
             json!({
                 "name": "draft_decision",
-                "description": "Create a proposed repo decision document for owner review. It cannot accept or supersede a decision.",
+                "description": "Create a proposed repo decision document for owner review. It cannot accept or supersede a decision without an authority grant.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
@@ -261,9 +261,39 @@ impl McpServer {
                         "supersedes": {
                             "type": "string",
                             "description": "Optional stable ID or relative path of the existing accepted decision this replaces"
+                        },
+                        "grant_id": {
+                            "type": "string",
+                            "description": "Optional UUID of an active AuthorityGrant"
                         }
                     },
                     "required": ["title", "rationale", "author"]
+                }
+            }),
+            json!({
+                "name": "accept_decision",
+                "description": "Ratify/accept a proposed decision document on behalf of the human authorizer using a valid AuthorityGrant. Human remains the responsible owner; delegation is recorded.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "path": {
+                            "type": "string",
+                            "description": "Relative path to the proposed decision markdown file"
+                        },
+                        "grant_id": {
+                            "type": "string",
+                            "description": "UUID of the active AuthorityGrant"
+                        },
+                        "agent_id": {
+                            "type": "string",
+                            "description": "Agent name or identifier"
+                        },
+                        "supersedes": {
+                            "type": "string",
+                            "description": "Optional target decision ID to supersede"
+                        }
+                    },
+                    "required": ["path", "grant_id"]
                 }
             }),
             json!({
@@ -298,9 +328,39 @@ impl McpServer {
                             "type": "array",
                             "items": { "type": "string" },
                             "description": "Optional deployment environments this risk applies to (e.g. ['production'])"
+                        },
+                        "grant_id": {
+                            "type": "string",
+                            "description": "Optional UUID of an active AuthorityGrant"
                         }
                     },
                     "required": ["title", "rationale", "author", "paths"]
+                }
+            }),
+            json!({
+                "name": "acknowledge_risk",
+                "description": "Acknowledge an open risk citing a mitigating rationale under an active AuthorityGrant. Acknowledged risks no longer block commits.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "risk_id": {
+                            "type": "string",
+                            "description": "Stable ID or relative path of the risk"
+                        },
+                        "rationale": {
+                            "type": "string",
+                            "description": "Justification for why the risk is safely waived or mitigated"
+                        },
+                        "grant_id": {
+                            "type": "string",
+                            "description": "UUID of the active AuthorityGrant"
+                        },
+                        "agent_id": {
+                            "type": "string",
+                            "description": "Agent name or identifier"
+                        }
+                    },
+                    "required": ["risk_id", "rationale", "grant_id"]
                 }
             }),
         ]
@@ -499,6 +559,13 @@ impl McpServer {
                     .and_then(|v| v.as_str())
                     .ok_or_else(|| "Missing required argument 'author' for draft_decision".to_string())?;
                 let supersedes = args.get("supersedes").and_then(|v| v.as_str());
+                let grant_id = args
+                    .get("grant_id")
+                    .and_then(|v| v.as_str())
+                    .and_then(|s| uuid::Uuid::parse_str(s).ok());
+
+                let actor = GrantStore::resolve_actor(root, Some(author), grant_id, Some(author))
+                    .map_err(|e| format!("Failed to resolve actor: {}", e))?;
 
                 match DecisionWorkflow::draft_replacement(
                     root,
@@ -506,7 +573,7 @@ impl McpServer {
                     collection_id,
                     title,
                     rationale,
-                    author,
+                    &actor,
                     supersedes,
                 ) {
                     Ok(draft) => {
@@ -514,6 +581,7 @@ impl McpServer {
                             "path": draft.path,
                             "id": draft.id,
                             "status": draft.status,
+                            "owner": actor.responsible_owner(),
                             "message": format!("Draft decision saved to '{}'. Awaiting owner review before acceptance.", draft.path)
                         });
                         Ok(json!({
@@ -531,6 +599,67 @@ impl McpServer {
                             {
                                 "type": "text",
                                 "text": format!("Refused draft: {}", err)
+                            }
+                        ],
+                        "isError": true
+                    })),
+                }
+            }
+
+            "accept_decision" => {
+                let path = args
+                    .get("path")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| "Missing required argument 'path' for accept_decision".to_string())?;
+                let grant_id_str = args
+                    .get("grant_id")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| "Missing required argument 'grant_id' (AuthorityGrant required for agent ratification)".to_string())?;
+                let grant_id = uuid::Uuid::parse_str(grant_id_str)
+                    .map_err(|_| "Invalid grant_id UUID format".to_string())?;
+                let agent_id = args.get("agent_id").and_then(|v| v.as_str()).unwrap_or("agent");
+                let supersedes = args.get("supersedes").and_then(|v| v.as_str());
+
+                let actor = GrantStore::resolve_actor(root, Some(agent_id), Some(grant_id), None)?;
+
+                match DecisionWorkflow::review_acceptance(root, conn, path, &actor, supersedes) {
+                    Ok(review) => {
+                        match DecisionWorkflow::accept_decision(root, conn, collection_id, &review, Some(&actor)) {
+                            Ok(()) => {
+                                let reply = json!({
+                                    "path": path,
+                                    "status": "accepted",
+                                    "owner": actor.responsible_owner(),
+                                    "delegated_agent": actor.name(),
+                                    "grant_id": grant_id_str,
+                                    "message": format!("Decision '{}' ratified under authority of human principal '{}'.", path, actor.responsible_owner())
+                                });
+                                Ok(json!({
+                                    "content": [
+                                        {
+                                            "type": "text",
+                                            "text": serde_json::to_string_pretty(&reply).unwrap_or_default()
+                                        }
+                                    ],
+                                    "isError": false
+                                }))
+                            }
+                            Err(e) => Ok(json!({
+                                "content": [
+                                    {
+                                        "type": "text",
+                                        "text": format!("Refused decision acceptance: {}", e)
+                                    }
+                                ],
+                                "isError": true
+                            })),
+                        }
+                    }
+                    Err(e) => Ok(json!({
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": format!("Refused decision review: {}", e)
                             }
                         ],
                         "isError": true
@@ -585,13 +714,21 @@ impl McpServer {
                     })
                     .unwrap_or_default();
 
-                match RiskWorkflow::draft_risk(
+                let grant_id = args
+                    .get("grant_id")
+                    .and_then(|v| v.as_str())
+                    .and_then(|s| uuid::Uuid::parse_str(s).ok());
+
+                let actor = GrantStore::resolve_actor(root, Some(author), grant_id, Some(author))
+                    .map_err(|e| format!("Failed to resolve actor: {}", e))?;
+
+                match RiskWorkflow::draft_risk_with_actor(
                     root,
                     conn,
                     collection_id,
                     title,
                     rationale,
-                    author,
+                    &actor,
                     paths,
                     versions,
                     environments,
@@ -602,6 +739,7 @@ impl McpServer {
                             "id": draft.id,
                             "status": draft.status,
                             "paths": draft.paths,
+                            "owner": actor.responsible_owner(),
                             "message": format!("Draft risk saved to '{}' and indexed for pre-edit interception.", draft.path)
                         });
                         Ok(json!({
@@ -619,6 +757,57 @@ impl McpServer {
                             {
                                 "type": "text",
                                 "text": format!("Refused risk draft: {}", err)
+                            }
+                        ],
+                        "isError": true
+                    })),
+                }
+            }
+
+            "acknowledge_risk" => {
+                let risk_id = args
+                    .get("risk_id")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| "Missing required argument 'risk_id' for acknowledge_risk".to_string())?;
+                let rationale = args
+                    .get("rationale")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| "Missing required argument 'rationale' for acknowledge_risk".to_string())?;
+                let grant_id_str = args
+                    .get("grant_id")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| "Missing required argument 'grant_id' (AuthorityGrant required for agent risk waiver)".to_string())?;
+                let grant_id = uuid::Uuid::parse_str(grant_id_str)
+                    .map_err(|_| "Invalid grant_id UUID format".to_string())?;
+                let agent_id = args.get("agent_id").and_then(|v| v.as_str()).unwrap_or("agent");
+
+                let actor = GrantStore::resolve_actor(root, Some(agent_id), Some(grant_id), None)?;
+
+                match RiskWorkflow::acknowledge_risk(root, conn, collection_id, risk_id, &actor, rationale) {
+                    Ok(ack) => {
+                        let reply = json!({
+                            "risk_id": ack.id,
+                            "path": ack.path,
+                            "status": "acknowledged",
+                            "owner": actor.responsible_owner(),
+                            "delegated_agent": actor.name(),
+                            "message": format!("Risk '{}' acknowledged under authority of human principal '{}'. It will no longer block pre-edit checks.", ack.path, actor.responsible_owner())
+                        });
+                        Ok(json!({
+                            "content": [
+                                {
+                                    "type": "text",
+                                    "text": serde_json::to_string_pretty(&reply).unwrap_or_default()
+                                }
+                            ],
+                            "isError": false
+                        }))
+                    }
+                    Err(err) => Ok(json!({
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": format!("Refused risk acknowledgment: {}", err)
                             }
                         ],
                         "isError": true
@@ -743,5 +932,116 @@ mod tests {
         let content_text = call_resp.result.unwrap()["content"][0]["text"].as_str().unwrap().to_string();
         assert!(content_text.contains("docs/risks/"));
         assert!(content_text.contains("open"));
+    }
+
+    #[test]
+    fn test_mcp_accept_decision_with_grant() {
+        let temp_dir = std::env::temp_dir().join(format!("hyperkb-mcp-grant-dec-{}", uuid::Uuid::now_v7()));
+        let _ = std::fs::create_dir_all(&temp_dir);
+        let db = Database::open_in_memory("coll_test", "prof_test").unwrap();
+
+        // 1. Issue an AuthorityGrant from human principal "wiqar" to agent "opencode"
+        let grant = GrantStore::issue_grant(
+            &temp_dir,
+            "opencode",
+            "wiqar",
+            vec![crate::domain::ActionKind::ProposeDecision, crate::domain::ActionKind::AcceptDecision],
+            vec!["docs/decisions/**".to_string()],
+            crate::domain::GrantConstraints::default(),
+        )
+        .unwrap();
+
+        // 2. Agent drafts decision with grant
+        let draft_req = JsonRpcRequest {
+            jsonrpc: "2.0".into(),
+            id: Some(json!(6)),
+            method: "tools/call".into(),
+            params: Some(json!({
+                "name": "draft_decision",
+                "arguments": {
+                    "title": "Adopt Delegated Authority Model",
+                    "rationale": "Delegation ensures human accountability while empowering agents.",
+                    "author": "opencode",
+                    "grant_id": grant.grant_id.to_string()
+                }
+            })),
+        };
+        let draft_resp = McpServer::handle_request(&temp_dir, db.conn(), "coll_test", "prof_test", draft_req).unwrap();
+        let draft_json: Value = serde_json::from_str(draft_resp.result.unwrap()["content"][0]["text"].as_str().unwrap()).unwrap();
+        let path = draft_json["path"].as_str().unwrap();
+        assert_eq!(draft_json["owner"], "wiqar");
+
+        // 3. Agent ratifies/accepts decision under grant
+        let accept_req = JsonRpcRequest {
+            jsonrpc: "2.0".into(),
+            id: Some(json!(7)),
+            method: "tools/call".into(),
+            params: Some(json!({
+                "name": "accept_decision",
+                "arguments": {
+                    "path": path,
+                    "grant_id": grant.grant_id.to_string(),
+                    "agent_id": "opencode"
+                }
+            })),
+        };
+        let accept_resp = McpServer::handle_request(&temp_dir, db.conn(), "coll_test", "prof_test", accept_req).unwrap();
+        let accept_json: Value = serde_json::from_str(accept_resp.result.unwrap()["content"][0]["text"].as_str().unwrap()).unwrap();
+        assert_eq!(accept_json["status"], "accepted");
+        assert_eq!(accept_json["owner"], "wiqar"); // Human principal is owner!
+        assert_eq!(accept_json["delegated_agent"], "opencode");
+    }
+
+    #[test]
+    fn test_mcp_acknowledge_risk_with_grant() {
+        let temp_dir = std::env::temp_dir().join(format!("hyperkb-mcp-grant-risk-{}", uuid::Uuid::now_v7()));
+        let _ = std::fs::create_dir_all(&temp_dir);
+        let db = Database::open_in_memory("coll_test", "prof_test").unwrap();
+
+        // 1. Issue grant to agent
+        let grant = GrantStore::issue_grant(
+            &temp_dir,
+            "opencode",
+            "wiqar",
+            vec![crate::domain::ActionKind::AcknowledgeRisk],
+            vec!["docs/risks/**".to_string()],
+            crate::domain::GrantConstraints::default(),
+        )
+        .unwrap();
+
+        // 2. Draft risk
+        let draft = RiskWorkflow::draft_risk(
+            &temp_dir,
+            db.conn(),
+            "coll_test",
+            "Unindexed Foreign Key Contention",
+            "May cause table locks on cascade delete.",
+            "wiqar",
+            vec!["src/storage/**".to_string()],
+            vec![],
+            vec![],
+        )
+        .unwrap();
+
+        // 3. Agent acknowledges risk over MCP
+        let ack_req = JsonRpcRequest {
+            jsonrpc: "2.0".into(),
+            id: Some(json!(8)),
+            method: "tools/call".into(),
+            params: Some(json!({
+                "name": "acknowledge_risk",
+                "arguments": {
+                    "risk_id": draft.id,
+                    "rationale": "Foreign key index added in migration V04.",
+                    "grant_id": grant.grant_id.to_string(),
+                    "agent_id": "opencode"
+                }
+            })),
+        };
+        let ack_resp = McpServer::handle_request(&temp_dir, db.conn(), "coll_test", "prof_test", ack_req).unwrap();
+        let ack_json: Value = serde_json::from_str(ack_resp.result.unwrap()["content"][0]["text"].as_str().unwrap()).unwrap();
+        assert_eq!(ack_json["status"], "acknowledged");
+        assert_eq!(ack_json["owner"], "wiqar"); // Human principal is owner!
+        assert_eq!(ack_json["delegated_agent"], "opencode");
     }
 }

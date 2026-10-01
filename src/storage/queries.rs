@@ -507,7 +507,7 @@ impl Queries {
                     d.risk_paths, d.risk_versions, d.risk_environments
              FROM effective_documents e
              JOIN documents d ON d.id = e.id
-             WHERE d.collection_id = ?1 AND d.kind = 'risk' AND e.effective_status <> 'superseded';",
+             WHERE d.collection_id = ?1 AND d.kind = 'risk' AND e.effective_status NOT IN ('superseded', 'resolved');",
         )?;
 
         let mut rows = stmt.query([collection_id])?;
@@ -588,6 +588,7 @@ mod tests {
             versions: vec!["1.0.0".into()],
             environments: vec!["prod".into()],
             supersedes: None,
+            delegation: None,
         };
 
         Queries::upsert_document(
@@ -680,6 +681,7 @@ mod tests {
             versions: vec!["v2.0".into()],
             environments: vec!["production".into()],
             supersedes: None,
+            delegation: None,
         };
 
         Queries::upsert_document(

@@ -1,10 +1,14 @@
+use chrono::Utc;
 use clap::{Parser, Subcommand};
-use hyperkb_rs::core::{DecisionWorkflow, Git, MaintenanceManager, RiskWorkflow, Scanner};
-use hyperkb_rs::domain::BrowseOptions;
+use hyperkb_rs::core::{
+    DecisionWorkflow, Git, GrantStore, MaintenanceManager, RiskWorkflow, Scanner,
+};
+use hyperkb_rs::domain::{ActionKind, Actor, BrowseOptions, GrantConstraints};
 use hyperkb_rs::storage::{Database, Queries};
 use hyperkb_rs::transport::McpServer;
 use hyperkb_rs::ui;
 use std::path::PathBuf;
+use uuid::Uuid;
 
 #[derive(Parser)]
 #[command(name = "hyperkb")]
@@ -118,6 +122,55 @@ enum Commands {
     ListBackups,
     /// Compact the SQLite database and truncate the WAL journal to reclaim disk space
     Compact,
+    /// Manage AuthorityGrants for delegated agent autonomy
+    Grant {
+        #[command(subcommand)]
+        command: GrantCommands,
+    },
+    /// Acknowledge an open risk with rationale so it no longer blocks check_work
+    #[command(alias = "ack")]
+    AcknowledgeRisk {
+        /// Stable ID or relative path of the risk
+        risk_id: String,
+        /// Justification or mitigating rationale
+        #[arg(short, long)]
+        rationale: String,
+        /// Responsible human owner
+        #[arg(short, long, default_value = "Developer")]
+        owner: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum GrantCommands {
+    /// Issue a new AuthorityGrant to an agent delegate
+    Issue {
+        /// Target agent identity (e.g. claude-3-7-sonnet, opencode)
+        #[arg(short, long)]
+        grantee: String,
+        /// Human authorizer / principal (defaults to current user or "Developer")
+        #[arg(long)]
+        granted_by: Option<String>,
+        /// Comma-separated allowed actions (accept-decision, acknowledge-risk, propose-decision, auto-repair)
+        #[arg(short, long, default_value = "accept-decision,acknowledge-risk")]
+        actions: String,
+        /// Comma-separated file path glob patterns (e.g. "docs/decisions/**,projects/**")
+        #[arg(short, long, default_value = "*")]
+        scope: String,
+        /// Maximum allowable diff line count for ratified edits
+        #[arg(long, default_value_t = 200)]
+        max_diff: usize,
+        /// Validity duration in hours (e.g. 24)
+        #[arg(long)]
+        ttl_hours: Option<u64>,
+    },
+    /// List active authority grants
+    List,
+    /// Revoke an existing authority grant
+    Revoke {
+        /// Grant UUID
+        grant_id: String,
+    },
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -297,13 +350,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             owner,
             supersedes,
         }) => {
+            let actor = Actor::Human { username: owner };
             let draft = DecisionWorkflow::draft_replacement(
                 &cli.root,
                 db.conn(),
                 "local_collection",
                 &title,
                 &rationale,
-                &owner,
+                &actor,
                 supersedes.as_deref(),
             )?;
             println!("✓ Proposed decision drafted:");
@@ -317,15 +371,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             owner,
             supersedes,
         }) => {
+            let actor = Actor::Human { username: owner };
             let review = DecisionWorkflow::review_acceptance(
                 &cli.root,
                 db.conn(),
                 &path,
-                &owner,
+                &actor,
                 supersedes.as_deref(),
             )?;
             println!("Accepting decision at {}:", path);
-            DecisionWorkflow::accept_decision(&cli.root, db.conn(), "local_collection", &review)?;
+            DecisionWorkflow::accept_decision(&cli.root, db.conn(), "local_collection", &review, Some(&actor))?;
             println!("✓ Decision accepted and indexed as architectural authority.");
         }
         Some(Commands::Remember { title, content }) => {
@@ -365,6 +420,113 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             db.compact()?;
             println!("✓ Database compacted successfully.");
         }
+        Some(Commands::AcknowledgeRisk {
+            risk_id,
+            rationale,
+            owner,
+        }) => {
+            let actor = Actor::Human { username: owner };
+            let ack = RiskWorkflow::acknowledge_risk(
+                &cli.root,
+                db.conn(),
+                "local_collection",
+                &risk_id,
+                &actor,
+                &rationale,
+            )?;
+            println!("✓ Risk acknowledged by human principal '{}':", actor.responsible_owner());
+            println!("  Path:   {}", ack.path);
+            println!("  ID:     {}", ack.id);
+            println!("  Status: {}", ack.status);
+            println!("\nThis risk is recorded as waived/mitigated and will no longer block check-work or git commits.");
+        }
+        Some(Commands::Grant { command }) => match command {
+            GrantCommands::Issue {
+                grantee,
+                granted_by,
+                actions,
+                scope,
+                max_diff,
+                ttl_hours,
+            } => {
+                let authorizer = granted_by
+                    .or_else(|| std::env::var("USER").ok())
+                    .unwrap_or_else(|| "Developer".to_string());
+
+                let allowed_actions: Vec<ActionKind> = actions
+                    .split(',')
+                    .filter_map(|s| match s.trim().to_ascii_lowercase().as_str() {
+                        "accept-decision" | "accept_decision" => Some(ActionKind::AcceptDecision),
+                        "acknowledge-risk" | "acknowledge_risk" => Some(ActionKind::AcknowledgeRisk),
+                        "propose-decision" | "propose_decision" => Some(ActionKind::ProposeDecision),
+                        "auto-repair" | "auto_repair" => Some(ActionKind::AutoRepair),
+                        _ => None,
+                    })
+                    .collect();
+
+                let allowed_scope_patterns: Vec<String> = scope
+                    .split(',')
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty())
+                    .collect();
+
+                let constraints = GrantConstraints {
+                    max_line_diff: Some(max_diff),
+                    require_tests_pass: false,
+                    allow_supersede: true,
+                    expires_at: ttl_hours.map(|h| Utc::now() + chrono::Duration::hours(h as i64)),
+                };
+
+                let grant = GrantStore::issue_grant(
+                    &cli.root,
+                    &grantee,
+                    &authorizer,
+                    allowed_actions,
+                    allowed_scope_patterns,
+                    constraints,
+                )?;
+
+                println!("✓ AuthorityGrant issued and saved to .hyperkb/grants/{}.json", grant.grant_id);
+                println!("  Grant ID:    {}", grant.grant_id);
+                println!("  Grantee:     {}", grant.grantee);
+                println!("  Granted By:  {} (Responsible Human Principal)", grant.granted_by);
+                println!("  Actions:     {:?}", grant.allowed_actions);
+                println!("  Scope:       {:?}", grant.allowed_scope_patterns);
+                println!("  Max Diff:    {} lines", max_diff);
+                if let Some(exp) = grant.constraints.expires_at {
+                    println!("  Expires:     {}", exp.to_rfc3339());
+                } else {
+                    println!("  Expires:     Never");
+                }
+            }
+            GrantCommands::List => {
+                let grants = GrantStore::list_grants(&cli.root)?;
+                if grants.is_empty() {
+                    println!("No authority grants currently registered in .hyperkb/grants.");
+                } else {
+                    println!("Registered Authority Grants ({}):", grants.len());
+                    for g in grants {
+                        let expired = g.constraints.expires_at.map_or(false, |exp| Utc::now() > exp);
+                        let status_str = if expired { " [EXPIRED]" } else { " [ACTIVE]" };
+                        println!(
+                            "• {} (Grantee: {}, Principal: {}){}",
+                            g.grant_id, g.grantee, g.granted_by, status_str
+                        );
+                        println!("    Scope:   {:?}", g.allowed_scope_patterns);
+                        println!("    Actions: {:?}", g.allowed_actions);
+                    }
+                }
+            }
+            GrantCommands::Revoke { grant_id } => {
+                let uid = Uuid::parse_str(&grant_id)
+                    .map_err(|_| format!("Invalid grant UUID '{}'", grant_id))?;
+                if GrantStore::revoke_grant(&cli.root, uid)? {
+                    println!("✓ AuthorityGrant '{}' revoked and removed.", uid);
+                } else {
+                    println!("Grant '{}' not found.", uid);
+                }
+            }
+        },
         None => {
             // Index existing docs in workspace so the TUI opens with real knowledge ready to browse
             let docs_dir = PathBuf::from("../hyperkb/docs");

@@ -142,6 +142,7 @@ impl Scanner {
                 versions: Vec::new(),
                 environments: Vec::new(),
                 supersedes: None,
+                delegation: None,
             });
 
             let topic = rel_path

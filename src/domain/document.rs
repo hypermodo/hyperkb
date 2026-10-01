@@ -6,6 +6,9 @@ pub enum DocumentStatus {
     Proposed,
     Accepted,
     Superseded,
+    Open,
+    Acknowledged,
+    Resolved,
     Unknown,
     Conflict,
 }
@@ -22,6 +25,9 @@ impl DocumentStatus {
             DocumentStatus::Proposed => "proposed",
             DocumentStatus::Accepted => "accepted",
             DocumentStatus::Superseded => "superseded",
+            DocumentStatus::Open => "open",
+            DocumentStatus::Acknowledged => "acknowledged",
+            DocumentStatus::Resolved => "resolved",
             DocumentStatus::Unknown => "unknown",
             DocumentStatus::Conflict => "conflict",
         }
@@ -32,6 +38,9 @@ impl DocumentStatus {
             "proposed" => DocumentStatus::Proposed,
             "accepted" => DocumentStatus::Accepted,
             "superseded" => DocumentStatus::Superseded,
+            "open" => DocumentStatus::Open,
+            "acknowledged" => DocumentStatus::Acknowledged,
+            "resolved" => DocumentStatus::Resolved,
             "conflict" => DocumentStatus::Conflict,
             _ => DocumentStatus::Unknown,
         }
@@ -136,6 +145,8 @@ pub struct RecordMeta {
     pub environments: Vec<String>,
     #[serde(default)]
     pub supersedes: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub delegation: Option<crate::domain::DelegationMeta>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

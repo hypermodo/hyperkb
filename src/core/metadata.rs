@@ -68,8 +68,13 @@ impl MetadataParser {
             },
             "risk" => {
                 match m.status.as_str() {
-                    "open" | "fixed" | "superseded" => {}
-                    _ => return Err("risk status must be open, fixed or superseded".to_string()),
+                    "open" | "acknowledged" | "resolved" | "fixed" | "superseded" => {}
+                    _ => {
+                        return Err(
+                            "risk status must be open, acknowledged, resolved, fixed or superseded"
+                                .to_string(),
+                        )
+                    }
                 }
                 if m.paths.is_empty() {
                     return Err("risk requires at least one affected path".to_string());
