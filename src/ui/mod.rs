@@ -181,23 +181,19 @@ fn run_loop(
                             KeyCode::Esc => {
                                 app.show_action_palette = false;
                             }
-                            KeyCode::Down
-                            | KeyCode::Tab
-                            | KeyCode::Char('n') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                            KeyCode::Down | KeyCode::Tab => {
                                 let actions = app.filtered_actions();
                                 if !actions.is_empty() {
                                     app.action_palette_selected_idx = (app.action_palette_selected_idx + 1) % actions.len();
                                 }
                             }
-                            KeyCode::Char('j') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                            KeyCode::Char('n') | KeyCode::Char('j') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                                 let actions = app.filtered_actions();
                                 if !actions.is_empty() {
                                     app.action_palette_selected_idx = (app.action_palette_selected_idx + 1) % actions.len();
                                 }
                             }
-                            KeyCode::Up
-                            | KeyCode::BackTab
-                            | KeyCode::Char('p') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                            KeyCode::Up | KeyCode::BackTab => {
                                 let actions = app.filtered_actions();
                                 if !actions.is_empty() {
                                     if app.action_palette_selected_idx == 0 {
@@ -207,7 +203,7 @@ fn run_loop(
                                     }
                                 }
                             }
-                            KeyCode::Char('k') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                            KeyCode::Char('p') | KeyCode::Char('k') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                                 let actions = app.filtered_actions();
                                 if !actions.is_empty() {
                                     if app.action_palette_selected_idx == 0 {
