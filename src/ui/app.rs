@@ -17,68 +17,79 @@ pub struct ActionPaletteItem {
     pub title: &'static str,
     pub shortcut: &'static str,
     pub description: &'static str,
+    pub cli_command: &'static str,
 }
 
 pub static ACTION_PALETTE_ITEMS: &[ActionPaletteItem] = &[
     ActionPaletteItem {
         id: "check_work",
-        title: "Run Git Check-Work (Audit Staged & Changed Files)",
-        shortcut: "Space / c",
+        title: "Git Check-Work (Audit Staged & Changed Files)",
+        shortcut: "Space",
         description: "Audit working tree and index against cited risks and architectural directives",
+        cli_command: "hyperkb check-work --staged --changed",
     },
     ActionPaletteItem {
         id: "new_directive",
-        title: "New Policy Directive (Wizard)",
+        title: "Draft New Policy Directive",
         shortcut: "n",
         description: "Define a new repo invariant, behavior rule, or security guardrail",
+        cli_command: "hyperkb draft-directive",
     },
     ActionPaletteItem {
         id: "issue_grant",
         title: "Issue Agent Authority Grant",
         shortcut: "n",
-        description: "Delegate scoped capability tokens to AI agents and sub-agents",
+        description: "Delegate scoped capability tokens to autonomous AI agents and sub-agents",
+        cli_command: "hyperkb issue-grant",
     },
     ActionPaletteItem {
         id: "audit_kb",
-        title: "Run KB & Directives Linter Audit",
+        title: "Audit Knowledge Base & Directives",
         shortcut: "a",
         description: "Verify document bloat, file hierarchy depth, and schema validity",
+        cli_command: "hyperkb audit-kb",
     },
     ActionPaletteItem {
         id: "open_editor",
-        title: "Open Active File in External Editor",
+        title: "Open Active Document in External Editor",
         shortcut: "o",
-        description: "Launch current markdown document in external IDE (code / $EDITOR)",
+        description: "Launch current markdown document in external IDE ($EDITOR / code)",
+        cli_command: "code <path> / $EDITOR <path>",
     },
     ActionPaletteItem {
         id: "backup",
         title: "Create Point-in-Time Backup Snapshot",
         shortcut: "B",
-        description: "Create an atomic verified snapshot in .hyperkb/backups",
+        description: "Create an atomic verified snapshot in .hyperkb/backups/",
+        cli_command: "hyperkb backup",
     },
     ActionPaletteItem {
         id: "compact",
         title: "Compact Database & WAL Journal",
         shortcut: "C",
-        description: "Vacuum SQLite database and truncate WAL log to reclaim disk space",
+        description: "Vacuum SQLite database and truncate WAL log to optimize storage",
+        cli_command: "hyperkb compact",
     },
     ActionPaletteItem {
         id: "toggle_theme",
         title: "Cycle Visual Theme",
         shortcut: "T",
         description: "Switch between Cyberpunk, Modern, Nord, Tokyo Night, and Light themes",
+        cli_command: "hyperkb ui (or press [T])",
     },
     ActionPaletteItem {
         id: "toggle_mouse",
         title: "Toggle Mouse Mode",
         shortcut: "m",
         description: "Switch between Click Navigation (ON) and Native Drag Selection (OFF)",
+        cli_command: "hyperkb ui (or press [m])",
     },
     ActionPaletteItem {
         id: "view_help",
         title: "View System Documentation & Shortcuts",
-        shortcut: "? / F1",
-        description: "Open the interactive documentation manual",
+        shortcut: "?",
+        description: "Open the interactive documentation, keyboard shortcuts, and MCP guides",
+        cli_command: "hyperkb --help (or press [?])",
     },
 ];
 
@@ -1269,6 +1280,8 @@ impl App {
                 } else {
                     item.title.to_lowercase().contains(&q)
                         || item.description.to_lowercase().contains(&q)
+                        || item.shortcut.to_lowercase().contains(&q)
+                        || item.cli_command.to_lowercase().contains(&q)
                         || item.id.to_lowercase().contains(&q)
                 }
             })
@@ -1546,8 +1559,30 @@ mod tests {
         let filtered = app.filtered_actions();
         assert!(filtered.iter().any(|item| item.id == "issue_grant"));
 
+        // Match by cli_command
+        app.action_palette_query = "draft-directive".to_string();
+        let filtered = app.filtered_actions();
+        assert_eq!(filtered.len(), 1);
+        assert_eq!(filtered[0].id, "new_directive");
+
+        // Match by shortcut
+        app.action_palette_query = "Space".to_string();
+        let filtered = app.filtered_actions();
+        assert!(filtered.iter().any(|item| item.id == "check_work"));
+
         app.action_palette_query = "xyznonexistent".to_string();
         assert!(app.filtered_actions().is_empty());
+
+        // Test modal bounds safety
+        let small_area = ratatui::layout::Rect::new(0, 0, 50, 15);
+        let modal = crate::ui::views::ActionPaletteModal::modal_area(small_area);
+        assert!(modal.width <= small_area.width);
+        assert!(modal.height <= small_area.height);
+
+        let large_area = ratatui::layout::Rect::new(0, 0, 160, 50);
+        let modal = crate::ui::views::ActionPaletteModal::modal_area(large_area);
+        assert!(modal.width <= 105);
+        assert!(modal.height <= 26);
     }
 
     #[test]

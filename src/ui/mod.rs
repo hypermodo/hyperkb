@@ -181,13 +181,33 @@ fn run_loop(
                             KeyCode::Esc => {
                                 app.show_action_palette = false;
                             }
-                            KeyCode::Down | KeyCode::Char('j') => {
+                            KeyCode::Down
+                            | KeyCode::Tab
+                            | KeyCode::Char('n') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                                 let actions = app.filtered_actions();
                                 if !actions.is_empty() {
                                     app.action_palette_selected_idx = (app.action_palette_selected_idx + 1) % actions.len();
                                 }
                             }
-                            KeyCode::Up | KeyCode::Char('k') => {
+                            KeyCode::Char('j') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                                let actions = app.filtered_actions();
+                                if !actions.is_empty() {
+                                    app.action_palette_selected_idx = (app.action_palette_selected_idx + 1) % actions.len();
+                                }
+                            }
+                            KeyCode::Up
+                            | KeyCode::BackTab
+                            | KeyCode::Char('p') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                                let actions = app.filtered_actions();
+                                if !actions.is_empty() {
+                                    if app.action_palette_selected_idx == 0 {
+                                        app.action_palette_selected_idx = actions.len() - 1;
+                                    } else {
+                                        app.action_palette_selected_idx -= 1;
+                                    }
+                                }
+                            }
+                            KeyCode::Char('k') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                                 let actions = app.filtered_actions();
                                 if !actions.is_empty() {
                                     if app.action_palette_selected_idx == 0 {
@@ -553,17 +573,54 @@ fn run_loop(
                     let size = terminal.size()?;
                     let area = ratatui::layout::Rect::new(0, 0, size.width, size.height);
 
-                    // If Action Palette modal is open, dismiss when clicking outside
+                    // If Action Palette modal is open, dismiss when clicking outside or select/execute when clicking inside
                     if app.show_action_palette {
                         let modal = ActionPaletteModal::modal_area(area);
                         let inside = col >= modal.x
                             && col < modal.x + modal.width
                             && row >= modal.y
                             && row < modal.y + modal.height;
-                        if let MouseEventKind::Down(MouseButton::Left) = mouse.kind {
-                            if !inside {
-                                app.show_action_palette = false;
+
+                        match mouse.kind {
+                            MouseEventKind::Down(MouseButton::Left) => {
+                                if !inside {
+                                    app.show_action_palette = false;
+                                } else {
+                                    let list_start_y = modal.y + 5;
+                                    let actions = app.filtered_actions();
+                                    if row >= list_start_y && (row as usize) < list_start_y as usize + actions.len() {
+                                        let clicked_idx = (row - list_start_y) as usize;
+                                        if clicked_idx < actions.len() {
+                                            if app.action_palette_selected_idx == clicked_idx {
+                                                let id = actions[clicked_idx].id;
+                                                match app.execute_action_palette_item(id, db) {
+                                                    Ok(msg) => app.status_message = Some(msg),
+                                                    Err(err) => app.status_message = Some(format!("Error: {}", err)),
+                                                }
+                                            } else {
+                                                app.action_palette_selected_idx = clicked_idx;
+                                            }
+                                        }
+                                    }
+                                }
                             }
+                            MouseEventKind::ScrollDown => {
+                                let actions = app.filtered_actions();
+                                if !actions.is_empty() {
+                                    app.action_palette_selected_idx = (app.action_palette_selected_idx + 1) % actions.len();
+                                }
+                            }
+                            MouseEventKind::ScrollUp => {
+                                let actions = app.filtered_actions();
+                                if !actions.is_empty() {
+                                    if app.action_palette_selected_idx == 0 {
+                                        app.action_palette_selected_idx = actions.len() - 1;
+                                    } else {
+                                        app.action_palette_selected_idx -= 1;
+                                    }
+                                }
+                            }
+                            _ => {}
                         }
                         continue;
                     }
