@@ -25,6 +25,10 @@ impl Database {
             return Err(rusqlite::Error::ExecuteReturnedResults);
         }
 
+        if let Some(parent) = path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+
         OpenOptions::new()
             .write(true)
             .create_new(true)
@@ -127,6 +131,27 @@ impl Database {
         }
 
         Ok(())
+    }
+
+    /// Performs a non-blocking atomic SQLite snapshot into a target file using VACUUM INTO.
+    pub fn snapshot<P: AsRef<Path>>(&self, dest_path: P) -> Result<()> {
+        let dest = dest_path.as_ref();
+        let dest_str = dest.to_string_lossy();
+        self.conn.execute("VACUUM INTO ?1;", [&*dest_str])?;
+        Ok(())
+    }
+
+    /// Shrinks the database and checkpoints/truncates the WAL file to reclaim disk space.
+    pub fn compact(&self) -> Result<()> {
+        self.conn.execute("VACUUM;", [])?;
+        let _ = self.conn.query_row("PRAGMA wal_checkpoint(TRUNCATE);", [], |_| Ok(()));
+        Ok(())
+    }
+
+    /// Runs a PRAGMA integrity_check returning Ok(true) if valid.
+    pub fn integrity_check(&self) -> Result<bool> {
+        let status: String = self.conn.query_row("PRAGMA integrity_check;", [], |r| r.get(0))?;
+        Ok(status == "ok")
     }
 }
 

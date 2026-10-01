@@ -1,5 +1,5 @@
 use clap::{Parser, Subcommand};
-use hyperkb_rs::core::{DecisionWorkflow, Scanner};
+use hyperkb_rs::core::{DecisionWorkflow, MaintenanceManager, Scanner};
 use hyperkb_rs::domain::BrowseOptions;
 use hyperkb_rs::storage::{Database, Queries};
 use hyperkb_rs::transport::McpServer;
@@ -86,6 +86,15 @@ enum Commands {
         #[arg(short, long)]
         supersedes: Option<String>,
     },
+    /// Create a verified point-in-time backup snapshot and rotate older snapshots
+    Backup {
+        #[arg(short, long, default_value_t = 2)]
+        keep: usize,
+    },
+    /// List verified backup snapshots
+    ListBackups,
+    /// Compact the SQLite database and truncate the WAL journal to reclaim disk space
+    Compact,
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -254,6 +263,31 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 "note",
             )?;
             println!("Saved private note: {} ({})", title, id);
+        }
+        Some(Commands::Backup { keep }) => {
+            let report = MaintenanceManager::create_backup(
+                &cli.root,
+                &db,
+                "local_collection",
+                "default_profile",
+                keep,
+            )?;
+            println!("✓ Backup snapshot created successfully:");
+            println!("  Path:    {}", report.path);
+            println!("  Kept:    {} snapshot(s)", report.kept);
+            println!("  Removed: {} older snapshot(s)", report.removed);
+        }
+        Some(Commands::ListBackups) => {
+            let snapshots = MaintenanceManager::list_backups(&cli.root)?;
+            println!("Managed backup snapshots ({} total):", snapshots.len());
+            for snap in snapshots {
+                println!("  - {}", snap);
+            }
+        }
+        Some(Commands::Compact) => {
+            println!("Compacting database and truncating WAL journal...");
+            db.compact()?;
+            println!("✓ Database compacted successfully.");
         }
         None => {
             // Index existing docs in workspace so the TUI opens with real knowledge ready to browse
