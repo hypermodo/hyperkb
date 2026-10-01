@@ -1,0 +1,10 @@
+{
+  "collection_id": "hyperkb-rs",
+  "name": "HyperKB Rust Core",
+  "version": "0.1.0",
+  "default_profile": "default_profile",
+  "docs_root": "docs",
+  "decisions_path": "docs/decisions",
+  "risks_path": "docs/risks",
+  "memory_path": "docs/memory"
+}

@@ -55,7 +55,7 @@ impl Database {
 
         let db = Self { conn };
         db.apply_pragmas()?;
-        db.verify_identities(collection_id, profile_id)?;
+        db.ensure_identities(collection_id, profile_id)?;
         Ok(db)
     }
 
@@ -111,25 +111,15 @@ impl Database {
         Ok(())
     }
 
-    fn verify_identities(&self, collection_id: &str, profile_id: &str) -> Result<()> {
-        let coll_exists: bool = self.conn.query_row(
-            "SELECT count(*) > 0 FROM collections WHERE id = ?1;",
+    fn ensure_identities(&self, collection_id: &str, profile_id: &str) -> Result<()> {
+        self.conn.execute(
+            "INSERT INTO collections (id) VALUES (?1) ON CONFLICT(id) DO NOTHING;",
             [collection_id],
-            |row| row.get(0),
         )?;
-        if !coll_exists {
-            return Err(rusqlite::Error::QueryReturnedNoRows);
-        }
-
-        let prof_exists: bool = self.conn.query_row(
-            "SELECT count(*) > 0 FROM profiles WHERE id = ?1;",
+        self.conn.execute(
+            "INSERT INTO profiles (id) VALUES (?1) ON CONFLICT(id) DO NOTHING;",
             [profile_id],
-            |row| row.get(0),
         )?;
-        if !prof_exists {
-            return Err(rusqlite::Error::QueryReturnedNoRows);
-        }
-
         Ok(())
     }
 

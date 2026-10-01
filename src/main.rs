@@ -3,7 +3,7 @@ use clap::{Parser, Subcommand};
 use hyperkb_rs::core::{
     Archeology, DecisionWorkflow, Git, GrantStore, MaintenanceManager, RiskWorkflow, Scanner,
 };
-use hyperkb_rs::domain::{ActionKind, Actor, BrowseOptions, GrantConstraints};
+use hyperkb_rs::domain::{ActionKind, Actor, BrowseOptions, GrantConstraints, RepoManifest};
 use hyperkb_rs::storage::{Database, Queries};
 use hyperkb_rs::transport::McpServer;
 use hyperkb_rs::ui;
@@ -23,6 +23,15 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
+    /// Initialize a new HyperKB repository manifest (hyperkb.json) and standard directories
+    Init {
+        /// Project name (defaults to current folder name)
+        #[arg(short, long)]
+        name: Option<String>,
+        /// Primary collection ID
+        #[arg(short, long)]
+        collection: Option<String>,
+    },
     /// Index Markdown files in the target directory
     Index {
         #[arg(short, long, default_value = ".")]
@@ -191,13 +200,34 @@ enum GrantCommands {
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
 
+    let manifest = RepoManifest::load_or_default(&cli.root);
+    let collection_id = &manifest.collection_id;
+    let profile_id = &manifest.default_profile;
+
     let db_path = cli.root.join(".hyperkb").join("hyperkb.db");
-    let db = Database::open_or_create(&db_path, "local_collection", "default_profile")?;
+    let db = Database::open_or_create(&db_path, collection_id, profile_id)?;
 
     match cli.command {
+        Some(Commands::Init { name, collection }) => {
+            let (init_manifest, path) =
+                RepoManifest::init(&cli.root, name.as_deref(), collection.as_deref())?;
+            println!("✓ Initialized HyperKB repository manifest:");
+            println!("  Path:          {}", path.display());
+            println!("  Collection ID: {}", init_manifest.collection_id);
+            println!("  Project Name:  {}", init_manifest.name);
+            println!("  Decisions:     {}", init_manifest.decisions_path);
+            println!("  Risks:         {}", init_manifest.risks_path);
+
+            match Git::install_pre_commit_hook(&cli.root) {
+                Ok(hook_path) => {
+                    println!("✓ Pre-commit risk interception hook installed at {}", hook_path.display())
+                }
+                Err(e) => println!("Note: Git pre-commit hook skipped ({})", e),
+            }
+        }
         Some(Commands::Index { dir }) => {
             println!("Indexing Markdown documents in: {}", dir.display());
-            let report = Scanner::index_directory(db.conn(), &dir, "local_collection")?;
+            let report = Scanner::index_directory(db.conn(), &dir, collection_id)?;
             println!(
                 "Indexed {} documents ({} added, {} updated, {} unchanged, {} errors)",
                 report.scanned, report.added, report.updated, report.unchanged, report.errors
@@ -210,8 +240,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }) => {
             let hits = Queries::search(
                 db.conn(),
-                &["local_collection".into()],
-                "default_profile",
+                &[collection_id.clone()],
+                profile_id,
                 &query,
                 limit,
                 include_private,
@@ -238,7 +268,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 topic,
                 ..Default::default()
             };
-            let (docs, total) = Queries::browse(db.conn(), &["local_collection".into()], &opts)?;
+            let (docs, total) = Queries::browse(db.conn(), &[collection_id.clone()], &opts)?;
             println!("Browse ({} total documents):", total);
             for doc in docs {
                 println!("- [{}] {} ({})", doc.status.as_str(), doc.title, doc.path);
@@ -273,7 +303,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             let mut check = Queries::check_work(
                 db.conn(),
-                "local_collection",
+                collection_id,
                 &files,
                 version.as_deref(),
                 env.as_deref(),
@@ -357,7 +387,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let report = Archeology::bootstrap(
                 &cli.root,
                 db.conn(),
-                "local_collection",
+                collection_id,
                 limit,
                 max_commits,
                 dry_run,
@@ -402,7 +432,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let draft = RiskWorkflow::draft_risk(
                 &cli.root,
                 db.conn(),
-                "local_collection",
+                collection_id,
                 &title,
                 &rationale,
                 &owner,
@@ -418,13 +448,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!("\nIndexed and active for pre-edit interception.");
         }
         Some(Commands::Mcp) => {
-            let docs_dir = PathBuf::from("../hyperkb/docs");
+            let docs_dir = cli.root.join(&manifest.docs_root);
             if docs_dir.exists() {
-                let _ = Scanner::index_directory(db.conn(), &docs_dir, "local_collection");
+                let _ = Scanner::index_directory(db.conn(), &docs_dir, collection_id);
             } else {
-                let _ = Scanner::index_directory(db.conn(), &cli.root, "local_collection");
+                let _ = Scanner::index_directory(db.conn(), &cli.root, collection_id);
             }
-            McpServer::run_stdio(&cli.root, db.conn(), "local_collection", "default_profile")?;
+            McpServer::run_stdio(&cli.root, db.conn(), collection_id, profile_id)?;
         }
         Some(Commands::DraftDecision {
             title,
@@ -436,7 +466,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let draft = DecisionWorkflow::draft_replacement(
                 &cli.root,
                 db.conn(),
-                "local_collection",
+                collection_id,
                 &title,
                 &rationale,
                 &actor,
@@ -462,7 +492,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 supersedes.as_deref(),
             )?;
             println!("Accepting decision at {}:", path);
-            DecisionWorkflow::accept_decision(&cli.root, db.conn(), "local_collection", &review, Some(&actor))?;
+            DecisionWorkflow::accept_decision(&cli.root, db.conn(), collection_id, &review, Some(&actor))?;
             println!("✓ Decision accepted and indexed as architectural authority.");
         }
         Some(Commands::Remember { title, content }) => {
@@ -470,7 +500,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             Queries::remember(
                 db.conn(),
                 &id,
-                "default_profile",
+                profile_id,
                 &title,
                 &content,
                 "note",
@@ -481,8 +511,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let report = MaintenanceManager::create_backup(
                 &cli.root,
                 &db,
-                "local_collection",
-                "default_profile",
+                collection_id,
+                profile_id,
                 keep,
             )?;
             println!("✓ Backup snapshot created successfully:");
@@ -511,7 +541,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let ack = RiskWorkflow::acknowledge_risk(
                 &cli.root,
                 db.conn(),
-                "local_collection",
+                collection_id,
                 &risk_id,
                 &actor,
                 &rationale,
@@ -611,11 +641,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         },
         None => {
             // Index existing docs in workspace so the TUI opens with real knowledge ready to browse
-            let docs_dir = PathBuf::from("../hyperkb/docs");
+            let docs_dir = cli.root.join(&manifest.docs_root);
             if docs_dir.exists() {
-                let _ = Scanner::index_directory(db.conn(), &docs_dir, "local_collection");
+                let _ = Scanner::index_directory(db.conn(), &docs_dir, collection_id);
             } else {
-                let _ = Scanner::index_directory(db.conn(), &cli.root, "local_collection");
+                let _ = Scanner::index_directory(db.conn(), &cli.root, collection_id);
             }
 
             // Launch the full-screen Ratatui TUI

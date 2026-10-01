@@ -36,13 +36,19 @@ impl Queries {
         let now = Utc::now().to_rfc3339();
 
         conn.execute(
+            "DELETE FROM documents WHERE collection_id = ?1 AND path = ?2 AND source_id != ?3;",
+            params![collection_id, path, source_id],
+        )?;
+
+        conn.execute(
             "INSERT INTO documents (
                 source_id, collection_id, path, topic, title, content, search_text,
                 status, kind, owner, issue, risk_paths, risk_versions, risk_environments,
                 supersedes, checksum, indexed_at
              ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)
-             ON CONFLICT(collection_id, path) DO UPDATE SET
-                source_id=excluded.source_id,
+             ON CONFLICT(source_id) DO UPDATE SET
+                collection_id=excluded.collection_id,
+                path=excluded.path,
                 topic=excluded.topic,
                 title=excluded.title,
                 content=excluded.content,

@@ -1,6 +1,7 @@
 pub mod actor;
 pub mod document;
 pub mod hlc;
+pub mod manifest;
 pub mod memory;
 pub mod risk;
 
@@ -10,6 +11,8 @@ pub use document::{
     RecordMeta,
 };
 pub use hlc::Hlc;
+pub use manifest::RepoManifest;
 pub use memory::Memory;
 pub use risk::{RiskApplicability, RiskCheck, RiskMatch};
+
 
