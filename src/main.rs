@@ -1,8 +1,8 @@
 use chrono::Utc;
 use clap::{Parser, Subcommand};
 use hyperkb_rs::core::{
-    Archeology, DecisionWorkflow, Git, GrantStore, MaintenanceManager, RiskWorkflow, Scanner,
-    SessionManager,
+    Archeology, DecisionWorkflow, DirectiveWorkflow, Git, GrantStore, MaintenanceManager,
+    RiskWorkflow, Scanner, SessionManager,
 };
 use hyperkb_rs::domain::{ActionKind, Actor, BrowseOptions, GrantConstraints, RepoManifest};
 use hyperkb_rs::storage::{Database, Queries};
@@ -184,6 +184,85 @@ enum Commands {
         #[command(subcommand)]
         command: SessionCommands,
     },
+    /// Manage standing policy directives and invariants
+    Directive {
+        #[command(subcommand)]
+        command: DirectiveCommands,
+    },
+    /// Manage repository policy taxonomies
+    Taxonomy {
+        #[command(subcommand)]
+        command: TaxonomyCommands,
+    },
+}
+
+#[derive(Subcommand)]
+enum DirectiveCommands {
+    /// List policy directives
+    List {
+        /// Optional category filter (architecture, behavior, deployment, security)
+        #[arg(short, long)]
+        category: Option<String>,
+        /// Optional status filter (active, dormant, retired)
+        #[arg(short, long)]
+        status: Option<String>,
+        /// Output directives as JSON
+        #[arg(long)]
+        json: bool,
+    },
+    /// Draft a new policy directive
+    #[command(alias = "new")]
+    Draft {
+        /// Directive title (e.g. "Zero Code Comments")
+        title: String,
+        /// Valid category from repo taxonomy
+        #[arg(short, long)]
+        category: String,
+        /// Human author or accountable engineer
+        #[arg(short, long, default_value = "Developer")]
+        author: String,
+        /// Scoped path patterns (e.g. -s "src/**" or -s "*")
+        #[arg(short, long)]
+        scope: Vec<String>,
+        /// Enforcement mode: check_work, briefing, or manual
+        #[arg(short, long, default_value = "check_work")]
+        enforcement: String,
+        /// ID of an older directive this supersedes
+        #[arg(long)]
+        supersedes: Option<String>,
+        /// Rule description and details
+        #[arg(short, long, default_value = "")]
+        content: String,
+    },
+    /// Retire an existing directive
+    Retire {
+        /// Directive ID (e.g. DIR-...)
+        id: String,
+    },
+    /// Audit directives for bloat (>5 global rules) and stale paths
+    Audit {
+        /// Output report as JSON
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Subcommand)]
+enum TaxonomyCommands {
+    /// List configured taxonomy categories
+    List {
+        #[arg(long)]
+        json: bool,
+    },
+    /// Add a new category to the repository taxonomy in hyperkb.json
+    Add {
+        /// Unique category identifier (slug, e.g. "compliance")
+        id: String,
+        /// Human-readable display name (e.g. "Compliance & Privacy")
+        name: String,
+        /// Description of policies that belong to this category
+        description: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -344,7 +423,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 env.as_deref(),
             )?;
 
-            // Diff-Aware Risk Suppression: If changes are purely comments or whitespace, suppress to avoid alert fatigue
+            // Diff-Aware Risk Suppression & Comment Hygiene Check
             if staged || changed {
                 for m in &mut check.matches {
                     if !m.acknowledged {
@@ -359,6 +438,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         }
                     }
                 }
+
+                for path in &check.checked_paths {
+                    if let Ok(Some(rep)) = Git::check_file_comment_hygiene(&cli.root, path, staged) {
+                        if rep.is_excessive {
+                            check.hygiene_warnings.push(format!(
+                                "Excessive comment density in '{}': {}/{} added lines ({:.1}%) are comments. Keep code self-documenting per Comment Directive.",
+                                rep.file_path, rep.comment_lines, rep.added_lines, rep.comment_ratio * 100.0
+                            ));
+                        }
+                    }
+                }
             }
 
             if json {
@@ -369,6 +459,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     println!("  - {}", path);
                 }
                 println!();
+
+                if !check.applicable_directives.is_empty() {
+                    println!("📜 Applicable Policy Directives (Rule of 5):");
+                    for d in &check.applicable_directives {
+                        let scope_tag = if d.is_global() { "global".to_string() } else { d.scope.join(",") };
+                        println!("  - [{}] {} ({}) [enforce: {}]", d.category.to_uppercase(), d.title, scope_tag, d.enforcement);
+                    }
+                    println!();
+                }
+
+                if !check.hygiene_warnings.is_empty() {
+                    println!("⚠️  Comment Hygiene Warnings:");
+                    for w in &check.hygiene_warnings {
+                        println!("  - {}", w);
+                    }
+                    println!();
+                }
 
                 if check.matches.is_empty() {
                     println!("✓ Clean: No cited open risks or path hazards detected.");
@@ -761,6 +868,128 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
         },
+        Some(Commands::Directive { command }) => match command {
+            DirectiveCommands::List { category, status, json } => {
+                let directives = Queries::list_directives(
+                    db.conn(),
+                    collection_id,
+                    category.as_deref(),
+                    status.as_deref(),
+                )?;
+                if json {
+                    println!("{}", serde_json::to_string_pretty(&directives)?);
+                } else if directives.is_empty() {
+                    println!("No directives found matching the given filters.");
+                } else {
+                    println!("Policy Directives ({}) in collection '{}':\n", directives.len(), collection_id);
+                    for d in directives {
+                        let status_tag = match d.status.as_str() {
+                            "active" => "[ACTIVE]",
+                            "dormant" => "[DORMANT]",
+                            "retired" => "[RETIRED]",
+                            _ => "[OTHER]",
+                        };
+                        let scope_str = if d.is_global() { "global".to_string() } else { d.scope.join(", ") };
+                        println!("• {} {:<14} [{}] {}", status_tag, d.id, d.category.to_uppercase(), d.title);
+                        println!("    Scope: {:<20} | Enforce: {}", scope_str, d.enforcement);
+                    }
+                }
+            }
+            DirectiveCommands::Draft {
+                title,
+                category,
+                author,
+                scope,
+                enforcement,
+                supersedes,
+                content,
+            } => {
+                let target_scope = if scope.is_empty() {
+                    vec!["*".to_string()]
+                } else {
+                    scope.clone()
+                };
+                let dir = DirectiveWorkflow::draft_directive(
+                    &cli.root,
+                    db.conn(),
+                    collection_id,
+                    &title,
+                    &category,
+                    &author,
+                    target_scope,
+                    &enforcement,
+                    supersedes.clone(),
+                    &content,
+                )?;
+                println!("✓ Drafted directive '{}' ({})", dir.title, dir.id);
+                println!("  Category:    {}", dir.category);
+                println!("  Scope:       {:?}", dir.scope);
+                println!("  Enforcement: {}", dir.enforcement);
+                println!("  Path:        {}/{}.md", manifest.directives_path, dir.id);
+            }
+            DirectiveCommands::Retire { id } => {
+                let retired = DirectiveWorkflow::retire_directive(&cli.root, db.conn(), &id)?;
+                if retired {
+                    println!("✓ Directive '{}' is now retired.", id);
+                } else {
+                    println!("Directive '{}' was not found or already retired.", id);
+                }
+            }
+            DirectiveCommands::Audit { json } => {
+                let report = DirectiveWorkflow::audit_directives(&cli.root, db.conn(), collection_id)?;
+                if json {
+                    println!("{}", serde_json::to_string_pretty(&report)?);
+                } else {
+                    println!("Policy Directives Audit Report for collection '{}':\n", collection_id);
+                    println!("  Total Directives:  {}", report.total_directives);
+                    println!("  Active Directives: {}", report.active_directives);
+                    println!("  Global Rules:      {} (Threshold: ≤ 5)", report.global_count);
+                    println!("  Taxonomies Used:   {}", report.taxonomies_used.join(", "));
+                    println!();
+
+                    if !report.bloat_warnings.is_empty() {
+                        println!("⚠️  Rule Bloat Warnings:");
+                        for w in &report.bloat_warnings {
+                            println!("  - {}", w);
+                        }
+                        println!();
+                    }
+
+                    if !report.stale_directives.is_empty() {
+                        println!("⚠️  Stale Scope Warnings:");
+                        for w in &report.stale_directives {
+                            println!("  - {}", w);
+                        }
+                        println!();
+                    }
+
+                    if report.bloat_warnings.is_empty() && report.stale_directives.is_empty() {
+                        println!("✓ Hygiene Clean: All active directives are scoped, fresh, and within the Rule of 5 threshold.");
+                    }
+                }
+            }
+        },
+        Some(Commands::Taxonomy { command }) => match command {
+            TaxonomyCommands::List { json } => {
+                let m = RepoManifest::load_or_default(&cli.root);
+                if json {
+                    println!("{}", serde_json::to_string_pretty(&m.taxonomy)?);
+                } else {
+                    println!("Configured Policy Taxonomies ({}):\n", m.taxonomy.categories.len());
+                    for cat in &m.taxonomy.categories {
+                        println!("• {:<14} - {} ({})", cat.id, cat.label, cat.description);
+                    }
+                }
+            }
+            TaxonomyCommands::Add { id, name, description } => {
+                let mut m = RepoManifest::load_or_default(&cli.root);
+                m.add_category(id.clone(), name, description)
+                    .map_err(|e| format!("Failed to add taxonomy: {}", e))?;
+                m.save(&cli.root)
+                    .map_err(|e| format!("Failed to save hyperkb.json: {}", e))?;
+                println!("✓ Added taxonomy category '{}' to hyperkb.json.", id);
+            }
+        },
         None => {
             // Index existing docs in workspace so the TUI opens with real knowledge ready to browse
             let docs_dir = cli.root.join(&manifest.docs_root);
@@ -771,7 +1000,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
 
             // Launch the full-screen Ratatui TUI
-            ui::run(&db, collection_id, profile_id)?;
+            ui::run(&cli.root, &db, collection_id, profile_id)?;
         }
     }
 

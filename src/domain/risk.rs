@@ -1,3 +1,4 @@
+use super::directive::Directive;
 use super::document::{Document, Hit};
 use serde::{Deserialize, Serialize};
 
@@ -39,6 +40,10 @@ pub struct RiskMatch {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RiskCheck {
     pub matches: Vec<RiskMatch>,
+    #[serde(default)]
+    pub applicable_directives: Vec<Directive>,
+    #[serde(default)]
+    pub hygiene_warnings: Vec<String>,
     #[serde(default)]
     pub historical_candidates: Vec<Hit>,
     pub checked_paths: Vec<String>,

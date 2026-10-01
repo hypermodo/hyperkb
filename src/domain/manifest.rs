@@ -3,6 +3,52 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TaxonomyCategory {
+    pub id: String,
+    pub label: String,
+    pub description: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TaxonomyConfig {
+    #[serde(default = "default_taxonomy_categories")]
+    pub categories: Vec<TaxonomyCategory>,
+}
+
+fn default_taxonomy_categories() -> Vec<TaxonomyCategory> {
+    vec![
+        TaxonomyCategory {
+            id: "architecture".to_string(),
+            label: "Architecture & Contracts".to_string(),
+            description: "System boundaries, protocols, database schemas, and parity guarantees".to_string(),
+        },
+        TaxonomyCategory {
+            id: "behavior".to_string(),
+            label: "Code & Agent Behavior".to_string(),
+            description: "Comment hygiene, naming conventions, and testing requirements".to_string(),
+        },
+        TaxonomyCategory {
+            id: "deployment".to_string(),
+            label: "Deployment & Safety".to_string(),
+            description: "Environment configs, migrations, rollback safety, and runtime constraints".to_string(),
+        },
+        TaxonomyCategory {
+            id: "security".to_string(),
+            label: "Security & Authority".to_string(),
+            description: "Authentication, secrets, external API calls, and autonomy bounds".to_string(),
+        },
+    ]
+}
+
+impl Default for TaxonomyConfig {
+    fn default() -> Self {
+        Self {
+            categories: default_taxonomy_categories(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct RepoManifest {
     #[serde(default = "default_collection_id")]
     pub collection_id: String,
@@ -25,8 +71,14 @@ pub struct RepoManifest {
     #[serde(default = "default_risks_path")]
     pub risks_path: String,
 
+    #[serde(default = "default_directives_path")]
+    pub directives_path: String,
+
     #[serde(default = "default_memory_path")]
     pub memory_path: String,
+
+    #[serde(default)]
+    pub taxonomy: TaxonomyConfig,
 }
 
 fn default_collection_id() -> String {
@@ -57,6 +109,10 @@ fn default_risks_path() -> String {
     "docs/risks".to_string()
 }
 
+fn default_directives_path() -> String {
+    "docs/directives".to_string()
+}
+
 fn default_memory_path() -> String {
     "docs/memory".to_string()
 }
@@ -71,7 +127,9 @@ impl Default for RepoManifest {
             docs_root: default_docs_root(),
             decisions_path: default_decisions_path(),
             risks_path: default_risks_path(),
+            directives_path: default_directives_path(),
             memory_path: default_memory_path(),
+            taxonomy: TaxonomyConfig::default(),
         }
     }
 }
@@ -130,11 +188,44 @@ impl RepoManifest {
             .map_err(|e| format!("failed to create decisions path: {}", e))?;
         fs::create_dir_all(root.join(&manifest.risks_path))
             .map_err(|e| format!("failed to create risks path: {}", e))?;
+        fs::create_dir_all(root.join(&manifest.directives_path))
+            .map_err(|e| format!("failed to create directives path: {}", e))?;
 
         fs::write(&manifest_path, json.as_bytes())
             .map_err(|e| format!("failed to write hyperkb.json: {}", e))?;
 
         Ok((manifest, manifest_path))
+    }
+
+    pub fn save<P: AsRef<Path>>(&self, root: P) -> Result<(), String> {
+        let manifest_path = root.as_ref().join(Self::FILE_NAME);
+        let json = serde_json::to_string_pretty(self)
+            .map_err(|e| format!("failed to serialize manifest: {}", e))?;
+        fs::write(&manifest_path, json.as_bytes())
+            .map_err(|e| format!("failed to write hyperkb.json: {}", e))?;
+        Ok(())
+    }
+
+    pub fn is_valid_category(&self, cat: &str) -> bool {
+        self.taxonomy.categories.iter().any(|c| c.id.eq_ignore_ascii_case(cat))
+    }
+
+    pub fn add_category(
+        &mut self,
+        id: impl Into<String>,
+        label: impl Into<String>,
+        description: impl Into<String>,
+    ) -> Result<(), String> {
+        let id_str = id.into();
+        if self.is_valid_category(&id_str) {
+            return Err(format!("Category '{}' already exists in taxonomy", id_str));
+        }
+        self.taxonomy.categories.push(TaxonomyCategory {
+            id: id_str,
+            label: label.into(),
+            description: description.into(),
+        });
+        Ok(())
     }
 }
 
@@ -149,6 +240,10 @@ mod tests {
         assert_eq!(m.collection_id, "local_collection");
         assert_eq!(m.decisions_path, "docs/decisions");
         assert_eq!(m.risks_path, "docs/risks");
+        assert_eq!(m.directives_path, "docs/directives");
+        assert!(m.is_valid_category("architecture"));
+        assert!(m.is_valid_category("BEHAVIOR"));
+        assert!(!m.is_valid_category("unknown_category"));
     }
 
     #[test]
@@ -162,10 +257,24 @@ mod tests {
         assert!(path.exists());
         assert!(temp_dir.join("docs/decisions").exists());
         assert!(temp_dir.join("docs/risks").exists());
+        assert!(temp_dir.join("docs/directives").exists());
 
         let loaded = RepoManifest::load_or_default(&temp_dir);
         assert_eq!(loaded, manifest);
 
         let _ = fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_taxonomy_validation_and_addition() {
+        let mut m = RepoManifest::default();
+        assert!(m.is_valid_category("security"));
+        assert!(!m.is_valid_category("database"));
+
+        m.add_category("database", "Database & Storage", "Schema migrations and queries").unwrap();
+        assert!(m.is_valid_category("database"));
+
+        let duplicate_err = m.add_category("database", "Dup", "Dup");
+        assert!(duplicate_err.is_err());
     }
 }

@@ -1,4 +1,4 @@
-use crate::core::{DecisionWorkflow, GrantStore, RiskWorkflow, SessionManager};
+use crate::core::{DecisionWorkflow, DirectiveWorkflow, Git, GrantStore, RiskWorkflow, SessionManager};
 use crate::domain::BrowseOptions;
 use crate::storage::Queries;
 use rusqlite::Connection;
@@ -432,6 +432,54 @@ impl McpServer {
                     "required": ["path"]
                 }
             }),
+            json!({
+                "name": "list_directives",
+                "description": "List policy directives and standing invariants, optionally filtered by category, status, or target file paths via the Rule of 5.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "category": { "type": "string", "description": "Optional category (architecture, behavior, deployment, security)" },
+                        "status": { "type": "string", "description": "Optional status filter (active, dormant, retired)" },
+                        "paths": { "type": "array", "items": { "type": "string" }, "description": "Optional file paths to filter directives by relevance" }
+                    }
+                }
+            }),
+            json!({
+                "name": "draft_directive",
+                "description": "Propose or author a new standing policy directive adhering to the repo taxonomy.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "title": { "type": "string", "description": "Title of the directive" },
+                        "category": { "type": "string", "description": "Valid repository taxonomy category (e.g. behavior, architecture)" },
+                        "author": { "type": "string", "description": "Author or agent identifier" },
+                        "scope": { "type": "array", "items": { "type": "string" }, "description": "File path patterns or ['*'] for global" },
+                        "enforcement": { "type": "string", "description": "Enforcement mode: check_work, briefing, or manual" },
+                        "supersedes": { "type": "string", "description": "Optional ID of a directive this replaces" },
+                        "content": { "type": "string", "description": "Markdown rule definition" }
+                    },
+                    "required": ["title", "category"]
+                }
+            }),
+            json!({
+                "name": "retire_directive",
+                "description": "Retire an existing directive so it is no longer enforced in pre-commit checks or briefings.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "id": { "type": "string", "description": "Directive ID (DIR-...)" }
+                    },
+                    "required": ["id"]
+                }
+            }),
+            json!({
+                "name": "audit_directives",
+                "description": "Audit active repository directives against the Rule of 5 (bloat check) and stale file path patterns.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {}
+                }
+            }),
         ]
     }
 
@@ -489,8 +537,19 @@ impl McpServer {
                 let version = args.get("version").and_then(|v| v.as_str());
                 let env = args.get("environment").and_then(|v| v.as_str());
 
-                let check = Queries::check_work(conn, collection_id, &files, version, env)
+                let mut check = Queries::check_work(conn, collection_id, &files, version, env)
                     .map_err(|e| format!("Failed to check work: {}", e))?;
+
+                for file in &files {
+                    if let Ok(Some(rep)) = Git::check_file_comment_hygiene(root, file, false) {
+                        if rep.is_excessive {
+                            check.hygiene_warnings.push(format!(
+                                "Excessive comment density in '{}': {}/{} added lines ({:.1}%) are comments. Keep code self-documenting per Comment Directive.",
+                                rep.file_path, rep.comment_lines, rep.added_lines, rep.comment_ratio * 100.0
+                            ));
+                        }
+                    }
+                }
 
                 if let Some(ref sess_id) = current_sess_id {
                     let first_file = files.first().map(|s| s.as_str()).unwrap_or("");
@@ -1033,6 +1092,137 @@ impl McpServer {
                 }))
             }
 
+            "list_directives" => {
+                let cat = args.get("category").and_then(|v| v.as_str());
+                let status = args.get("status").and_then(|v| v.as_str());
+                let paths: Vec<String> = args
+                    .get("paths")
+                    .and_then(|v| v.as_array())
+                    .map(|arr| {
+                        arr.iter().filter_map(|s| s.as_str().map(|v| v.to_string())).collect()
+                    })
+                    .unwrap_or_default();
+
+                if let Some(ref sess_id) = current_sess_id {
+                    let _ = SessionManager::record_tool_call(conn, sess_id, "list_directives", "", cat.unwrap_or(""));
+                }
+
+                let dirs = if !paths.is_empty() {
+                    Queries::get_active_directives_for_paths(conn, collection_id, &paths, 5)
+                        .map_err(|e| format!("Database error: {}", e))?
+                } else {
+                    Queries::list_directives(conn, collection_id, cat, status)
+                        .map_err(|e| format!("Database error: {}", e))?
+                };
+
+                let serialized = serde_json::to_string_pretty(&dirs)
+                    .map_err(|e| format!("Serialization error: {}", e))?;
+
+                Ok(json!({
+                    "content": [{ "type": "text", "text": serialized }],
+                    "isError": false
+                }))
+            }
+
+            "draft_directive" => {
+                let title = args
+                    .get("title")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| "Missing required argument 'title' for draft_directive".to_string())?;
+                let category = args
+                    .get("category")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| "Missing required argument 'category' for draft_directive".to_string())?;
+                let author = args.get("author").and_then(|v| v.as_str()).unwrap_or("agent");
+                let scope: Vec<String> = args
+                    .get("scope")
+                    .and_then(|v| v.as_array())
+                    .map(|arr| {
+                        arr.iter().filter_map(|s| s.as_str().map(|v| v.to_string())).collect()
+                    })
+                    .unwrap_or_else(|| vec!["*".to_string()]);
+                let enforcement = args.get("enforcement").and_then(|v| v.as_str()).unwrap_or("check_work");
+                let supersedes = args.get("supersedes").and_then(|v| v.as_str()).map(|s| s.to_string());
+                let content = args.get("content").and_then(|v| v.as_str()).unwrap_or("");
+
+                if let Some(ref sess_id) = current_sess_id {
+                    let _ = SessionManager::record_tool_call(conn, sess_id, "draft_directive", "", title);
+                }
+
+                match DirectiveWorkflow::draft_directive(
+                    root,
+                    conn,
+                    collection_id,
+                    title,
+                    category,
+                    author,
+                    scope,
+                    enforcement,
+                    supersedes,
+                    content,
+                ) {
+                    Ok(dir) => {
+                        let serialized = serde_json::to_string_pretty(&dir)
+                            .map_err(|e| format!("Serialization error: {}", e))?;
+                        Ok(json!({
+                            "content": [{ "type": "text", "text": serialized }],
+                            "isError": false
+                        }))
+                    }
+                    Err(err) => Ok(json!({
+                        "content": [{ "type": "text", "text": format!("Error drafting directive: {}", err) }],
+                        "isError": true
+                    })),
+                }
+            }
+
+            "retire_directive" => {
+                let id = args
+                    .get("id")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| "Missing required argument 'id' for retire_directive".to_string())?;
+
+                if let Some(ref sess_id) = current_sess_id {
+                    let _ = SessionManager::record_tool_call(conn, sess_id, "retire_directive", "", id);
+                }
+
+                match DirectiveWorkflow::retire_directive(root, conn, id) {
+                    Ok(true) => Ok(json!({
+                        "content": [{ "type": "text", "text": format!("Directive '{}' successfully retired.", id) }],
+                        "isError": false
+                    })),
+                    Ok(false) => Ok(json!({
+                        "content": [{ "type": "text", "text": format!("Directive '{}' not found.", id) }],
+                        "isError": true
+                    })),
+                    Err(err) => Ok(json!({
+                        "content": [{ "type": "text", "text": format!("Error retiring directive: {}", err) }],
+                        "isError": true
+                    })),
+                }
+            }
+
+            "audit_directives" => {
+                if let Some(ref sess_id) = current_sess_id {
+                    let _ = SessionManager::record_tool_call(conn, sess_id, "audit_directives", "", "");
+                }
+
+                match DirectiveWorkflow::audit_directives(root, conn, collection_id) {
+                    Ok(rep) => {
+                        let serialized = serde_json::to_string_pretty(&rep)
+                            .map_err(|e| format!("Serialization error: {}", e))?;
+                        Ok(json!({
+                            "content": [{ "type": "text", "text": serialized }],
+                            "isError": false
+                        }))
+                    }
+                    Err(err) => Ok(json!({
+                        "content": [{ "type": "text", "text": format!("Error running directive audit: {}", err) }],
+                        "isError": true
+                    })),
+                }
+            }
+
             _ => Err(format!("Unknown tool '{}'", tool_name)),
         }
     }
@@ -1324,5 +1514,83 @@ mod tests {
         assert_eq!(scorecard_json["review_loops_detected"], 1);
         let hotspots = scorecard_json["friction_hotspots"].as_array().unwrap();
         assert_eq!(hotspots[0].as_str().unwrap(), "src/db.rs");
+    }
+
+    #[test]
+    fn test_mcp_directive_tools() {
+        let temp_dir = std::env::temp_dir().join(format!("hyperkb-mcp-dir-{}", uuid::Uuid::now_v7()));
+        let _ = std::fs::create_dir_all(&temp_dir);
+        let db = Database::open_in_memory("coll_dir", "prof_dir").unwrap();
+
+        // 1. Draft directive via MCP
+        let draft_req = JsonRpcRequest {
+            jsonrpc: "2.0".into(),
+            id: Some(json!(31)),
+            method: "tools/call".into(),
+            params: Some(json!({
+                "name": "draft_directive",
+                "arguments": {
+                    "title": "Prime Directive",
+                    "category": "behavior",
+                    "author": "agent_claud",
+                    "scope": ["*"],
+                    "enforcement": "check_work",
+                    "content": "# Prime Directive\nNever corrupt user data."
+                }
+            })),
+        };
+        let draft_resp = McpServer::handle_request(&temp_dir, db.conn(), "coll_dir", "prof_dir", draft_req).unwrap();
+        let draft_val: Value = serde_json::from_str(draft_resp.result.unwrap()["content"][0]["text"].as_str().unwrap()).unwrap();
+        assert_eq!(draft_val["title"], "Prime Directive");
+        let dir_id = draft_val["id"].as_str().unwrap().to_string();
+
+        // 2. List directives via MCP
+        let list_req = JsonRpcRequest {
+            jsonrpc: "2.0".into(),
+            id: Some(json!(32)),
+            method: "tools/call".into(),
+            params: Some(json!({
+                "name": "list_directives",
+                "arguments": {
+                    "category": "behavior"
+                }
+            })),
+        };
+        let list_resp = McpServer::handle_request(&temp_dir, db.conn(), "coll_dir", "prof_dir", list_req).unwrap();
+        let list_val: Value = serde_json::from_str(list_resp.result.unwrap()["content"][0]["text"].as_str().unwrap()).unwrap();
+        assert_eq!(list_val.as_array().unwrap().len(), 1);
+
+        // 3. Audit directives via MCP
+        let audit_req = JsonRpcRequest {
+            jsonrpc: "2.0".into(),
+            id: Some(json!(33)),
+            method: "tools/call".into(),
+            params: Some(json!({
+                "name": "audit_directives",
+                "arguments": {}
+            })),
+        };
+        let audit_resp = McpServer::handle_request(&temp_dir, db.conn(), "coll_dir", "prof_dir", audit_req).unwrap();
+        let audit_val: Value = serde_json::from_str(audit_resp.result.unwrap()["content"][0]["text"].as_str().unwrap()).unwrap();
+        assert_eq!(audit_val["total_directives"], 1);
+        assert_eq!(audit_val["global_count"], 1);
+
+        // 4. Retire directive via MCP
+        let retire_req = JsonRpcRequest {
+            jsonrpc: "2.0".into(),
+            id: Some(json!(34)),
+            method: "tools/call".into(),
+            params: Some(json!({
+                "name": "retire_directive",
+                "arguments": {
+                    "id": dir_id
+                }
+            })),
+        };
+        let retire_resp = McpServer::handle_request(&temp_dir, db.conn(), "coll_dir", "prof_dir", retire_req).unwrap();
+        let retire_text = retire_resp.result.unwrap()["content"][0]["text"].as_str().unwrap().to_string();
+        assert!(retire_text.contains("successfully retired"));
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
     }
 }

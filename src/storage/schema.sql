@@ -238,4 +238,22 @@ CREATE TABLE IF NOT EXISTS session_events (
 CREATE INDEX IF NOT EXISTS session_events_session ON session_events(session_id, id ASC);
 CREATE INDEX IF NOT EXISTS session_events_kind ON session_events(event_kind, timestamp DESC);
 
+-- Policy Directives & Standing Rules
+CREATE TABLE IF NOT EXISTS directives (
+  id TEXT PRIMARY KEY,
+  collection_id TEXT NOT NULL REFERENCES collections(id),
+  title TEXT NOT NULL,
+  category TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'active',
+  author TEXT NOT NULL,
+  scope_json TEXT NOT NULL DEFAULT '[]',
+  enforcement TEXT NOT NULL DEFAULT 'check_work',
+  supersedes TEXT,
+  content TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS directives_collection ON directives(collection_id, status, category);
+
+
 

@@ -155,6 +155,8 @@ impl SessionScorecard {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SessionBriefing {
     pub collection_id: String,
+    #[serde(default)]
+    pub active_directives: Vec<String>,
     pub active_invariants: Vec<String>,
     pub active_risks: Vec<String>,
     pub recent_hotspots: Vec<String>,
@@ -167,6 +169,7 @@ pub struct SessionBriefing {
 impl SessionBriefing {
     pub fn render_markdown(
         collection_id: &str,
+        active_directives: &[String],
         active_invariants: &[String],
         active_risks: &[String],
         recent_hotspots: &[String],
@@ -179,6 +182,14 @@ impl SessionBriefing {
 
         if let Some(scope) = grant_scope {
             out.push_str(&format!("**Authorized Scope:** `{}`\n\n", scope));
+        }
+
+        if !active_directives.is_empty() {
+            out.push_str("### 📜 Standing Directives (Rule of 5)\n");
+            for d in active_directives {
+                out.push_str(&format!("- {}\n", d));
+            }
+            out.push('\n');
         }
 
         if !friction_warnings.is_empty() {
@@ -315,6 +326,7 @@ pub mod tests {
     fn test_render_session_briefing() {
         let md = SessionBriefing::render_markdown(
             "HyperModo",
+            &["[BEHAVIOR] **Zero Code Comments**: check_work".to_string()],
             &["ADR-001: Zero Heavy Async (Stdlib Only)".to_string()],
             &["CRIT-01: Never run unsafe unverified sql".to_string()],
             &["src/core/git.rs".to_string()],
@@ -325,6 +337,8 @@ pub mod tests {
 
         assert!(md.contains("# HyperKB Session Briefing: `HyperModo`"));
         assert!(md.contains("**Authorized Scope:** `src/core/**`"));
+        assert!(md.contains("Standing Directives (Rule of 5)"));
+        assert!(md.contains("Zero Code Comments"));
         assert!(md.contains("Friction Hotspots & Review Warnings"));
         assert!(md.contains("ADR-001: Zero Heavy Async"));
         assert!(md.contains("CRIT-01: Never run unsafe unverified sql"));

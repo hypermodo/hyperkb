@@ -1,6 +1,6 @@
 use crate::domain::{
-    AgentSession, BrowseOptions, Document, DocumentKind, DocumentStatus, Hit, Memory, RecordMeta,
-    SessionEventRecord,
+    AgentSession, BrowseOptions, Directive, Document, DocumentKind, DocumentStatus, Hit, Memory,
+    RecordMeta, SessionEventRecord,
 };
 use chrono::Utc;
 use rusqlite::{params, Connection, Result};
@@ -566,12 +566,15 @@ impl Queries {
         target_env: Option<&str>,
     ) -> Result<crate::domain::RiskCheck> {
         let open_risks = Self::get_open_risks(conn, collection_id)?;
-        Ok(crate::core::RiskEngine::check_paths(
+        let mut check = crate::core::RiskEngine::check_paths(
             &open_risks,
             target_paths,
             target_version,
             target_env,
-        ))
+        );
+        let applicable_dirs = Self::get_active_directives_for_paths(conn, collection_id, target_paths, 5)?;
+        check.applicable_directives = applicable_dirs;
+        Ok(check)
     }
 
     pub fn create_session(conn: &Connection, session: &AgentSession) -> Result<()> {
@@ -848,6 +851,139 @@ impl Queries {
             out.push(r?);
         }
         Ok(out)
+    }
+
+    pub fn upsert_directive(conn: &Connection, directive: &Directive) -> Result<()> {
+        let scope_json =
+            serde_json::to_string(&directive.scope).unwrap_or_else(|_| "[]".to_string());
+        conn.execute(
+            "INSERT INTO directives (
+                id, collection_id, title, category, status, author, scope_json, enforcement, supersedes, content, created_at
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+             ON CONFLICT(id) DO UPDATE SET
+                collection_id=excluded.collection_id,
+                title=excluded.title,
+                category=excluded.category,
+                status=excluded.status,
+                author=excluded.author,
+                scope_json=excluded.scope_json,
+                enforcement=excluded.enforcement,
+                supersedes=excluded.supersedes,
+                content=excluded.content,
+                created_at=excluded.created_at;",
+            params![
+                directive.id,
+                directive.collection_id,
+                directive.title,
+                directive.category,
+                directive.status,
+                directive.author,
+                scope_json,
+                directive.enforcement,
+                directive.supersedes,
+                directive.content,
+                directive.created_at,
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn get_directive(conn: &Connection, id: &str) -> Result<Option<Directive>> {
+        let mut stmt = conn.prepare(
+            "SELECT id, collection_id, title, category, status, author, scope_json, enforcement, supersedes, content, created_at
+             FROM directives WHERE id = ?1;",
+        )?;
+        let mut rows = stmt.query([id])?;
+        if let Some(row) = rows.next()? {
+            let scope_raw: String = row.get(6)?;
+            let scope: Vec<String> = serde_json::from_str(&scope_raw).unwrap_or_default();
+            Ok(Some(Directive {
+                id: row.get(0)?,
+                collection_id: row.get(1)?,
+                title: row.get(2)?,
+                category: row.get(3)?,
+                status: row.get(4)?,
+                author: row.get(5)?,
+                scope,
+                enforcement: row.get(7)?,
+                supersedes: row.get(8)?,
+                content: row.get(9)?,
+                created_at: row.get(10)?,
+            }))
+        } else {
+            Ok(None)
+        }
+    }
+
+    pub fn list_directives(
+        conn: &Connection,
+        collection_id: &str,
+        category: Option<&str>,
+        status: Option<&str>,
+    ) -> Result<Vec<Directive>> {
+        let mut sql = "SELECT id, collection_id, title, category, status, author, scope_json, enforcement, supersedes, content, created_at
+             FROM directives WHERE collection_id = ?1".to_string();
+        let mut params_vec: Vec<rusqlite::types::Value> =
+            vec![rusqlite::types::Value::Text(collection_id.to_string())];
+
+        if let Some(cat) = category {
+            sql.push_str(" AND LOWER(category) = LOWER(?)");
+            params_vec.push(rusqlite::types::Value::Text(cat.to_string()));
+        }
+        if let Some(st) = status {
+            sql.push_str(" AND status = ?");
+            params_vec.push(rusqlite::types::Value::Text(st.to_string()));
+        }
+
+        sql.push_str(" ORDER BY created_at DESC;");
+
+        let mut stmt = conn.prepare(&sql)?;
+        let rows = stmt.query_map(rusqlite::params_from_iter(params_vec), |row| {
+            let scope_raw: String = row.get(6)?;
+            let scope: Vec<String> = serde_json::from_str(&scope_raw).unwrap_or_default();
+            Ok(Directive {
+                id: row.get(0)?,
+                collection_id: row.get(1)?,
+                title: row.get(2)?,
+                category: row.get(3)?,
+                status: row.get(4)?,
+                author: row.get(5)?,
+                scope,
+                enforcement: row.get(7)?,
+                supersedes: row.get(8)?,
+                content: row.get(9)?,
+                created_at: row.get(10)?,
+            })
+        })?;
+
+        let mut out = Vec::new();
+        for d in rows {
+            out.push(d?);
+        }
+        Ok(out)
+    }
+
+    pub fn retire_directive(conn: &Connection, id: &str) -> Result<bool> {
+        let affected = conn.execute("UPDATE directives SET status = 'retired' WHERE id = ?1;", [id])?;
+        Ok(affected > 0)
+    }
+
+    pub fn supersede_directive(conn: &Connection, old_id: &str, new_id: &str) -> Result<()> {
+        conn.execute(
+            "UPDATE directives SET status = 'superseded', supersedes = ?2 WHERE id = ?1;",
+            params![old_id, new_id],
+        )?;
+        Ok(())
+    }
+
+    pub fn get_active_directives_for_paths(
+        conn: &Connection,
+        collection_id: &str,
+        paths: &[String],
+        limit: usize,
+    ) -> Result<Vec<Directive>> {
+        let active = Self::list_directives(conn, collection_id, None, Some("active"))?;
+        Ok(Directive::filter_relevant(&active, paths, limit))
     }
 }
 
@@ -1144,6 +1280,64 @@ mod tests {
 
         let sessions = Queries::list_sessions(db.conn(), "coll_sess", 10)?;
         assert_eq!(sessions.len(), 1);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_directive_storage_and_queries() -> Result<()> {
+        let db = Database::open_in_memory("coll_dir", "prof_dir")?;
+
+        let dir1 = Directive::new(
+            "DIR-001",
+            "coll_dir",
+            "Prime Directive",
+            "architecture",
+            "wiqar",
+            vec!["*".to_string()],
+            "check_work",
+            None,
+            "Never break existing input.",
+        );
+
+        let dir2 = Directive::new(
+            "DIR-002",
+            "coll_dir",
+            "Zero Code Comments",
+            "behavior",
+            "wiqar",
+            vec!["src/**".to_string()],
+            "check_work",
+            None,
+            "Code must be self-documenting.",
+        );
+
+        Queries::upsert_directive(db.conn(), &dir1)?;
+        Queries::upsert_directive(db.conn(), &dir2)?;
+
+        let retrieved = Queries::get_directive(db.conn(), "DIR-001")?.expect("found");
+        assert_eq!(retrieved.title, "Prime Directive");
+        assert_eq!(retrieved.category, "architecture");
+
+        let all = Queries::list_directives(db.conn(), "coll_dir", None, None)?;
+        assert_eq!(all.len(), 2);
+
+        let behavior = Queries::list_directives(db.conn(), "coll_dir", Some("behavior"), None)?;
+        assert_eq!(behavior.len(), 1);
+        assert_eq!(behavior[0].id, "DIR-002");
+
+        let relevant = Queries::get_active_directives_for_paths(
+            db.conn(),
+            "coll_dir",
+            &["src/main.rs".to_string()],
+            5,
+        )?;
+        assert_eq!(relevant.len(), 2);
+
+        Queries::retire_directive(db.conn(), "DIR-002")?;
+        let active_only = Queries::list_directives(db.conn(), "coll_dir", None, Some("active"))?;
+        assert_eq!(active_only.len(), 1);
+        assert_eq!(active_only[0].id, "DIR-001");
 
         Ok(())
     }

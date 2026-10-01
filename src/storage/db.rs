@@ -3,7 +3,7 @@ use std::fs::OpenOptions;
 use std::path::Path;
 
 const SCHEMA_SQL: &str = include_str!("schema.sql");
-pub const CURRENT_SCHEMA_VERSION: i32 = 5;
+pub const CURRENT_SCHEMA_VERSION: i32 = 6;
 
 pub struct Database {
     conn: Connection,

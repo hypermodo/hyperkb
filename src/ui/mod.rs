@@ -18,11 +18,12 @@ use ratatui::{
 };
 use std::io;
 use std::panic;
+use std::path::Path;
 use std::time::Duration;
-use views::{ExploreView, ReaderView, WorkView};
+use views::{DirectivesView, ExploreView, ReaderView, SessionsView, WorkView};
 use crate::storage::Database;
 
-pub fn run(db: &Database, collection_id: &str, profile_id: &str) -> io::Result<()> {
+pub fn run(root: &Path, db: &Database, collection_id: &str, profile_id: &str) -> io::Result<()> {
     // 1. Setup panic hook so terminal is ALWAYS restored safely if something panics
     let original_hook = panic::take_hook();
     panic::set_hook(Box::new(move |panic_info| {
@@ -43,7 +44,7 @@ pub fn run(db: &Database, collection_id: &str, profile_id: &str) -> io::Result<(
     app.refresh_data(db);
 
     // 4. Main Event Loop (Smooth 60 FPS non-blocking polling)
-    let res = run_loop(&mut terminal, &mut app, db);
+    let res = run_loop(root, &mut terminal, &mut app, db);
 
     // 5. Restore terminal state
     disable_raw_mode()?;
@@ -54,6 +55,7 @@ pub fn run(db: &Database, collection_id: &str, profile_id: &str) -> io::Result<(
 }
 
 fn run_loop<B: ratatui::backend::Backend>(
+    root: &Path,
     terminal: &mut Terminal<B>,
     app: &mut App,
     db: &Database,
@@ -77,8 +79,9 @@ fn run_loop<B: ratatui::backend::Backend>(
             match app.active_tab {
                 ActiveTab::Work => WorkView::render(frame, app, chunks[1]),
                 ActiveTab::Explore => ExploreView::render(frame, app, chunks[1]),
+                ActiveTab::Directives => DirectivesView::render(frame, app, chunks[1]),
+                ActiveTab::Sessions => SessionsView::render(frame, app, chunks[1]),
                 ActiveTab::Reader => ReaderView::render(frame, app, chunks[1]),
-                ActiveTab::Memory => WorkView::render(frame, app, chunks[1]),
             }
 
             Footer::render(frame, app, chunks[2]);
@@ -91,6 +94,10 @@ fn run_loop<B: ratatui::backend::Backend>(
                 if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
                     app.should_quit = true;
                     break;
+                }
+
+                if app.status_message.is_some() {
+                    app.status_message = None;
                 }
 
                 if app.is_filtering {
@@ -115,7 +122,8 @@ fn run_loop<B: ratatui::backend::Backend>(
                         KeyCode::Char('q') => app.should_quit = true,
                         KeyCode::Char('1') => app.switch_tab(ActiveTab::Work),
                         KeyCode::Char('2') => app.switch_tab(ActiveTab::Explore),
-                        KeyCode::Char('3') => app.switch_tab(ActiveTab::Reader),
+                        KeyCode::Char('3') => app.switch_tab(ActiveTab::Directives),
+                        KeyCode::Char('4') => app.switch_tab(ActiveTab::Sessions),
                         KeyCode::Tab => app.toggle_pane(),
                         KeyCode::Down | KeyCode::Char('j') => app.next(),
                         KeyCode::Up | KeyCode::Char('k') => app.prev(),
@@ -127,8 +135,18 @@ fn run_loop<B: ratatui::backend::Backend>(
                         KeyCode::Enter => app.open_selected(),
                         KeyCode::Esc => app.go_back(),
                         KeyCode::Char('v') => app.toggle_raw_view(),
-                        KeyCode::Char('c') | KeyCode::Char('C') if app.active_tab == ActiveTab::Explore => {
-                            app.next_category(db);
+                        KeyCode::Char('c') | KeyCode::Char('C') => {
+                            if app.active_tab == ActiveTab::Explore {
+                                app.next_category(db);
+                            } else if app.active_tab == ActiveTab::Directives {
+                                app.next_directive_category(db);
+                            }
+                        }
+                        KeyCode::Char('r') | KeyCode::Char('R') if app.active_tab == ActiveTab::Directives => {
+                            let _ = app.retire_selected_directive(root, db);
+                        }
+                        KeyCode::Char('a') | KeyCode::Char('A') if app.active_tab == ActiveTab::Directives => {
+                            app.status_message = Some("To create a directive: run 'hyperkb directive new' or MCP tool 'draft_directive'".to_string());
                         }
                         KeyCode::Char('/') => {
                             app.is_filtering = true;

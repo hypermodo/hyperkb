@@ -1,6 +1,16 @@
+use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct FileHygieneReport {
+    pub file_path: String,
+    pub added_lines: usize,
+    pub comment_lines: usize,
+    pub comment_ratio: f64,
+    pub is_excessive: bool,
+}
 
 pub struct Git;
 
@@ -139,6 +149,76 @@ impl Git {
             || trimmed.starts_with("'''")
     }
 
+    /// Analyzes added lines in diff text to count total added lines vs comment lines.
+    pub fn analyze_diff_comment_hygiene(diff_text: &str) -> (usize, usize) {
+        let mut added_lines = 0;
+        let mut comment_lines = 0;
+
+        for line in diff_text.lines() {
+            if line.starts_with("---")
+                || line.starts_with("+++")
+                || line.starts_with("@@")
+                || line.starts_with("diff ")
+                || line.starts_with("index ")
+            {
+                continue;
+            }
+
+            if let Some(added) = line.strip_prefix('+') {
+                let trimmed = added.trim();
+                if trimmed.is_empty() {
+                    continue;
+                }
+                added_lines += 1;
+                if Self::is_comment_or_doc(trimmed) {
+                    comment_lines += 1;
+                }
+            }
+        }
+
+        (added_lines, comment_lines)
+    }
+
+    /// Evaluates comment hygiene on a specific file's diff.
+    pub fn check_file_comment_hygiene<P: AsRef<Path>>(
+        root: P,
+        rel_path: &str,
+        staged: bool,
+    ) -> Result<Option<FileHygieneReport>, String> {
+        let root = root.as_ref();
+        let mut cmd = Command::new("git");
+        cmd.arg("diff");
+        if staged {
+            cmd.arg("--cached");
+        }
+        cmd.arg("-U0");
+        cmd.arg("--");
+        cmd.arg(rel_path);
+        cmd.current_dir(root);
+
+        let output = cmd.output().map_err(|e| format!("failed to run git diff: {}", e))?;
+        if !output.status.success() {
+            return Ok(None);
+        }
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let (added, comments) = Self::analyze_diff_comment_hygiene(&stdout);
+        if added == 0 {
+            return Ok(None);
+        }
+
+        let ratio = comments as f64 / added as f64;
+        let is_excessive = ratio > 0.35 && comments >= 5;
+
+        Ok(Some(FileHygieneReport {
+            file_path: rel_path.to_string(),
+            added_lines: added,
+            comment_lines: comments,
+            comment_ratio: ratio,
+            is_excessive,
+        }))
+    }
+
     /// Installs a pre-commit risk interception hook into `.git/hooks/pre-commit`.
     pub fn install_pre_commit_hook<P: AsRef<Path>>(root: P) -> Result<PathBuf, String> {
         let root = root.as_ref();
@@ -219,5 +299,28 @@ index e69de29..b6238b6 100644
 +conn.execute("PRAGMA busy_timeout = 5000;", [])?;
 "#;
         assert!(!Git::is_diff_text_trivial(code_diff));
+    }
+
+    #[test]
+    fn test_analyze_diff_comment_hygiene() {
+        let bloat_diff = r#"
+diff --git a/src/auth.rs b/src/auth.rs
+--- a/src/auth.rs
++++ b/src/auth.rs
+@@ -1,3 +1,12 @@
++// First we initialize the token validator
++// This ensures the token has not expired
++// Then we check the signature against HMAC secret
++// We return an error if invalid
++// Now we create the claims struct
++let claims = verify_jwt(token)?;
++// Everything succeeded so we return ok
++Ok(claims)
+"#;
+        let (added, comments) = Git::analyze_diff_comment_hygiene(bloat_diff);
+        assert_eq!(added, 8);
+        assert_eq!(comments, 6);
+        let ratio = comments as f64 / added as f64;
+        assert!(ratio > 0.70);
     }
 }

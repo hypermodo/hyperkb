@@ -237,6 +237,39 @@ impl SessionManager {
         let recent_hotspots =
             Queries::get_recent_hotspots(conn, collection_id, 5).unwrap_or_default();
 
+        let active_dirs =
+            Queries::get_active_directives_for_paths(conn, collection_id, &recent_hotspots, 5)
+                .unwrap_or_default();
+        let active_directives: Vec<String> = active_dirs
+            .iter()
+            .map(|d| {
+                let scope_tag = if d.is_global() {
+                    "global".to_string()
+                } else {
+                    d.scope.join(",")
+                };
+                let summary = d
+                    .content
+                    .lines()
+                    .map(|l| l.trim())
+                    .find(|l| !l.is_empty() && !l.starts_with('#'))
+                    .unwrap_or_else(|| {
+                        d.content
+                            .lines()
+                            .map(|l| l.trim().trim_start_matches('#').trim())
+                            .find(|l| !l.is_empty())
+                            .unwrap_or(&d.enforcement)
+                    });
+                format!(
+                    "[{}] **{}** ({}) - {}",
+                    d.category.to_uppercase(),
+                    d.title,
+                    scope_tag,
+                    summary
+                )
+            })
+            .collect();
+
         let friction_warnings =
             Queries::get_recent_friction_warnings(conn, collection_id).unwrap_or_default();
 
@@ -245,6 +278,7 @@ impl SessionManager {
 
         let formatted_markdown = SessionBriefing::render_markdown(
             collection_id,
+            &active_directives,
             &active_invariants,
             &active_risks,
             &recent_hotspots,
@@ -255,6 +289,7 @@ impl SessionManager {
 
         Ok(SessionBriefing {
             collection_id: collection_id.to_string(),
+            active_directives,
             active_invariants,
             active_risks,
             recent_hotspots,

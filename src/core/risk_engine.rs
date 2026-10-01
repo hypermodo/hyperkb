@@ -120,6 +120,8 @@ impl RiskEngine {
 
         RiskCheck {
             matches,
+            applicable_directives: Vec::new(),
+            hygiene_warnings: Vec::new(),
             historical_candidates: Vec::new(),
             checked_paths: target_paths.to_vec(),
             coverage_complete: true,

@@ -12,11 +12,16 @@ pub struct Header;
 
 impl Header {
     pub fn render(frame: &mut Frame, app: &App, area: Rect) {
-        let tabs = [
+        let mut tabs = vec![
             (ActiveTab::Work, "[1] Work & Risks"),
             (ActiveTab::Explore, "[2] Explore"),
-            (ActiveTab::Reader, "[3] Reader"),
+            (ActiveTab::Directives, "[3] Directives"),
+            (ActiveTab::Sessions, "[4] Sessions"),
         ];
+
+        if app.active_tab == ActiveTab::Reader {
+            tabs.push((ActiveTab::Reader, "[Reader]"));
+        }
 
         let mut spans = vec![
             Span::styled(" HyperKB ", Theme::title()),
@@ -56,7 +61,13 @@ pub struct Footer;
 
 impl Footer {
     pub fn render(frame: &mut Frame, app: &App, area: Rect) {
-        let text = if app.is_filtering {
+        let text = if let Some(ref msg) = app.status_message {
+            Line::from(vec![
+                Span::styled(" ● ", Style::default().fg(Theme::STATUS_ACCEPTED)),
+                Span::styled(msg, Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
+                Span::styled("  (Press any key to dismiss)", Style::default().fg(Theme::TEXT_MUTED)),
+            ])
+        } else if app.is_filtering {
             Line::from(vec![
                 Span::styled(" Search: ", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
                 Span::raw(&app.filter_query),
@@ -66,7 +77,7 @@ impl Footer {
         } else {
             let keys = match app.active_tab {
                 ActiveTab::Work => vec![
-                    Span::styled("[1-3] ", Style::default().fg(Theme::ACCENT)),
+                    Span::styled("[1-4] ", Style::default().fg(Theme::ACCENT)),
                     Span::raw("Tabs  "),
                     Span::styled("[Tab] ", Style::default().fg(Theme::ACCENT)),
                     Span::raw("Switch Pane  "),
@@ -84,14 +95,40 @@ impl Footer {
                     Span::raw("Switch Pane  "),
                     Span::styled("[↑↓/jk] ", Style::default().fg(Theme::ACCENT)),
                     Span::raw("Navigate  "),
-                    Span::styled("[1-3] ", Style::default().fg(Theme::ACCENT)),
+                    Span::styled("[1-4] ", Style::default().fg(Theme::ACCENT)),
+                    Span::raw("Tabs  "),
+                    Span::styled("[q] ", Style::default().fg(Theme::ACCENT)),
+                    Span::raw("Quit"),
+                ],
+                ActiveTab::Directives => vec![
+                    Span::styled("[c] ", Style::default().fg(Theme::ACCENT)),
+                    Span::raw("Taxonomy  "),
+                    Span::styled("[r] ", Style::default().fg(Theme::ACCENT)),
+                    Span::raw("Retire  "),
+                    Span::styled("[Enter] ", Style::default().fg(Theme::ACCENT)),
+                    Span::raw("Reader  "),
+                    Span::styled("[Tab] ", Style::default().fg(Theme::ACCENT)),
+                    Span::raw("Switch Pane  "),
+                    Span::styled("[↑↓/jk] ", Style::default().fg(Theme::ACCENT)),
+                    Span::raw("Navigate  "),
+                    Span::styled("[1-4] ", Style::default().fg(Theme::ACCENT)),
+                    Span::raw("Tabs  "),
+                    Span::styled("[q] ", Style::default().fg(Theme::ACCENT)),
+                    Span::raw("Quit"),
+                ],
+                ActiveTab::Sessions => vec![
+                    Span::styled("[Tab] ", Style::default().fg(Theme::ACCENT)),
+                    Span::raw("Switch Pane  "),
+                    Span::styled("[↑↓/jk] ", Style::default().fg(Theme::ACCENT)),
+                    Span::raw("Navigate  "),
+                    Span::styled("[1-4] ", Style::default().fg(Theme::ACCENT)),
                     Span::raw("Tabs  "),
                     Span::styled("[q] ", Style::default().fg(Theme::ACCENT)),
                     Span::raw("Quit"),
                 ],
                 ActiveTab::Reader => vec![
                     Span::styled("[Esc] ", Style::default().fg(Theme::ACCENT)),
-                    Span::raw("Back to Explorer  "),
+                    Span::raw("Back  "),
                     Span::styled("[↑↓/jk] ", Style::default().fg(Theme::ACCENT)),
                     Span::raw("Line  "),
                     Span::styled("[PgDn/PgUp/Space] ", Style::default().fg(Theme::ACCENT)),
@@ -101,7 +138,6 @@ impl Footer {
                     Span::styled("[q] ", Style::default().fg(Theme::ACCENT)),
                     Span::raw("Quit"),
                 ],
-                ActiveTab::Memory => vec![],
             };
             Line::from(keys)
         };

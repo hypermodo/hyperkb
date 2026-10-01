@@ -165,6 +165,10 @@ impl Scanner {
                 &meta,
                 &checksum,
             )?;
+
+            if let Ok(dir) = crate::domain::Directive::parse_markdown(&content, collection_id) {
+                let _ = Queries::upsert_directive(conn, &dir);
+            }
         }
 
         Ok(report)

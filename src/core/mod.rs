@@ -1,5 +1,6 @@
 pub mod archeology;
 pub mod decisions;
+pub mod directives;
 pub mod git;
 pub mod grants;
 pub mod maintenance;
@@ -12,7 +13,8 @@ pub mod session_manager;
 
 pub use archeology::{Archeology, ArcheologyCandidate, ArcheologyReport, IncidentCommit};
 pub use decisions::{DecisionDraft, DecisionReview, DecisionWorkflow};
-pub use git::Git;
+pub use directives::{DirectiveAuditReport, DirectiveWorkflow};
+pub use git::{FileHygieneReport, Git};
 pub use grants::GrantStore;
 pub use maintenance::{BackupManifest, BackupReport, MaintenanceManager};
 pub use metadata::{MetadataParser, ParsedMetadata};

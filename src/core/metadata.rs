@@ -58,7 +58,7 @@ impl MetadataParser {
         if m.id.len() < 8 || m.id.len() > 128 {
             return Err("metadata id must be 8–128 characters long".to_string());
         }
-        if m.owner.trim().is_empty() {
+        if m.kind != "directive" && m.owner.trim().is_empty() {
             return Err("metadata owner is required".to_string());
         }
         match m.kind.as_str() {
@@ -81,6 +81,10 @@ impl MetadataParser {
                 }
                 Ok(())
             }
+            "directive" => match m.status.as_str() {
+                "active" | "dormant" | "retired" => Ok(()),
+                _ => Err("directive status must be active, dormant, or retired".to_string()),
+            },
             "spec" | "plan" | "document" => Ok(()),
             other => Err(format!("unsupported record kind '{}'", other)),
         }
@@ -121,6 +125,31 @@ We are replacing Go with Rust for extreme resource efficiency.
         assert_eq!(parsed.title, "Getting Started Guide");
         assert!(parsed.meta.is_none());
         assert_eq!(parsed.body, content);
+    }
+
+    #[test]
+    fn test_parse_directive_metadata() {
+        let content = r#"---hyperkb
+{
+  "id": "DIR-B090A56B3697",
+  "kind": "directive",
+  "title": "Zero Code Comments",
+  "category": "behavior",
+  "status": "active",
+  "author": "Developer",
+  "scope": ["src/**"]
+}
+---
+# Comment Directive
+
+Zero narration comments by default.
+"#;
+        let parsed = MetadataParser::parse(content).expect("should parse directive successfully");
+        assert_eq!(parsed.title, "Comment Directive");
+        let meta = parsed.meta.expect("should have metadata");
+        assert_eq!(meta.id, "DIR-B090A56B3697");
+        assert_eq!(meta.kind, "directive");
+        assert_eq!(meta.status, "active");
     }
 }
 
