@@ -164,30 +164,109 @@ impl SettingsView {
                 Span::styled(val_str, Style::default().fg(t.status_proposed()).add_modifier(Modifier::BOLD)),
             ]),
             Line::from(""),
-            Line::from(Span::styled("────── Adjustment Controls ──────────────────────────────────", Style::default().fg(t.border()))),
-            Line::from(""),
-            Line::from(vec![
+        ];
+
+        // Context-aware controls matching the setting layout
+        if app.settings_selected_idx == 7 {
+            text.push(Line::from(Span::styled("────── Harness Selection Controls ───────────────────────────", Style::default().fg(t.border()))));
+            text.push(Line::from(""));
+            text.push(Line::from(vec![
                 Span::styled("  Use ", Style::default().fg(t.text_primary())),
+                Span::styled("[Tab]", t.key_badge()),
+                Span::styled(" or ", Style::default().fg(t.text_primary())),
+                Span::styled("[→]", t.key_badge()),
+                Span::styled(" to focus list, then ", Style::default().fg(t.text_primary())),
+                Span::styled("[↑] / [↓]", t.key_badge()),
+                Span::styled(" or ", Style::default().fg(t.text_primary())),
+                Span::styled("[j] / [k]", t.key_badge()),
+                Span::styled(" to navigate the vertical list of harnesses.", Style::default().fg(t.text_primary())),
+            ]));
+            text.push(Line::from(vec![
+                Span::styled("  (Tip: ", Style::default().fg(t.text_muted())),
                 Span::styled("[←] / [→]", t.key_badge()),
+                Span::styled(" or mouse click also selects harness directly)", Style::default().fg(t.text_muted())),
+            ]));
+            text.push(Line::from(vec![
+                Span::styled("  Press ", Style::default().fg(t.text_primary())),
+                Span::styled("[Enter]", Style::default().fg(t.status_accepted()).add_modifier(Modifier::BOLD)),
+                Span::styled(" to persist active harness to ", Style::default().fg(t.text_primary())),
+                Span::styled("hyperkb.json", Style::default().fg(t.text_primary()).add_modifier(Modifier::BOLD)),
+                Span::styled(".", Style::default().fg(t.text_primary())),
+            ]));
+        } else if app.settings_selected_idx == 5 {
+            text.push(Line::from(Span::styled("────── Toggle Controls ──────────────────────────────────────", Style::default().fg(t.border()))));
+            text.push(Line::from(""));
+            text.push(Line::from(vec![
+                Span::styled("  Press ", Style::default().fg(t.text_primary())),
+                Span::styled("[Space]", t.key_badge()),
                 Span::styled(" or ", Style::default().fg(t.text_primary())),
-                Span::styled("[h] / [l]", t.key_badge()),
+                Span::styled("[m]", t.key_badge()),
                 Span::styled(" or ", Style::default().fg(t.text_primary())),
-                Span::styled("[-] / [+]", t.key_badge()),
-                Span::styled(" to adjust value live.", Style::default().fg(t.text_primary())),
-            ]),
-            Line::from(vec![
+                Span::styled("[←] / [→]", t.key_badge()),
+                Span::styled(" to toggle mouse capture ON / OFF live.", Style::default().fg(t.text_primary())),
+            ]));
+            text.push(Line::from(vec![
                 Span::styled("  Press ", Style::default().fg(t.text_primary())),
                 Span::styled("[Enter]", Style::default().fg(t.status_accepted()).add_modifier(Modifier::BOLD)),
                 Span::styled(" to persist changes to ", Style::default().fg(t.text_primary())),
                 Span::styled("hyperkb.json", Style::default().fg(t.text_primary()).add_modifier(Modifier::BOLD)),
                 Span::styled(".", Style::default().fg(t.text_primary())),
-            ]),
-            Line::from(""),
-            Line::from(Span::styled("────── Description & Rationale ──────────────────────────────", Style::default().fg(t.border()))),
-            Line::from(""),
-            Line::from(Span::styled(desc, Style::default().fg(t.text_primary()))),
-            Line::from(""),
-        ];
+            ]));
+        } else if app.settings_selected_idx == 4 {
+            text.push(Line::from(Span::styled("────── Theme Selection Controls ─────────────────────────────", Style::default().fg(t.border()))));
+            text.push(Line::from(""));
+            text.push(Line::from(vec![
+                Span::styled("  Use ", Style::default().fg(t.text_primary())),
+                Span::styled("[←] / [→]", t.key_badge()),
+                Span::styled(" or ", Style::default().fg(t.text_primary())),
+                Span::styled("[T]", t.key_badge()),
+                Span::styled(" to cycle color themes live.", Style::default().fg(t.text_primary())),
+            ]));
+            text.push(Line::from(vec![
+                Span::styled("  Press ", Style::default().fg(t.text_primary())),
+                Span::styled("[Enter]", Style::default().fg(t.status_accepted()).add_modifier(Modifier::BOLD)),
+                Span::styled(" to persist theme to ", Style::default().fg(t.text_primary())),
+                Span::styled("hyperkb.json", Style::default().fg(t.text_primary()).add_modifier(Modifier::BOLD)),
+                Span::styled(".", Style::default().fg(t.text_primary())),
+            ]));
+        } else if app.settings_selected_idx == 6 {
+            text.push(Line::from(Span::styled("────── Taxonomy Controls ────────────────────────────────────", Style::default().fg(t.border()))));
+            text.push(Line::from(""));
+            text.push(Line::from(vec![
+                Span::styled("  Press ", Style::default().fg(t.text_primary())),
+                Span::styled("[Tab]", t.key_badge()),
+                Span::styled(" or ", Style::default().fg(t.text_primary())),
+                Span::styled("[→]", t.key_badge()),
+                Span::styled(" to inspect configured taxonomy domains.", Style::default().fg(t.text_primary())),
+            ]));
+        } else {
+            text.push(Line::from(Span::styled("────── Value Adjustment Controls ────────────────────────────", Style::default().fg(t.border()))));
+            text.push(Line::from(""));
+            text.push(Line::from(vec![
+                Span::styled("  Use ", Style::default().fg(t.text_primary())),
+                Span::styled("[←] / [→]", t.key_badge()),
+                Span::styled(" or ", Style::default().fg(t.text_primary())),
+                Span::styled("[-] / [+]", t.key_badge()),
+                Span::styled(" (or ", Style::default().fg(t.text_primary())),
+                Span::styled("[Tab]", t.key_badge()),
+                Span::styled(" + ", Style::default().fg(t.text_primary())),
+                Span::styled("[↑] / [↓]", t.key_badge()),
+                Span::styled(") to adjust numerical value live.", Style::default().fg(t.text_primary())),
+            ]));
+            text.push(Line::from(vec![
+                Span::styled("  Press ", Style::default().fg(t.text_primary())),
+                Span::styled("[Enter]", Style::default().fg(t.status_accepted()).add_modifier(Modifier::BOLD)),
+                Span::styled(" to persist changes to ", Style::default().fg(t.text_primary())),
+                Span::styled("hyperkb.json", Style::default().fg(t.text_primary()).add_modifier(Modifier::BOLD)),
+                Span::styled(".", Style::default().fg(t.text_primary())),
+            ]));
+        }
+
+        text.push(Line::from(""));
+        text.push(Line::from(Span::styled("────── Description & Rationale ──────────────────────────────", Style::default().fg(t.border()))));
+        text.push(Line::from(""));
+        text.push(Line::from(Span::styled(desc, Style::default().fg(t.text_primary()))));
+        text.push(Line::from(""));
 
         // Specific rich item listings for Taxonomy and Harnesses
         if app.settings_selected_idx == 6 {

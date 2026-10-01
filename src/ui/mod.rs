@@ -574,30 +574,38 @@ fn run_loop(
                             KeyCode::Down | KeyCode::Char('j') => app.next(),
                             KeyCode::Up | KeyCode::Char('k') => app.prev(),
                             KeyCode::Left | KeyCode::Char('h') | KeyCode::Char('-') if app.active_tab == ActiveTab::Settings => {
-                                let old_mouse = app.mouse_capture;
-                                app.adjust_setting(-1);
-                                if app.mouse_capture != old_mouse {
-                                    if app.mouse_capture {
-                                        let _ = execute!(terminal.backend_mut(), EnableMouseCapture);
-                                        let _ = terminal.backend_mut().flush();
-                                    } else {
-                                        let _ = execute!(terminal.backend_mut(), DisableMouseCapture);
-                                        let _ = terminal.backend_mut().write_all(b"\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1005l\x1b[?1006l\x1b[?1015l");
-                                        let _ = terminal.backend_mut().flush();
+                                if app.focused_pane == crate::ui::app::FocusedPane::Detail {
+                                    app.focused_pane = crate::ui::app::FocusedPane::List;
+                                } else {
+                                    let old_mouse = app.mouse_capture;
+                                    app.adjust_setting(-1);
+                                    if app.mouse_capture != old_mouse {
+                                        if app.mouse_capture {
+                                            let _ = execute!(terminal.backend_mut(), EnableMouseCapture);
+                                            let _ = terminal.backend_mut().flush();
+                                        } else {
+                                            let _ = execute!(terminal.backend_mut(), DisableMouseCapture);
+                                            let _ = terminal.backend_mut().write_all(b"\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1005l\x1b[?1006l\x1b[?1015l");
+                                            let _ = terminal.backend_mut().flush();
+                                        }
                                     }
                                 }
                             }
                             KeyCode::Right | KeyCode::Char('l') | KeyCode::Char('+') | KeyCode::Char('=') if app.active_tab == ActiveTab::Settings => {
-                                let old_mouse = app.mouse_capture;
-                                app.adjust_setting(1);
-                                if app.mouse_capture != old_mouse {
-                                    if app.mouse_capture {
-                                        let _ = execute!(terminal.backend_mut(), EnableMouseCapture);
-                                        let _ = terminal.backend_mut().flush();
-                                    } else {
-                                        let _ = execute!(terminal.backend_mut(), DisableMouseCapture);
-                                        let _ = terminal.backend_mut().write_all(b"\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1005l\x1b[?1006l\x1b[?1015l");
-                                        let _ = terminal.backend_mut().flush();
+                                if app.focused_pane == crate::ui::app::FocusedPane::List && (app.settings_selected_idx == 7 || app.settings_selected_idx == 6) {
+                                    app.focused_pane = crate::ui::app::FocusedPane::Detail;
+                                } else {
+                                    let old_mouse = app.mouse_capture;
+                                    app.adjust_setting(1);
+                                    if app.mouse_capture != old_mouse {
+                                        if app.mouse_capture {
+                                            let _ = execute!(terminal.backend_mut(), EnableMouseCapture);
+                                            let _ = terminal.backend_mut().flush();
+                                        } else {
+                                            let _ = execute!(terminal.backend_mut(), DisableMouseCapture);
+                                            let _ = terminal.backend_mut().write_all(b"\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1005l\x1b[?1006l\x1b[?1015l");
+                                            let _ = terminal.backend_mut().flush();
+                                        }
                                     }
                                 }
                             }
@@ -631,14 +639,24 @@ fn run_loop(
                             }
                             KeyCode::Enter => {
                                 if app.active_tab == ActiveTab::Settings {
-                                    let _ = app.save_settings(root);
+                                    if app.focused_pane == crate::ui::app::FocusedPane::List && (app.settings_selected_idx == 7 || app.settings_selected_idx == 6) {
+                                        app.focused_pane = crate::ui::app::FocusedPane::Detail;
+                                    } else {
+                                        let _ = app.save_settings(root);
+                                    }
                                 } else if app.active_tab == ActiveTab::Work && app.work_tab_mode == crate::ui::app::WorkTabMode::Console {
                                     app.repl_active = true;
                                 } else {
                                     app.open_selected();
                                 }
                             }
-                            KeyCode::Esc => app.go_back(),
+                            KeyCode::Esc => {
+                                if app.active_tab == ActiveTab::Settings && app.focused_pane == crate::ui::app::FocusedPane::Detail {
+                                    app.focused_pane = crate::ui::app::FocusedPane::List;
+                                } else {
+                                    app.go_back();
+                                }
+                            }
                             KeyCode::Char('w') | KeyCode::Char('W') if app.active_tab == ActiveTab::Work => {
                                 app.work_tab_mode = crate::ui::app::WorkTabMode::Risks;
                             }
@@ -968,9 +986,9 @@ fn run_loop(
                                             _ => (area.width * 38 / 100).clamp(36, 68),
                                         };
 
+                                        let rel_row = row.saturating_sub(5);
                                         if col < list_width {
                                             app.focused_pane = crate::ui::app::FocusedPane::List;
-                                            let rel_row = row.saturating_sub(5);
                                             if rel_row >= 2 {
                                                 match app.active_tab {
                                                     ActiveTab::Work => {
@@ -1023,6 +1041,21 @@ fn run_loop(
                                             }
                                         } else {
                                             app.focused_pane = crate::ui::app::FocusedPane::Detail;
+                                            if app.active_tab == ActiveTab::Settings && app.settings_selected_idx == 7 {
+                                                if rel_row >= 15 {
+                                                    let clicked_harness = ((rel_row - 15) / 5) as usize;
+                                                    if clicked_harness < app.harnesses.len() {
+                                                        app.selected_harness_idx = clicked_harness;
+                                                        let sel_id = app.harnesses[clicked_harness].id.clone();
+                                                        app.manifest.harnesses.active_harness_id = Some(sel_id);
+                                                        app.settings_dirty = true;
+                                                        app.status_message = Some(format!(
+                                                            "Active AI Harness: {}",
+                                                            app.harnesses[clicked_harness].name
+                                                        ));
+                                                    }
+                                                }
+                                            }
                                         }
                                     }
                                 }

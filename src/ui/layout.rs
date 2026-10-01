@@ -420,9 +420,11 @@ impl Footer {
                 ActiveTab::Settings => vec![
                     Span::styled("[Space] ", Style::default().fg(t.accent())),
                     Span::raw("Actions  "),
+                    Span::styled("[Tab] ", Style::default().fg(t.accent())),
+                    Span::raw("Pane  "),
                     Span::styled("[↑↓/jk] ", Style::default().fg(t.accent())),
-                    Span::raw("Select  "),
-                    Span::styled("[←→/hl/+-] ", Style::default().fg(t.accent())),
+                    Span::raw("Navigate  "),
+                    Span::styled("[←→/+-] ", Style::default().fg(t.accent())),
                     Span::raw("Adjust  "),
                     Span::styled("[Enter] ", Style::default().fg(t.accent())),
                     Span::raw("Save  "),

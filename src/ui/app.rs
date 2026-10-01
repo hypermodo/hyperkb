@@ -750,7 +750,11 @@ impl App {
                 }
             }
             ActiveTab::Settings => {
-                self.next_setting();
+                if self.focused_pane == FocusedPane::Detail {
+                    self.adjust_setting(1);
+                } else {
+                    self.next_setting();
+                }
             }
             ActiveTab::Reader => {
                 self.reader_scroll_offset += 2;
@@ -854,7 +858,11 @@ impl App {
                 }
             }
             ActiveTab::Settings => {
-                self.prev_setting();
+                if self.focused_pane == FocusedPane::Detail {
+                    self.adjust_setting(-1);
+                } else {
+                    self.prev_setting();
+                }
             }
             ActiveTab::Reader => {
                 if self.reader_scroll_offset > 2 {
