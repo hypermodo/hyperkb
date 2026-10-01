@@ -1,4 +1,4 @@
-use crate::core::DecisionWorkflow;
+use crate::core::{DecisionWorkflow, RiskWorkflow};
 use crate::domain::BrowseOptions;
 use crate::storage::Queries;
 use rusqlite::Connection;
@@ -266,6 +266,43 @@ impl McpServer {
                     "required": ["title", "rationale", "author"]
                 }
             }),
+            json!({
+                "name": "draft_risk",
+                "description": "Propose an architectural risk record citing affected file paths. Incomplete coverage or unverified risks alert developers before edits.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "title": {
+                            "type": "string",
+                            "description": "Human-readable risk title"
+                        },
+                        "rationale": {
+                            "type": "string",
+                            "description": "Detailed explanation of failure mode, historical regressions, and mitigation"
+                        },
+                        "author": {
+                            "type": "string",
+                            "description": "Agent name, persona, or author declaration"
+                        },
+                        "paths": {
+                            "type": "array",
+                            "items": { "type": "string" },
+                            "description": "File path glob patterns affected by this risk (e.g. ['src/storage/**', 'auth/tokens.go'])"
+                        },
+                        "versions": {
+                            "type": "array",
+                            "items": { "type": "string" },
+                            "description": "Optional version labels this risk applies to"
+                        },
+                        "environments": {
+                            "type": "array",
+                            "items": { "type": "string" },
+                            "description": "Optional deployment environments this risk applies to (e.g. ['production'])"
+                        }
+                    },
+                    "required": ["title", "rationale", "author", "paths"]
+                }
+            }),
         ]
     }
 
@@ -501,6 +538,94 @@ impl McpServer {
                 }
             }
 
+            "draft_risk" => {
+                let title = args
+                    .get("title")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| "Missing required argument 'title' for draft_risk".to_string())?;
+                let rationale = args
+                    .get("rationale")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| "Missing required argument 'rationale' for draft_risk".to_string())?;
+                let author = args
+                    .get("author")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| "Missing required argument 'author' for draft_risk".to_string())?;
+                let paths: Vec<String> = args
+                    .get("paths")
+                    .and_then(|v| v.as_array())
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|s| s.as_str().map(|str_val| str_val.to_string()))
+                            .collect()
+                    })
+                    .unwrap_or_default();
+
+                if paths.is_empty() {
+                    return Err("Missing required argument 'paths' (must be non-empty array) for draft_risk".to_string());
+                }
+
+                let versions: Vec<String> = args
+                    .get("versions")
+                    .and_then(|v| v.as_array())
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|s| s.as_str().map(|str_val| str_val.to_string()))
+                            .collect()
+                    })
+                    .unwrap_or_default();
+
+                let environments: Vec<String> = args
+                    .get("environments")
+                    .and_then(|v| v.as_array())
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|s| s.as_str().map(|str_val| str_val.to_string()))
+                            .collect()
+                    })
+                    .unwrap_or_default();
+
+                match RiskWorkflow::draft_risk(
+                    root,
+                    conn,
+                    collection_id,
+                    title,
+                    rationale,
+                    author,
+                    paths,
+                    versions,
+                    environments,
+                ) {
+                    Ok(draft) => {
+                        let reply = json!({
+                            "path": draft.path,
+                            "id": draft.id,
+                            "status": draft.status,
+                            "paths": draft.paths,
+                            "message": format!("Draft risk saved to '{}' and indexed for pre-edit interception.", draft.path)
+                        });
+                        Ok(json!({
+                            "content": [
+                                {
+                                    "type": "text",
+                                    "text": serde_json::to_string_pretty(&reply).unwrap_or_default()
+                                }
+                            ],
+                            "isError": false
+                        }))
+                    }
+                    Err(err) => Ok(json!({
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": format!("Refused risk draft: {}", err)
+                            }
+                        ],
+                        "isError": true
+                    })),
+                }
+            }
+
             _ => Err(format!("Unknown tool '{}'", tool_name)),
         }
     }
@@ -542,6 +667,7 @@ mod tests {
         assert!(tool_names.contains(&"get_document"));
         assert!(tool_names.contains(&"remember"));
         assert!(tool_names.contains(&"draft_decision"));
+        assert!(tool_names.contains(&"draft_risk"));
     }
 
     #[test]
@@ -590,5 +716,32 @@ mod tests {
         let content_text = call_resp.result.unwrap()["content"][0]["text"].as_str().unwrap().to_string();
         assert!(content_text.contains("docs/decisions/"));
         assert!(content_text.contains("proposed"));
+    }
+
+    #[test]
+    fn test_mcp_draft_risk_tool_call() {
+        let temp_dir = std::env::temp_dir().join(format!("hyperkb-mcp-risk-{}", uuid::Uuid::now_v7()));
+        let _ = std::fs::create_dir_all(&temp_dir);
+        let db = Database::open_in_memory("coll_test", "prof_test").unwrap();
+
+        let call_req = JsonRpcRequest {
+            jsonrpc: "2.0".into(),
+            id: Some(json!(5)),
+            method: "tools/call".into(),
+            params: Some(json!({
+                "name": "draft_risk",
+                "arguments": {
+                    "title": "Unbounded Channel Memory Leak",
+                    "rationale": "Unbounded channels lead to memory exhaustion during high load.",
+                    "author": "Antigravity Assistant",
+                    "paths": ["src/transport/**"]
+                }
+            })),
+        };
+
+        let call_resp = McpServer::handle_request(&temp_dir, db.conn(), "coll_test", "prof_test", call_req).unwrap();
+        let content_text = call_resp.result.unwrap()["content"][0]["text"].as_str().unwrap().to_string();
+        assert!(content_text.contains("docs/risks/"));
+        assert!(content_text.contains("open"));
     }
 }

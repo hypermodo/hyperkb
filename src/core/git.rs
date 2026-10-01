@@ -1,0 +1,115 @@
+use std::fs;
+use std::path::{Path, PathBuf};
+use std::process::Command;
+
+pub struct Git;
+
+impl Git {
+    /// Discovers staged files (in the Git index) using `git diff --cached --name-only -z`.
+    pub fn staged_files<P: AsRef<Path>>(root: P) -> Result<Vec<String>, String> {
+        let root = root.as_ref();
+        let output = Command::new("git")
+            .arg("diff")
+            .arg("--cached")
+            .arg("--name-only")
+            .arg("-z")
+            .current_dir(root)
+            .output()
+            .map_err(|e| format!("failed to execute git: {}", e))?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(format!("git diff --cached failed: {}", stderr.trim()));
+        }
+
+        Self::parse_null_terminated(&output.stdout)
+    }
+
+    /// Discovers modified files in the working directory using `git diff --name-only -z`.
+    pub fn changed_files<P: AsRef<Path>>(root: P) -> Result<Vec<String>, String> {
+        let root = root.as_ref();
+        let output = Command::new("git")
+            .arg("diff")
+            .arg("--name-only")
+            .arg("-z")
+            .current_dir(root)
+            .output()
+            .map_err(|e| format!("failed to execute git: {}", e))?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(format!("git diff failed: {}", stderr.trim()));
+        }
+
+        Self::parse_null_terminated(&output.stdout)
+    }
+
+    /// Parses null-byte separated output from Git (-z flag).
+    fn parse_null_terminated(bytes: &[u8]) -> Result<Vec<String>, String> {
+        let mut files = Vec::new();
+        for chunk in bytes.split(|&b| b == 0) {
+            if !chunk.is_empty() {
+                let s = String::from_utf8(chunk.to_vec())
+                    .map_err(|e| format!("invalid UTF-8 in git output: {}", e))?;
+                files.push(s);
+            }
+        }
+        Ok(files)
+    }
+
+    /// Installs a pre-commit risk interception hook into `.git/hooks/pre-commit`.
+    pub fn install_pre_commit_hook<P: AsRef<Path>>(root: P) -> Result<PathBuf, String> {
+        let root = root.as_ref();
+        let git_dir = root.join(".git");
+        if !git_dir.exists() {
+            return Err("not a git repository (.git folder not found)".to_string());
+        }
+
+        let hooks_dir = git_dir.join("hooks");
+        fs::create_dir_all(&hooks_dir)
+            .map_err(|e| format!("failed to create .git/hooks directory: {}", e))?;
+
+        let hook_path = hooks_dir.join("pre-commit");
+
+        let script = r#"#!/bin/sh
+# HyperKB Pre-Commit Risk Interception Hook
+# Ensures both human developers and AI agents verify cited open risks before committing code.
+
+if command -v hyperkb >/dev/null 2>&1; then
+    hyperkb check-work --staged || exit 1
+elif command -v hyperkb-rs >/dev/null 2>&1; then
+    hyperkb-rs check-work --staged || exit 1
+elif [ -x "./target/release/hyperkb-rs" ]; then
+    ./target/release/hyperkb-rs check-work --staged || exit 1
+fi
+"#;
+
+        fs::write(&hook_path, script.as_bytes())
+            .map_err(|e| format!("failed to write pre-commit hook: {}", e))?;
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut perms = fs::metadata(&hook_path)
+                .map_err(|e| format!("failed to read hook metadata: {}", e))?
+                .permissions();
+            perms.set_mode(0o755);
+            fs::set_permissions(&hook_path, perms)
+                .map_err(|e| format!("failed to set executable permission on hook: {}", e))?;
+        }
+
+        Ok(hook_path)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_null_terminated() {
+        let data = b"src/main.rs\0docs/decisions/test.md\0";
+        let parsed = Git::parse_null_terminated(data).unwrap();
+        assert_eq!(parsed, vec!["src/main.rs", "docs/decisions/test.md"]);
+    }
+}

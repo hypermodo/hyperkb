@@ -1,5 +1,5 @@
 use clap::{Parser, Subcommand};
-use hyperkb_rs::core::{DecisionWorkflow, MaintenanceManager, Scanner};
+use hyperkb_rs::core::{DecisionWorkflow, Git, MaintenanceManager, RiskWorkflow, Scanner};
 use hyperkb_rs::domain::BrowseOptions;
 use hyperkb_rs::storage::{Database, Queries};
 use hyperkb_rs::transport::McpServer;
@@ -44,9 +44,14 @@ enum Commands {
     /// Check planned files against cited risks and architectural boundaries
     #[command(alias = "check_work", alias = "check")]
     CheckWork {
-        /// Files to check
-        #[arg(required = true)]
+        /// Files to check (or use --staged / --changed)
         files: Vec<String>,
+        /// Automatically check staged files in Git index
+        #[arg(long)]
+        staged: bool,
+        /// Automatically check uncommitted files in working tree
+        #[arg(long)]
+        changed: bool,
         /// Target version label (e.g. v2.0)
         #[arg(short, long)]
         version: Option<String>,
@@ -56,6 +61,24 @@ enum Commands {
         /// Output results as JSON
         #[arg(long)]
         json: bool,
+    },
+    /// Install a pre-commit risk interception hook into .git/hooks/pre-commit
+    InstallHook,
+    /// Propose an architectural risk record citing affected file paths
+    DraftRisk {
+        #[arg(short, long)]
+        title: String,
+        #[arg(short, long)]
+        rationale: String,
+        #[arg(short, long, default_value = "Developer")]
+        owner: String,
+        /// Affected file path patterns (e.g. -p "src/storage/**" -p "auth/*")
+        #[arg(short, long, required = true)]
+        paths: Vec<String>,
+        #[arg(short, long)]
+        versions: Vec<String>,
+        #[arg(short, long)]
+        environments: Vec<String>,
     },
     /// Run as Model Context Protocol (MCP) stdio server for AI agents
     Mcp,
@@ -154,11 +177,32 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
         Some(Commands::CheckWork {
-            files,
+            mut files,
+            staged,
+            changed,
             version,
             env,
             json,
         }) => {
+            if staged {
+                let staged_files = Git::staged_files(&cli.root)?;
+                files.extend(staged_files);
+            }
+            if changed {
+                let changed_files = Git::changed_files(&cli.root)?;
+                files.extend(changed_files);
+            }
+            files.retain(|f| !f.trim().is_empty());
+            files.sort();
+            files.dedup();
+
+            if files.is_empty() {
+                if !json {
+                    println!("No files provided or changed to check.");
+                }
+                return Ok(());
+            }
+
             let check = Queries::check_work(
                 db.conn(),
                 "local_collection",
@@ -205,6 +249,38 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                 }
             }
+        }
+        Some(Commands::InstallHook) => {
+            let path = Git::install_pre_commit_hook(&cli.root)?;
+            println!("✓ Pre-commit risk interception hook installed successfully at:");
+            println!("  {}", path.display());
+            println!("\nAll staged commits will now be evaluated against cited open risks.");
+        }
+        Some(Commands::DraftRisk {
+            title,
+            rationale,
+            owner,
+            paths,
+            versions,
+            environments,
+        }) => {
+            let draft = RiskWorkflow::draft_risk(
+                &cli.root,
+                db.conn(),
+                "local_collection",
+                &title,
+                &rationale,
+                &owner,
+                paths,
+                versions,
+                environments,
+            )?;
+            println!("✓ Proposed risk record drafted:");
+            println!("  Path:   {}", draft.path);
+            println!("  ID:     {}", draft.id);
+            println!("  Status: {}", draft.status);
+            println!("  Paths:  {}", draft.paths.join(", "));
+            println!("\nIndexed and active for pre-edit interception.");
         }
         Some(Commands::Mcp) => {
             let docs_dir = PathBuf::from("../hyperkb/docs");
