@@ -1,9 +1,11 @@
+use crate::core::DecisionWorkflow;
 use crate::domain::BrowseOptions;
 use crate::storage::Queries;
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::io::{BufRead, Write};
+use std::path::Path;
 
 #[derive(Debug, Deserialize)]
 pub struct JsonRpcRequest {
@@ -33,11 +35,13 @@ pub struct McpServer;
 
 impl McpServer {
     /// Runs the stdio MCP server loop, processing JSON-RPC 2.0 messages from stdin and replying on stdout.
-    pub fn run_stdio(
+    pub fn run_stdio<P: AsRef<Path>>(
+        root: P,
         conn: &Connection,
         collection_id: &str,
         profile_id: &str,
     ) -> std::io::Result<()> {
+        let root = root.as_ref();
         let stdin = std::io::stdin();
         let mut stdout = std::io::stdout();
         let reader = std::io::BufReader::new(stdin.lock());
@@ -49,7 +53,7 @@ impl McpServer {
             }
 
             if let Ok(req) = serde_json::from_str::<JsonRpcRequest>(&line) {
-                if let Some(resp) = Self::handle_request(conn, collection_id, profile_id, req) {
+                if let Some(resp) = Self::handle_request(root, conn, collection_id, profile_id, req) {
                     let mut out = serde_json::to_string(&resp).map_err(|e| {
                         std::io::Error::new(std::io::ErrorKind::InvalidData, e)
                     })?;
@@ -64,12 +68,14 @@ impl McpServer {
     }
 
     /// Handles a single JSON-RPC request and returns a response, or None if it's a notification.
-    pub fn handle_request(
+    pub fn handle_request<P: AsRef<Path>>(
+        root: P,
         conn: &Connection,
         collection_id: &str,
         profile_id: &str,
         req: JsonRpcRequest,
     ) -> Option<JsonRpcResponse> {
+        let root = root.as_ref();
         // Notifications have no `id` and require no reply
         let id = match req.id {
             Some(id) => id,
@@ -110,7 +116,7 @@ impl McpServer {
             }),
 
             "tools/call" => {
-                let result = Self::handle_tool_call(conn, collection_id, profile_id, req.params);
+                let result = Self::handle_tool_call(root, conn, collection_id, profile_id, req.params);
                 match result {
                     Ok(val) => Some(JsonRpcResponse {
                         jsonrpc: "2.0",
@@ -234,10 +240,37 @@ impl McpServer {
                     "required": ["title", "content"]
                 }
             }),
+            json!({
+                "name": "draft_decision",
+                "description": "Create a proposed repo decision document for owner review. It cannot accept or supersede a decision.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "title": {
+                            "type": "string",
+                            "description": "Human-readable decision title"
+                        },
+                        "rationale": {
+                            "type": "string",
+                            "description": "Detailed architectural motivation, trade-offs, and context"
+                        },
+                        "author": {
+                            "type": "string",
+                            "description": "Agent name, persona, or author declaration"
+                        },
+                        "supersedes": {
+                            "type": "string",
+                            "description": "Optional stable ID or relative path of the existing accepted decision this replaces"
+                        }
+                    },
+                    "required": ["title", "rationale", "author"]
+                }
+            }),
         ]
     }
 
     fn handle_tool_call(
+        root: &Path,
         conn: &Connection,
         collection_id: &str,
         profile_id: &str,
@@ -415,6 +448,59 @@ impl McpServer {
                 }))
             }
 
+            "draft_decision" => {
+                let title = args
+                    .get("title")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| "Missing required argument 'title' for draft_decision".to_string())?;
+                let rationale = args
+                    .get("rationale")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| "Missing required argument 'rationale' for draft_decision".to_string())?;
+                let author = args
+                    .get("author")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| "Missing required argument 'author' for draft_decision".to_string())?;
+                let supersedes = args.get("supersedes").and_then(|v| v.as_str());
+
+                match DecisionWorkflow::draft_replacement(
+                    root,
+                    conn,
+                    collection_id,
+                    title,
+                    rationale,
+                    author,
+                    supersedes,
+                ) {
+                    Ok(draft) => {
+                        let reply = json!({
+                            "path": draft.path,
+                            "id": draft.id,
+                            "status": draft.status,
+                            "message": format!("Draft decision saved to '{}'. Awaiting owner review before acceptance.", draft.path)
+                        });
+                        Ok(json!({
+                            "content": [
+                                {
+                                    "type": "text",
+                                    "text": serde_json::to_string_pretty(&reply).unwrap_or_default()
+                                }
+                            ],
+                            "isError": false
+                        }))
+                    }
+                    Err(err) => Ok(json!({
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": format!("Refused draft: {}", err)
+                            }
+                        ],
+                        "isError": true
+                    })),
+                }
+            }
+
             _ => Err(format!("Unknown tool '{}'", tool_name)),
         }
     }
@@ -436,7 +522,7 @@ mod tests {
             method: "initialize".into(),
             params: Some(json!({})),
         };
-        let init_resp = McpServer::handle_request(db.conn(), "coll_test", "prof_test", init_req).unwrap();
+        let init_resp = McpServer::handle_request(".", db.conn(), "coll_test", "prof_test", init_req).unwrap();
         assert_eq!(init_resp.id, json!(1));
         assert!(init_resp.result.unwrap()["serverInfo"]["name"] == "hyperkb");
 
@@ -447,7 +533,7 @@ mod tests {
             method: "tools/list".into(),
             params: None,
         };
-        let list_resp = McpServer::handle_request(db.conn(), "coll_test", "prof_test", list_req).unwrap();
+        let list_resp = McpServer::handle_request(".", db.conn(), "coll_test", "prof_test", list_req).unwrap();
         let tools = list_resp.result.unwrap()["tools"].as_array().unwrap().clone();
         let tool_names: Vec<&str> = tools.iter().map(|t| t["name"].as_str().unwrap()).collect();
         assert!(tool_names.contains(&"check_work"));
@@ -455,6 +541,7 @@ mod tests {
         assert!(tool_names.contains(&"browse"));
         assert!(tool_names.contains(&"get_document"));
         assert!(tool_names.contains(&"remember"));
+        assert!(tool_names.contains(&"draft_decision"));
     }
 
     #[test]
@@ -473,9 +560,35 @@ mod tests {
             })),
         };
 
-        let call_resp = McpServer::handle_request(db.conn(), "coll_test", "prof_test", call_req).unwrap();
+        let call_resp = McpServer::handle_request(".", db.conn(), "coll_test", "prof_test", call_req).unwrap();
         let content_text = call_resp.result.unwrap()["content"][0]["text"].as_str().unwrap().to_string();
         assert!(content_text.contains("checked_paths"));
         assert!(content_text.contains("src/main.rs"));
+    }
+
+    #[test]
+    fn test_mcp_draft_decision_tool_call() {
+        let temp_dir = std::env::temp_dir().join(format!("hyperkb-mcp-draft-{}", uuid::Uuid::now_v7()));
+        let _ = std::fs::create_dir_all(&temp_dir);
+        let db = Database::open_in_memory("coll_test", "prof_test").unwrap();
+
+        let call_req = JsonRpcRequest {
+            jsonrpc: "2.0".into(),
+            id: Some(json!(4)),
+            method: "tools/call".into(),
+            params: Some(json!({
+                "name": "draft_decision",
+                "arguments": {
+                    "title": "Use Rust for All Kernels",
+                    "rationale": "Rust delivers zero runtime overhead and memory safety.",
+                    "author": "Antigravity Assistant"
+                }
+            })),
+        };
+
+        let call_resp = McpServer::handle_request(&temp_dir, db.conn(), "coll_test", "prof_test", call_req).unwrap();
+        let content_text = call_resp.result.unwrap()["content"][0]["text"].as_str().unwrap().to_string();
+        assert!(content_text.contains("docs/decisions/"));
+        assert!(content_text.contains("proposed"));
     }
 }

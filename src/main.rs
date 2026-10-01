@@ -1,5 +1,5 @@
 use clap::{Parser, Subcommand};
-use hyperkb_rs::core::Scanner;
+use hyperkb_rs::core::{DecisionWorkflow, Scanner};
 use hyperkb_rs::domain::BrowseOptions;
 use hyperkb_rs::storage::{Database, Queries};
 use hyperkb_rs::transport::McpServer;
@@ -63,6 +63,28 @@ enum Commands {
     Remember {
         title: String,
         content: String,
+    },
+    /// Draft a proposed architecture decision document
+    #[command(alias = "draft")]
+    DraftDecision {
+        #[arg(short, long)]
+        title: String,
+        #[arg(short, long)]
+        rationale: String,
+        #[arg(short, long, default_value = "Developer")]
+        owner: String,
+        #[arg(short, long)]
+        supersedes: Option<String>,
+    },
+    /// Review and accept a proposed decision document
+    #[command(alias = "accept")]
+    AcceptDecision {
+        /// Relative path to the proposed decision markdown file
+        path: String,
+        #[arg(short, long, default_value = "Owner")]
+        owner: String,
+        #[arg(short, long)]
+        supersedes: Option<String>,
     },
 }
 
@@ -182,7 +204,44 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             } else {
                 let _ = Scanner::index_directory(db.conn(), &cli.root, "local_collection");
             }
-            McpServer::run_stdio(db.conn(), "local_collection", "default_profile")?;
+            McpServer::run_stdio(&cli.root, db.conn(), "local_collection", "default_profile")?;
+        }
+        Some(Commands::DraftDecision {
+            title,
+            rationale,
+            owner,
+            supersedes,
+        }) => {
+            let draft = DecisionWorkflow::draft_replacement(
+                &cli.root,
+                db.conn(),
+                "local_collection",
+                &title,
+                &rationale,
+                &owner,
+                supersedes.as_deref(),
+            )?;
+            println!("✓ Proposed decision drafted:");
+            println!("  Path:   {}", draft.path);
+            println!("  ID:     {}", draft.id);
+            println!("  Status: {}", draft.status);
+            println!("\nAwaiting human review and acceptance before committing.");
+        }
+        Some(Commands::AcceptDecision {
+            path,
+            owner,
+            supersedes,
+        }) => {
+            let review = DecisionWorkflow::review_acceptance(
+                &cli.root,
+                db.conn(),
+                &path,
+                &owner,
+                supersedes.as_deref(),
+            )?;
+            println!("Accepting decision at {}:", path);
+            DecisionWorkflow::accept_decision(&cli.root, db.conn(), "local_collection", &review)?;
+            println!("✓ Decision accepted and indexed as architectural authority.");
         }
         Some(Commands::Remember { title, content }) => {
             let id = uuid::Uuid::now_v7().to_string();
