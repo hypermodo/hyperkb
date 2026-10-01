@@ -1,7 +1,7 @@
-use crate::ui::theme::Theme;
+use crate::ui::app::App;
 use ratatui::{
     layout::Rect,
-    style::{Color, Modifier, Style},
+    style::{Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Clear, Padding, Paragraph, Wrap},
     Frame,
@@ -10,10 +10,12 @@ use ratatui::{
 pub struct HelpModal;
 
 impl HelpModal {
-    pub fn render(frame: &mut Frame, scroll_offset: usize, area: Rect) {
-        // Center modal: 80% width (min 60, max 100), 85% height (min 20, max 40)
-        let modal_width = (area.width * 82 / 100).clamp(60, 110);
-        let modal_height = (area.height * 86 / 100).clamp(18, 42);
+    pub fn render(frame: &mut Frame, app: &App, area: Rect) {
+        let t = &app.theme;
+
+        // Center modal: 86% width (min 65, max 115), 90% height (min 20, max 46)
+        let modal_width = (area.width * 86 / 100).clamp(65, 115);
+        let modal_height = (area.height * 90 / 100).clamp(20, 46);
 
         let horiz_pad = (area.width.saturating_sub(modal_width)) / 2;
         let vert_pad = (area.height.saturating_sub(modal_height)) / 2;
@@ -25,166 +27,257 @@ impl HelpModal {
             modal_height,
         );
 
+        let text = vec![
+            Line::from(vec![
+                Span::styled("HyperKB", t.title()),
+                Span::styled(
+                    " — Autonomous Knowledge Base, Governance & Architecture Telemetry",
+                    Style::default().fg(t.text_primary()).add_modifier(Modifier::BOLD),
+                ),
+            ]),
+            Line::from(""),
+            Line::from(Span::styled(
+                "────────────────────────────────────────────────────────────────────────────────────────",
+                Style::default().fg(t.border()),
+            )),
+            Line::from(""),
+            Line::from(Span::styled("1. KEYBOARD NAVIGATION & TABS", t.section_header())),
+            Line::from(""),
+            Line::from(vec![
+                Span::styled("  [ 1 ] - [ 5 ]      ", t.key_badge()),
+                Span::styled("Switch tabs (Work, Explore, Directives, Sessions, Settings)", Style::default().fg(t.text_primary())),
+            ]),
+            Line::from(vec![
+                Span::styled("  [ Tab ]            ", t.key_badge()),
+                Span::styled("Toggle focus between List selection and Detail preview", Style::default().fg(t.text_primary())),
+            ]),
+            Line::from(vec![
+                Span::styled("  [ j ] / [ k ]      ", t.key_badge()),
+                Span::styled("Navigate records and tree items up / down (or Arrow keys)", Style::default().fg(t.text_primary())),
+            ]),
+            Line::from(vec![
+                Span::styled("  [ PgUp ] / [ PgDn ]", t.key_badge()),
+                Span::styled(" Scroll detailed content preview, reader, and documentation", Style::default().fg(t.text_primary())),
+            ]),
+            Line::from(vec![
+                Span::styled("  [ Enter ]          ", t.key_badge()),
+                Span::styled("Open document in Reader, drill down into folders, or confirm", Style::default().fg(t.text_primary())),
+            ]),
+            Line::from(vec![
+                Span::styled("  [ Esc ]            ", t.key_badge()),
+                Span::styled("Go back to previous view / dismiss active search or modal", Style::default().fg(t.text_primary())),
+            ]),
+            Line::from(""),
+            Line::from(Span::styled(
+                "────────────────────────────────────────────────────────────────────────────────────────",
+                Style::default().fg(t.border()),
+            )),
+            Line::from(""),
+            Line::from(Span::styled("2. WORKFLOW ACTIONS & SHORTCUTS", t.section_header())),
+            Line::from(""),
+            Line::from(vec![
+                Span::styled("  [ y ]              ", t.key_badge()),
+                Span::styled("Yank / Copy active doc, directive, risk, or scorecard to clipboard", Style::default().fg(t.text_primary())),
+            ]),
+            Line::from(vec![
+                Span::styled("  [ m ]              ", t.key_badge()),
+                Span::styled("Toggle Mouse Mode: ON (Click Navigation) / OFF (Text Selection)", Style::default().fg(t.text_primary())),
+            ]),
+            Line::from(vec![
+                Span::styled("  [ t ]              ", t.key_badge()),
+                Span::styled("Toggle Tree View vs flat List View in Explore tab", Style::default().fg(t.text_primary())),
+            ]),
+            Line::from(vec![
+                Span::styled("  [ Space ]          ", t.key_badge()),
+                Span::styled("Expand or collapse directory folder in Explore Tree View", Style::default().fg(t.text_primary())),
+            ]),
+            Line::from(vec![
+                Span::styled("  [ c ]              ", t.key_badge()),
+                Span::styled("Cycle category filters (Decisions, Risks, Specs, Plans)", Style::default().fg(t.text_primary())),
+            ]),
+            Line::from(vec![
+                Span::styled("  [ / ]              ", t.key_badge()),
+                Span::styled("Search knowledge base documents by title, keyword, or path", Style::default().fg(t.text_primary())),
+            ]),
+            Line::from(vec![
+                Span::styled("  [ v ]              ", t.key_badge()),
+                Span::styled("Toggle formatted Markdown preview vs RAW file view (Reader tab)", Style::default().fg(t.text_primary())),
+            ]),
+            Line::from(vec![
+                Span::styled("  [ r ]              ", t.key_badge()),
+                Span::styled("Retire selected directive (in Directives tab)", Style::default().fg(t.text_primary())),
+            ]),
+            Line::from(vec![
+                Span::styled("  [ T ]              ", t.key_badge()),
+                Span::styled("Cycle visual theme (Cyberpunk, Modern, Nord, Tokyo Night, Light)", Style::default().fg(t.text_primary())),
+            ]),
+            Line::from(vec![
+                Span::styled("  [ q ] / Ctrl+C     ", t.key_badge()),
+                Span::styled("Exit HyperKB safely", Style::default().fg(t.text_primary())),
+            ]),
+            Line::from(""),
+            Line::from(Span::styled(
+                "────────────────────────────────────────────────────────────────────────────────────────",
+                Style::default().fg(t.border()),
+            )),
+            Line::from(""),
+            Line::from(Span::styled("3. ZERO-FRICTION TEXT SELECTION & CLIPBOARD COPYING", t.section_header())),
+            Line::from(""),
+            Line::from(Span::styled(
+                "  HyperKB offers three effortless ways to copy text without friction:",
+                Style::default().fg(t.text_muted()),
+            )),
+            Line::from(""),
+            Line::from(vec![
+                Span::styled("  • Method 1 (Instant 1-Key Clipboard Copy): ", Style::default().fg(t.status_accepted()).add_modifier(Modifier::BOLD)),
+                Span::styled("Press ", Style::default().fg(t.text_primary())),
+                Span::styled("[ y ]", t.key_badge()),
+            ]),
+            Line::from(Span::styled(
+                "    Pressing 'y' instantly copies the open document, selected directive, active risk,",
+                Style::default().fg(t.text_primary()),
+            )),
+            Line::from(Span::styled(
+                "    or session scorecard directly into your system clipboard (macOS pbcopy + OSC 52).",
+                Style::default().fg(t.text_primary()),
+            )),
+            Line::from(Span::styled(
+                "    No mouse dragging required — simply press 'y' and Cmd+V to paste anywhere!",
+                Style::default().fg(t.text_primary()),
+            )),
+            Line::from(""),
+            Line::from(vec![
+                Span::styled("  • Method 2 (Antigravity IDE / VS Code Terminal Selection): ", Style::default().fg(t.status_accepted()).add_modifier(Modifier::BOLD)),
+                Span::styled("Hold ", Style::default().fg(t.text_primary())),
+                Span::styled("[ Shift ]", t.key_badge()),
+            ]),
+            Line::from(Span::styled(
+                "    In VS Code and Antigravity IDE (xterm.js), holding the Shift key while dragging",
+                Style::default().fg(t.text_primary()),
+            )),
+            Line::from(Span::styled(
+                "    immediately bypasses terminal mouse capture, letting you highlight any text on screen.",
+                Style::default().fg(t.text_primary()),
+            )),
+            Line::from(Span::styled(
+                "    (Tip: In Apple Terminal or iTerm2, hold Option (⌥) while dragging).",
+                Style::default().fg(t.text_muted()),
+            )),
+            Line::from(""),
+            Line::from(vec![
+                Span::styled("  • Method 3 (Mouse Mode Toggle): ", Style::default().fg(t.status_accepted()).add_modifier(Modifier::BOLD)),
+                Span::styled("Press ", Style::default().fg(t.text_primary())),
+                Span::styled("[ m ]", t.key_badge()),
+            ]),
+            Line::from(Span::styled(
+                "    Pressing 'm' disables terminal mouse reporting entirely. You can then click and drag",
+                Style::default().fg(t.text_primary()),
+            )),
+            Line::from(Span::styled(
+                "    to select text with standard terminal selection. Press 'm' again to restore click navigation.",
+                Style::default().fg(t.text_primary()),
+            )),
+            Line::from(""),
+            Line::from(Span::styled(
+                "────────────────────────────────────────────────────────────────────────────────────────",
+                Style::default().fg(t.border()),
+            )),
+            Line::from(""),
+            Line::from(Span::styled("4. SCIENTIFIC TELEMETRY & CODING EFFECTIVENESS", t.section_header())),
+            Line::from(""),
+            Line::from(Span::styled(
+                "  HyperKB rejects arbitrary vanity metrics. Coding Effectiveness is calculated using an",
+                Style::default().fg(t.text_primary()),
+            )),
+            Line::from(Span::styled(
+                "  empirically grounded behavioral model:",
+                Style::default().fg(t.text_primary()),
+            )),
+            Line::from(""),
+            Line::from(vec![
+                Span::styled("  Formula: ", Style::default().fg(t.status_proposed()).add_modifier(Modifier::BOLD)),
+                Span::styled("Score = clamp(100 - P_loops - P_friction - P_thrash + B_hazard, 5, 100)", Style::default().fg(t.text_primary()).add_modifier(Modifier::BOLD)),
+            ]),
+            Line::from(""),
+            Line::from(vec![
+                Span::styled("  • Baseline Score: ", Style::default().fg(t.status_accepted()).add_modifier(Modifier::BOLD)),
+                Span::styled("100% clean baseline execution without defect.", Style::default().fg(t.text_primary())),
+            ]),
+            Line::from(vec![
+                Span::styled("  • Review Loops (P_loops): ", Style::default().fg(t.status_risk()).add_modifier(Modifier::BOLD)),
+                Span::styled("-15% per review oscillation (heavily penalizes rework thrash).", Style::default().fg(t.text_primary())),
+            ]),
+            Line::from(vec![
+                Span::styled("  • Iteration Friction (P_friction): ", Style::default().fg(t.status_risk()).add_modifier(Modifier::BOLD)),
+                Span::styled("-15% deduction if initial execution failed tests or compilation.", Style::default().fg(t.text_primary())),
+            ]),
+            Line::from(vec![
+                Span::styled("  • Tool Thrash (P_thrash): ", Style::default().fg(t.status_risk()).add_modifier(Modifier::BOLD)),
+                Span::styled("Deductions applied when inspection-to-edit ratio exceeds 8:1.", Style::default().fg(t.text_primary())),
+            ]),
+            Line::from(vec![
+                Span::styled("  • Hazard Prevention (B_hazard): ", Style::default().fg(t.status_accepted()).add_modifier(Modifier::BOLD)),
+                Span::styled("+10% bonus when active directives intercept known regressions.", Style::default().fg(t.text_primary())),
+            ]),
+            Line::from(""),
+            Line::from(Span::styled(
+                "────────────────────────────────────────────────────────────────────────────────────────",
+                Style::default().fg(t.border()),
+            )),
+            Line::from(""),
+            Line::from(Span::styled("5. CLI COMMANDS & MCP SERVER", t.section_header())),
+            Line::from(""),
+            Line::from(vec![
+                Span::styled("  hyperkb check-work [--diff]       ", t.key_badge()),
+                Span::styled("Audit git changes against active risks & directives", Style::default().fg(t.text_primary())),
+            ]),
+            Line::from(vec![
+                Span::styled("  hyperkb audit [--kb/--directives] ", t.key_badge()),
+                Span::styled("Verify document bloat, depth, and schema validity", Style::default().fg(t.text_primary())),
+            ]),
+            Line::from(vec![
+                Span::styled("  hyperkb directive list/new        ", t.key_badge()),
+                Span::styled("Manage team policies and standing guardrails", Style::default().fg(t.text_primary())),
+            ]),
+            Line::from(vec![
+                Span::styled("  hyperkb session briefing          ", t.key_badge()),
+                Span::styled("Inspect agent telemetry and generate briefings", Style::default().fg(t.text_primary())),
+            ]),
+            Line::from(vec![
+                Span::styled("  hyperkb mcp                       ", t.key_badge()),
+                Span::styled("Launch stdio MCP server for AI coding agents", Style::default().fg(t.text_primary())),
+            ]),
+            Line::from(""),
+        ];
+
+        let total_lines = text.len();
+        let current_line = (app.help_scroll + 1).min(total_lines);
+        let scroll_pct = ((current_line as f64 / total_lines as f64) * 100.0) as usize;
+
         // 1. Clear background behind modal
         frame.render_widget(Clear, modal_area);
 
-        // 2. Render Modal Block with generous padding
+        // 2. Render Modal Block with theme styling and generous padding
         let block = Block::default()
             .borders(Borders::ALL)
-            .border_style(Style::default().fg(Theme::ACCENT).add_modifier(Modifier::BOLD))
-            .padding(Padding::new(2, 2, 1, 1))
+            .border_style(Style::default().fg(t.accent()).add_modifier(Modifier::BOLD))
+            .style(Style::default().bg(t.bg_panel()).fg(t.text_primary()))
+            .padding(Padding::new(3, 3, 1, 1))
             .title(Span::styled(
-                " [?] HyperKB System Documentation & Shortcuts [Esc or '?' to Close] ",
-                Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
-            ));
-
-        let text = vec![
-            Line::from(vec![
-                Span::styled("HyperKB", Style::default().fg(Theme::ACCENT).add_modifier(Modifier::BOLD)),
-                Span::raw(" — Autonomous Knowledge Base, Agent Governance & Architecture Telemetry"),
-            ]),
-            Line::from(""),
-            Line::from(Span::styled("────────────────────────────────────────────────────────────────────────────", Style::default().fg(Theme::BORDER))),
-            Line::from(""),
-            Line::from(Span::styled("1. KEYBOARD NAVIGATION & SHORTCUTS", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))),
-            Line::from(""),
-            Line::from(vec![
-                Span::styled("  [1] - [5]      ", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
-                Span::raw("Switch tabs (Work, Explore, Directives, Sessions, Settings)"),
-            ]),
-            Line::from(vec![
-                Span::styled("  [Tab]          ", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
-                Span::raw("Toggle focus between list selection and content detail view"),
-            ]),
-            Line::from(vec![
-                Span::styled("  [j] / [k], ↑/↓ ", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
-                Span::raw("Navigate records and items up and down"),
-            ]),
-            Line::from(vec![
-                Span::styled("  [PgUp] / [PgDn]", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
-                Span::raw("Scroll detailed content preview and reader"),
-            ]),
-            Line::from(vec![
-                Span::styled("  [Enter]        ", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
-                Span::raw("Open document in reader, drill down into folders, or confirm"),
-            ]),
-            Line::from(vec![
-                Span::styled("  [Space]        ", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
-                Span::raw("Expand or collapse directory folder in Explore Tree View"),
-            ]),
-            Line::from(vec![
-                Span::styled("  [t]            ", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
-                Span::raw("Toggle hierarchical Tree View vs flat List View in Explore tab"),
-            ]),
-            Line::from(vec![
-                Span::styled("  [c]            ", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
-                Span::raw("Cycle category filters (Decisions, Risks, Specs, Plans / Taxonomies)"),
-            ]),
-            Line::from(vec![
-                Span::styled("  [/]            ", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
-                Span::raw("Search knowledge base documents by title, keyword, or path"),
-            ]),
-            Line::from(vec![
-                Span::styled("  [r]            ", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
-                Span::raw("Retire the selected directive (in Directives tab)"),
-            ]),
-            Line::from(vec![
-                Span::styled("  [v]            ", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
-                Span::raw("Toggle formatted markdown preview vs RAW file view (in Reader tab)"),
-            ]),
-            Line::from(vec![
-                Span::styled("  [T]            ", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
-                Span::raw("Cycle visual themes (Cyberpunk, Modern, Nord, Tokyo Night, Light)"),
-            ]),
-            Line::from(vec![
-                Span::styled("  [m]            ", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
-                Span::raw("Toggle Mouse Mode: ON (Click Nav) / OFF (Text Select & Copy)"),
-            ]),
-            Line::from(vec![
-                Span::styled("  [?] or [h]     ", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
-                Span::raw("Open or close this interactive documentation overlay"),
-            ]),
-            Line::from(vec![
-                Span::styled("  [q] / Ctrl+C   ", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
-                Span::raw("Exit HyperKB safely"),
-            ]),
-            Line::from(""),
-            Line::from(Span::styled("────────────────────────────────────────────────────────────────────────────", Style::default().fg(Theme::BORDER))),
-            Line::from(""),
-            Line::from(Span::styled("2. TUI TEXT SELECTION & COPY / PASTE", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))),
-            Line::from(""),
-            Line::from("  Terminal applications capture mouse events for clicking and scrolling,"),
-            Line::from("  which can intercept standard terminal text drag-selection. HyperKB provides"),
-            Line::from("  two zero-friction solutions to select and copy text:"),
-            Line::from(""),
-            Line::from(vec![
-                Span::styled("  Option A (Quick Toggle): ", Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
-                Span::raw("Press "),
-                Span::styled("[m]", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
-                Span::raw(" to disable mouse capture. You can now immediately drag"),
-            ]),
-            Line::from("  to select any text on screen and copy with Cmd+C / Ctrl+Shift+C. Press [m] again to re-enable."),
-            Line::from(""),
-            Line::from(vec![
-                Span::styled("  Option B (Terminal Bypass): ", Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
-                Span::raw("Hold the "),
-                Span::styled("Option (⌥)", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
-                Span::raw(" key on macOS (or "),
-                Span::styled("Shift", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
-                Span::raw(" on Linux) while"),
-            ]),
-            Line::from("  clicking and dragging with your mouse. Your terminal will natively select the text"),
-            Line::from("  without needing to toggle mouse mode off."),
-            Line::from(""),
-            Line::from(Span::styled("────────────────────────────────────────────────────────────────────────────", Style::default().fg(Theme::BORDER))),
-            Line::from(""),
-            Line::from(Span::styled("3. SCIENTIFIC TELEMETRY & CODING EFFECTIVENESS", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))),
-            Line::from(""),
-            Line::from("  HyperKB rejects subjective vanity scores. Coding Effectiveness is grounded in a"),
-            Line::from("  mathematically formal behavioral model:"),
-            Line::from(""),
-            Line::from(vec![
-                Span::styled("  Formula: ", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
-                Span::styled("Score = clamp(100 - P_loops - P_friction - P_thrash + B_hazard, 5, 100)", Style::default().fg(Color::White)),
-            ]),
-            Line::from(""),
-            Line::from("  • Base Score: 100% clean baseline execution."),
-            Line::from("  • P_loops (Oscillations): -15% penalty per review loop (penalizes rework thrash)."),
-            Line::from("  • P_friction (Iteration): -15% deduction if initial execution failed tests/compilation."),
-            Line::from("  • P_thrash (Tool-to-Edit): Deductions applied when inspections exceed 8:1 ratio."),
-            Line::from("  • B_hazard (Risk Prevention): +10% bonus for active invariant interception."),
-            Line::from(""),
-            Line::from(Span::styled("────────────────────────────────────────────────────────────────────────────", Style::default().fg(Theme::BORDER))),
-            Line::from(""),
-            Line::from(Span::styled("4. CLI COMMANDS & MCP SERVER", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))),
-            Line::from(""),
-            Line::from(vec![
-                Span::styled("  hyperkb check-work [--diff]  ", Style::default().fg(Theme::ACCENT)),
-                Span::raw("Audit current git changes against risks & directives"),
-            ]),
-            Line::from(vec![
-                Span::styled("  hyperkb audit [--kb/--directives] ", Style::default().fg(Theme::ACCENT)),
-                Span::raw("Verify line bloat, depth, and schema validity"),
-            ]),
-            Line::from(vec![
-                Span::styled("  hyperkb directive list/new   ", Style::default().fg(Theme::ACCENT)),
-                Span::raw("Manage team policies and standing guardrails"),
-            ]),
-            Line::from(vec![
-                Span::styled("  hyperkb session briefing/list", Style::default().fg(Theme::ACCENT)),
-                Span::raw("Inspect agent telemetry and generate briefings"),
-            ]),
-            Line::from(vec![
-                Span::styled("  hyperkb mcp                  ", Style::default().fg(Theme::ACCENT)),
-                Span::raw("Run zero-config MCP server for AI coding agents"),
-            ]),
-            Line::from(""),
-            Line::from(Span::styled("Press [Esc] or [?] to close this help window.", Style::default().fg(Theme::TEXT_MUTED))),
-        ];
+                " [?] HyperKB System Documentation & Shortcuts ",
+                t.title(),
+            ))
+            .title_bottom(Line::from(vec![
+                Span::styled(format!(" [Line {}/{} • {}%] ", current_line, total_lines, scroll_pct), Style::default().fg(t.text_muted())),
+                Span::styled(" Scroll: ", Style::default().fg(t.text_muted())),
+                Span::styled("[j / k / PgDn] ", t.key_badge()),
+                Span::styled("• Close: ", Style::default().fg(t.text_muted())),
+                Span::styled("[Esc] or [?] ", t.key_badge()),
+            ]));
 
         let p = Paragraph::new(text)
             .block(block)
-            .scroll((scroll_offset as u16, 0))
+            .scroll((app.help_scroll as u16, 0))
             .wrap(Wrap { trim: false });
 
         frame.render_widget(p, modal_area);

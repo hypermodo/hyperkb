@@ -14,9 +14,11 @@ use layout::{Footer, Header};
 use ratatui::{
     backend::CrosstermBackend,
     layout::{Constraint, Direction, Layout},
+    style::Style,
+    widgets::Block,
     Terminal,
 };
-use std::io;
+use std::io::{self, Write};
 use std::panic;
 use std::path::Path;
 use std::time::Duration;
@@ -29,6 +31,8 @@ pub fn run(root: &Path, db: &Database, collection_id: &str, profile_id: &str) ->
     panic::set_hook(Box::new(move |panic_info| {
         let _ = disable_raw_mode();
         let _ = execute!(io::stdout(), LeaveAlternateScreen, DisableMouseCapture);
+        let _ = io::stdout().write_all(b"\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1005l\x1b[?1006l\x1b[?1015l");
+        let _ = io::stdout().flush();
         original_hook(panic_info);
     }));
 
@@ -43,6 +47,8 @@ pub fn run(root: &Path, db: &Database, collection_id: &str, profile_id: &str) ->
         execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
     } else {
         execute!(stdout, EnterAlternateScreen)?;
+        let _ = stdout.write_all(b"\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1005l\x1b[?1006l\x1b[?1015l");
+        let _ = stdout.flush();
     }
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
@@ -53,20 +59,27 @@ pub fn run(root: &Path, db: &Database, collection_id: &str, profile_id: &str) ->
     // 5. Restore terminal state
     disable_raw_mode()?;
     execute!(terminal.backend_mut(), LeaveAlternateScreen, DisableMouseCapture)?;
+    let _ = terminal.backend_mut().write_all(b"\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1005l\x1b[?1006l\x1b[?1015l");
+    let _ = terminal.backend_mut().flush();
     terminal.show_cursor()?;
 
     res
 }
 
-fn run_loop<B: ratatui::backend::Backend>(
+fn run_loop(
     root: &Path,
-    terminal: &mut Terminal<B>,
+    terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
     app: &mut App,
     db: &Database,
 ) -> io::Result<()> {
     while !app.should_quit {
         terminal.draw(|frame| {
             let area = frame.area();
+            let t = &app.theme;
+
+            // Fill entire frame with active theme background color and primary text color
+            let bg_block = Block::default().style(Style::default().bg(t.bg()).fg(t.text_primary()));
+            frame.render_widget(bg_block, area);
 
             // Main vertical layout: Header (5 rows with generous breathing room), Content (Remaining), Footer (2 rows)
             let chunks = Layout::default()
@@ -92,7 +105,7 @@ fn run_loop<B: ratatui::backend::Backend>(
             Footer::render(frame, app, chunks[2]);
 
             if app.show_help {
-                HelpModal::render(frame, app.help_scroll, area);
+                HelpModal::render(frame, app, area);
             }
         })?;
 
@@ -151,14 +164,27 @@ fn run_loop<B: ratatui::backend::Backend>(
                             KeyCode::Char('q') => app.should_quit = true,
                             KeyCode::Char('?') | KeyCode::F(1) => app.toggle_help(),
                             KeyCode::Char('h') if app.active_tab != ActiveTab::Settings => app.toggle_help(),
+                            KeyCode::Char('y') | KeyCode::Char('Y') => {
+                                match app.copy_active_content_to_clipboard() {
+                                    Ok(desc) => {
+                                        app.status_message = Some(format!("✔ Copied {} to clipboard (Cmd+V to paste)", desc));
+                                    }
+                                    Err(err) => {
+                                        app.status_message = Some(format!("Warning: {}", err));
+                                    }
+                                }
+                            }
                             KeyCode::Char('m') | KeyCode::Char('M') => {
                                 let enabled = app.toggle_mouse();
                                 if enabled {
-                                    let _ = execute!(io::stdout(), EnableMouseCapture);
-                                    app.status_message = Some("Mouse Capture: ON (TUI navigation active)".to_string());
+                                    let _ = execute!(terminal.backend_mut(), EnableMouseCapture);
+                                    let _ = terminal.backend_mut().flush();
+                                    app.status_message = Some("Mouse Capture: ON (Click to Navigate)".to_string());
                                 } else {
-                                    let _ = execute!(io::stdout(), DisableMouseCapture);
-                                    app.status_message = Some("Mouse Capture: OFF (Terminal drag-to-select copy/paste active)".to_string());
+                                    let _ = execute!(terminal.backend_mut(), DisableMouseCapture);
+                                    let _ = terminal.backend_mut().write_all(b"\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1005l\x1b[?1006l\x1b[?1015l");
+                                    let _ = terminal.backend_mut().flush();
+                                    app.status_message = Some("Mouse Capture: OFF (Terminal drag-selection enabled. Or hold Shift for instant bypass)".to_string());
                                 }
                             }
                             KeyCode::Char('T') => {
@@ -176,10 +202,32 @@ fn run_loop<B: ratatui::backend::Backend>(
                             KeyCode::Down | KeyCode::Char('j') => app.next(),
                             KeyCode::Up | KeyCode::Char('k') => app.prev(),
                             KeyCode::Left | KeyCode::Char('h') | KeyCode::Char('-') if app.active_tab == ActiveTab::Settings => {
+                                let old_mouse = app.mouse_capture;
                                 app.adjust_setting(-1);
+                                if app.mouse_capture != old_mouse {
+                                    if app.mouse_capture {
+                                        let _ = execute!(terminal.backend_mut(), EnableMouseCapture);
+                                        let _ = terminal.backend_mut().flush();
+                                    } else {
+                                        let _ = execute!(terminal.backend_mut(), DisableMouseCapture);
+                                        let _ = terminal.backend_mut().write_all(b"\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1005l\x1b[?1006l\x1b[?1015l");
+                                        let _ = terminal.backend_mut().flush();
+                                    }
+                                }
                             }
                             KeyCode::Right | KeyCode::Char('l') | KeyCode::Char('+') | KeyCode::Char('=') if app.active_tab == ActiveTab::Settings => {
+                                let old_mouse = app.mouse_capture;
                                 app.adjust_setting(1);
+                                if app.mouse_capture != old_mouse {
+                                    if app.mouse_capture {
+                                        let _ = execute!(terminal.backend_mut(), EnableMouseCapture);
+                                        let _ = terminal.backend_mut().flush();
+                                    } else {
+                                        let _ = execute!(terminal.backend_mut(), DisableMouseCapture);
+                                        let _ = terminal.backend_mut().write_all(b"\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1005l\x1b[?1006l\x1b[?1015l");
+                                        let _ = terminal.backend_mut().flush();
+                                    }
+                                }
                             }
                             KeyCode::PageDown => app.page_down(),
                             KeyCode::PageUp => app.page_up(),
@@ -191,7 +239,18 @@ fn run_loop<B: ratatui::backend::Backend>(
                                 } else if app.active_tab == ActiveTab::Explore && app.explore_tree_mode {
                                     app.open_selected();
                                 } else if app.active_tab == ActiveTab::Settings {
+                                    let old_mouse = app.mouse_capture;
                                     app.adjust_setting(1);
+                                    if app.mouse_capture != old_mouse {
+                                        if app.mouse_capture {
+                                            let _ = execute!(terminal.backend_mut(), EnableMouseCapture);
+                                            let _ = terminal.backend_mut().flush();
+                                        } else {
+                                            let _ = execute!(terminal.backend_mut(), DisableMouseCapture);
+                                            let _ = terminal.backend_mut().write_all(b"\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1005l\x1b[?1006l\x1b[?1015l");
+                                            let _ = terminal.backend_mut().flush();
+                                        }
+                                    }
                                 }
                             }
                             KeyCode::Enter => {
@@ -228,6 +287,12 @@ fn run_loop<B: ratatui::backend::Backend>(
                     }
                 }
                 Event::Mouse(mouse) => {
+                    // When mouse capture is disabled, DO NOT process any mouse events.
+                    // This ensures terminal emulator mouse-drag text selection operations are never intercepted or interrupted by HyperKB.
+                    if !app.mouse_capture {
+                        continue;
+                    }
+
                     let col = mouse.column;
                     let row = mouse.row;
                     let area = terminal.size()?;
@@ -240,7 +305,7 @@ fn run_loop<B: ratatui::backend::Backend>(
 
                             if app.show_help {
                                 app.show_help = false;
-                                return Ok(());
+                                continue;
                             }
 
                             // 1. Header clicks (row 1: tabs, row 3: taxonomy/category filter pills)

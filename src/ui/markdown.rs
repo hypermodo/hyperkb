@@ -1,6 +1,5 @@
 use crate::core::MetadataParser;
 use crate::domain::{Document, DocumentStatus};
-use crate::ui::theme::Theme;
 use ratatui::{
     style::{Color, Modifier, Style},
     text::{Line, Span},
@@ -17,15 +16,19 @@ struct StyledWord {
 impl MarkdownFormatter {
     /// Formats document metadata into a clean, structured top card.
     pub fn format_metadata_card(doc: &Document) -> Vec<Line<'static>> {
+        Self::format_metadata_card_with_theme(doc, &crate::ui::theme::ThemeMode::Cyberpunk)
+    }
+
+    pub fn format_metadata_card_with_theme(doc: &Document, theme: &crate::ui::theme::ThemeMode) -> Vec<Line<'static>> {
         let (badge_text, badge_style) = match doc.status {
-            DocumentStatus::Accepted => ("● ACCEPTED", Theme::badge_accepted()),
-            DocumentStatus::Proposed => ("○ PROPOSED", Theme::badge_proposed()),
-            DocumentStatus::Open => ("▲ OPEN", Theme::badge_risk()),
-            DocumentStatus::Acknowledged => ("✔ ACKNOWLEDGED", Theme::badge_acknowledged()),
-            DocumentStatus::Resolved => ("✔ RESOLVED", Theme::badge_resolved()),
-            DocumentStatus::Superseded => ("✕ SUPERSEDED", Style::default().fg(Theme::STATUS_SUPERSEDED)),
-            DocumentStatus::Conflict => ("! CONFLICT", Theme::badge_conflict()),
-            DocumentStatus::Unknown => ("· UNKNOWN", Style::default().fg(Theme::STATUS_UNKNOWN)),
+            DocumentStatus::Accepted => ("● ACCEPTED", theme.badge_accepted()),
+            DocumentStatus::Proposed => ("○ PROPOSED", theme.badge_proposed()),
+            DocumentStatus::Open => ("▲ OPEN", theme.badge_risk()),
+            DocumentStatus::Acknowledged => ("✔ ACKNOWLEDGED", theme.badge_acknowledged()),
+            DocumentStatus::Resolved => ("✔ RESOLVED", theme.badge_resolved()),
+            DocumentStatus::Superseded => ("✕ SUPERSEDED", Style::default().fg(theme.status_superseded())),
+            DocumentStatus::Conflict => ("! CONFLICT", theme.badge_conflict()),
+            DocumentStatus::Unknown => ("· UNKNOWN", Style::default().fg(theme.status_unknown())),
         };
 
         let owner_str = if doc.owner.is_empty() {
@@ -41,44 +44,44 @@ impl MarkdownFormatter {
 
         let mut lines = vec![
             Line::from(vec![
-                Span::styled("Status: ", Style::default().fg(Theme::TEXT_MUTED)),
+                Span::styled("Status: ", Style::default().fg(theme.text_muted())),
                 Span::styled(badge_text, badge_style),
                 Span::raw("    "),
-                Span::styled("Kind: ", Style::default().fg(Theme::TEXT_MUTED)),
+                Span::styled("Kind: ", Style::default().fg(theme.text_muted())),
                 Span::styled(
                     doc.kind.as_str().to_uppercase(),
-                    Style::default().fg(Color::LightBlue).add_modifier(Modifier::BOLD),
+                    Style::default().fg(theme.accent()).add_modifier(Modifier::BOLD),
                 ),
                 Span::raw("    "),
-                Span::styled("Owner: ", Style::default().fg(Theme::TEXT_MUTED)),
-                Span::styled(owner_str, Style::default().fg(Color::White)),
+                Span::styled("Owner: ", Style::default().fg(theme.text_muted())),
+                Span::styled(owner_str, Style::default().fg(theme.text_primary())),
                 Span::raw("    "),
-                Span::styled("Topic: ", Style::default().fg(Theme::TEXT_MUTED)),
-                Span::styled(doc.topic.clone(), Style::default().fg(Color::White)),
+                Span::styled("Topic: ", Style::default().fg(theme.text_muted())),
+                Span::styled(doc.topic.clone(), Style::default().fg(theme.text_primary())),
             ]),
             Line::from(""),
             Line::from(vec![
-                Span::styled("Source: ", Style::default().fg(Theme::TEXT_MUTED)),
-                Span::styled(doc.path.clone(), Style::default().fg(Theme::ACCENT)),
+                Span::styled("Source: ", Style::default().fg(theme.text_muted())),
+                Span::styled(doc.path.clone(), Style::default().fg(theme.accent())),
                 Span::raw("    "),
-                Span::styled("ID: ", Style::default().fg(Theme::TEXT_MUTED)),
-                Span::styled(id_str, Style::default().fg(Color::DarkGray)),
+                Span::styled("ID: ", Style::default().fg(theme.text_muted())),
+                Span::styled(id_str, Style::default().fg(theme.text_muted())),
             ]),
         ];
 
         if let Some(ref supersedes) = doc.supersedes {
             lines.push(Line::from(""));
             lines.push(Line::from(vec![
-                Span::styled("Supersedes: ", Style::default().fg(Theme::TEXT_MUTED)),
-                Span::styled(supersedes.clone(), Style::default().fg(Color::Yellow)),
+                Span::styled("Supersedes: ", Style::default().fg(theme.text_muted())),
+                Span::styled(supersedes.clone(), Style::default().fg(theme.status_proposed())),
             ]));
         }
 
         if let Some(ref repl) = doc.replacement_id {
             lines.push(Line::from(""));
             lines.push(Line::from(vec![
-                Span::styled("Replacement: ", Style::default().fg(Theme::TEXT_MUTED)),
-                Span::styled(repl.clone(), Style::default().fg(Theme::STATUS_ACCEPTED)),
+                Span::styled("Replacement: ", Style::default().fg(theme.text_muted())),
+                Span::styled(repl.clone(), Style::default().fg(theme.status_accepted())),
             ]));
         }
 
@@ -88,10 +91,10 @@ impl MarkdownFormatter {
                 let short_grant = if grant_str.len() >= 8 { &grant_str[..8] } else { &grant_str };
                 lines.push(Line::from(""));
                 lines.push(Line::from(vec![
-                    Span::styled("Delegation: ", Style::default().fg(Theme::TEXT_MUTED)),
-                    Span::styled(format!("Agent [{}] ", del.agent_id), Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
-                    Span::styled(format!("via Grant #{} ", short_grant), Style::default().fg(Color::LightBlue)),
-                    Span::styled(format!("(Authorizer: {})", del.granted_by), Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
+                    Span::styled("Delegation: ", Style::default().fg(theme.text_muted())),
+                    Span::styled(format!("Agent [{}] ", del.agent_id), Style::default().fg(theme.accent()).add_modifier(Modifier::BOLD)),
+                    Span::styled(format!("via Grant #{} ", short_grant), Style::default().fg(theme.accent())),
+                    Span::styled(format!("(Authorizer: {})", del.granted_by), Style::default().fg(theme.status_accepted()).add_modifier(Modifier::BOLD)),
                 ]));
             }
         }
@@ -101,6 +104,10 @@ impl MarkdownFormatter {
 
     /// Formats the Markdown body into styled Ratatui Lines with explicit width wrapping and hanging indents.
     pub fn format_markdown(content: &str, max_width: usize) -> Vec<Line<'static>> {
+        Self::format_markdown_with_theme(content, max_width, &crate::ui::theme::ThemeMode::Cyberpunk)
+    }
+
+    pub fn format_markdown_with_theme(content: &str, max_width: usize, theme: &crate::ui::theme::ThemeMode) -> Vec<Line<'static>> {
         let max_width = max_width.max(40);
         let content_width = max_width.saturating_sub(2).max(25);
         let parsed = MetadataParser::parse(content).unwrap_or_else(|_| crate::core::ParsedMetadata {
@@ -182,7 +189,7 @@ impl MarkdownFormatter {
                     }
                 }
 
-                Self::render_table(&table_rows, max_width, &mut lines);
+                Self::render_table_with_theme(&table_rows, max_width, &mut lines, theme);
                 continue;
             }
 
@@ -193,13 +200,13 @@ impl MarkdownFormatter {
                     Span::raw("  "),
                     Span::styled(
                         heading.to_string(),
-                        Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+                        Style::default().fg(theme.accent()).add_modifier(Modifier::BOLD),
                     ),
                 ]));
                 let bar_len = max_width.min(80).saturating_sub(4);
                 lines.push(Line::from(Span::styled(
                     format!("  {:─<bar_len$}", "", bar_len = bar_len),
-                    Style::default().fg(Color::Rgb(56, 189, 248)),
+                    Style::default().fg(theme.accent()),
                 )));
                 lines.push(Line::from(""));
                 continue;
@@ -211,13 +218,13 @@ impl MarkdownFormatter {
                     Span::raw("  "),
                     Span::styled(
                         heading.to_string(),
-                        Style::default().fg(Color::Rgb(125, 211, 252)).add_modifier(Modifier::BOLD),
+                        Style::default().fg(theme.accent()).add_modifier(Modifier::BOLD),
                     ),
                 ]));
                 let bar_len = max_width.min(75).saturating_sub(4);
                 lines.push(Line::from(Span::styled(
                     format!("  {:─<bar_len$}", "", bar_len = bar_len),
-                    Style::default().fg(Color::Rgb(60, 80, 110)),
+                    Style::default().fg(theme.border()),
                 )));
                 lines.push(Line::from(""));
                 continue;
@@ -229,7 +236,7 @@ impl MarkdownFormatter {
                     Span::raw("    "),
                     Span::styled(
                         heading.to_string(),
-                        Style::default().fg(Color::White).add_modifier(Modifier::BOLD),
+                        Style::default().fg(theme.text_primary()).add_modifier(Modifier::BOLD),
                     ),
                 ]));
                 lines.push(Line::from(""));
@@ -240,32 +247,32 @@ impl MarkdownFormatter {
             if trimmed.starts_with("> [!NOTE]") {
                 lines.push(Line::from(""));
                 lines.push(Line::from(vec![
-                    Span::styled("  ┃ ", Style::default().fg(Color::LightBlue).add_modifier(Modifier::BOLD)),
-                    Span::styled("ℹ NOTE", Style::default().fg(Color::LightBlue).add_modifier(Modifier::BOLD)),
+                    Span::styled("  ┃ ", Style::default().fg(theme.accent()).add_modifier(Modifier::BOLD)),
+                    Span::styled("ℹ NOTE", Style::default().fg(theme.accent()).add_modifier(Modifier::BOLD)),
                 ]));
                 continue;
             }
             if trimmed.starts_with("> [!WARNING]") || trimmed.starts_with("> [!CAUTION]") {
                 lines.push(Line::from(""));
                 lines.push(Line::from(vec![
-                    Span::styled("  ┃ ", Style::default().fg(Theme::STATUS_RISK_OPEN).add_modifier(Modifier::BOLD)),
-                    Span::styled("▲ WARNING", Style::default().fg(Theme::STATUS_RISK_OPEN).add_modifier(Modifier::BOLD)),
+                    Span::styled("  ┃ ", Style::default().fg(theme.status_risk()).add_modifier(Modifier::BOLD)),
+                    Span::styled("▲ WARNING", Style::default().fg(theme.status_risk()).add_modifier(Modifier::BOLD)),
                 ]));
                 continue;
             }
             if trimmed.starts_with("> [!TIP]") {
                 lines.push(Line::from(""));
                 lines.push(Line::from(vec![
-                    Span::styled("  ┃ ", Style::default().fg(Theme::STATUS_ACCEPTED).add_modifier(Modifier::BOLD)),
-                    Span::styled("★ TIP", Style::default().fg(Theme::STATUS_ACCEPTED).add_modifier(Modifier::BOLD)),
+                    Span::styled("  ┃ ", Style::default().fg(theme.status_accepted()).add_modifier(Modifier::BOLD)),
+                    Span::styled("★ TIP", Style::default().fg(theme.status_accepted()).add_modifier(Modifier::BOLD)),
                 ]));
                 continue;
             }
             if trimmed.starts_with("> [!IMPORTANT]") {
                 lines.push(Line::from(""));
                 lines.push(Line::from(vec![
-                    Span::styled("  ┃ ", Style::default().fg(Color::LightMagenta).add_modifier(Modifier::BOLD)),
-                    Span::styled("◆ IMPORTANT", Style::default().fg(Color::LightMagenta).add_modifier(Modifier::BOLD)),
+                    Span::styled("  ┃ ", Style::default().fg(theme.status_proposed()).add_modifier(Modifier::BOLD)),
+                    Span::styled("◆ IMPORTANT", Style::default().fg(theme.status_proposed()).add_modifier(Modifier::BOLD)),
                 ]));
                 continue;
             }
@@ -274,9 +281,9 @@ impl MarkdownFormatter {
                 let wrapped = Self::wrap_spans(
                     quote_spans,
                     content_width,
-                    vec![Span::styled("  ┃ ", Style::default().fg(Color::Rgb(90, 100, 120)))],
+                    vec![Span::styled("  ┃ ", Style::default().fg(theme.border()))],
                     4,
-                    vec![Span::styled("  ┃ ", Style::default().fg(Color::Rgb(90, 100, 120)))],
+                    vec![Span::styled("  ┃ ", Style::default().fg(theme.border()))],
                     4,
                 );
                 lines.extend(wrapped);
@@ -291,7 +298,7 @@ impl MarkdownFormatter {
                     content_width,
                     vec![
                         Span::raw("    "),
-                        Span::styled("[✓] ", Style::default().fg(Theme::STATUS_ACCEPTED).add_modifier(Modifier::BOLD)),
+                        Span::styled("[✓] ", Style::default().fg(theme.status_accepted()).add_modifier(Modifier::BOLD)),
                     ],
                     8,
                     vec![Span::raw("        ")],
@@ -308,7 +315,7 @@ impl MarkdownFormatter {
                     content_width,
                     vec![
                         Span::raw("    "),
-                        Span::styled("[ ] ", Style::default().fg(Theme::TEXT_MUTED)),
+                        Span::styled("[ ] ", Style::default().fg(theme.text_muted())),
                     ],
                     8,
                     vec![Span::raw("        ")],
@@ -408,7 +415,12 @@ impl MarkdownFormatter {
     }
 
     /// Renders markdown table rows as structured, highly readable records enclosed in clean borders.
+    #[allow(dead_code)]
     fn render_table(raw_rows: &[&str], max_width: usize, out_lines: &mut Vec<Line<'static>>) {
+        Self::render_table_with_theme(raw_rows, max_width, out_lines, &crate::ui::theme::ThemeMode::Cyberpunk);
+    }
+
+    fn render_table_with_theme(raw_rows: &[&str], max_width: usize, out_lines: &mut Vec<Line<'static>>, theme: &crate::ui::theme::ThemeMode) {
         if raw_rows.is_empty() {
             return;
         }
@@ -435,7 +447,7 @@ impl MarkdownFormatter {
         let headers = &parsed_rows[0];
         let data_rows = &parsed_rows[1..];
         let card_width = max_width.max(30);
-        let border_style = Style::default().fg(Color::Rgb(75, 85, 110));
+        let border_style = Style::default().fg(theme.border());
 
         out_lines.push(Line::from(""));
 
@@ -453,7 +465,7 @@ impl MarkdownFormatter {
             let remaining_dashes = card_width.saturating_sub(header_overhead);
             out_lines.push(Line::from(vec![
                 Span::styled("  ┌─ [ ", border_style),
-                Span::styled(primary_title, Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+                Span::styled(primary_title, Style::default().fg(theme.accent()).add_modifier(Modifier::BOLD)),
                 Span::styled(format!(" ] {:─<dashes$}┐", "", dashes = remaining_dashes), border_style),
             ]));
 
@@ -470,7 +482,7 @@ impl MarkdownFormatter {
                     // Semantic badge formatting for status
                     let is_verified = field_value.to_lowercase().contains("verified");
                     let value_style = if is_verified {
-                        Theme::badge_accepted()
+                        theme.badge_accepted()
                     } else if field_name.to_lowercase() == "status" {
                         Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
                     } else if field_name.to_lowercase() == "dependency" {
@@ -522,7 +534,7 @@ impl MarkdownFormatter {
                             Span::styled(
                                 prefix_label,
                                 if is_first {
-                                    Style::default().fg(Theme::TEXT_MUTED).add_modifier(Modifier::BOLD)
+                                    Style::default().fg(theme.text_muted()).add_modifier(Modifier::BOLD)
                                 } else {
                                     Style::default()
                                 },

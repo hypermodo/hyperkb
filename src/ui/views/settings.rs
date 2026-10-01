@@ -1,8 +1,7 @@
 use crate::ui::app::{App, FocusedPane};
-use crate::ui::theme::Theme;
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
-    style::{Color, Modifier, Style},
+    style::{Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, List, ListItem, Padding, Paragraph, Wrap},
     Frame,
@@ -23,10 +22,11 @@ impl SettingsView {
     }
 
     fn render_settings_list(frame: &mut Frame, app: &App, area: Rect) {
+        let t = &app.theme;
         let border_color = if app.focused_pane == FocusedPane::List {
-            Theme::BORDER_FOCUSED
+            t.border_focused()
         } else {
-            Theme::BORDER
+            t.border()
         };
 
         let settings = [
@@ -35,7 +35,7 @@ impl SettingsView {
             ("Max Document Line Ceiling", format!("{} lines", app.manifest.settings.audit_max_lines)),
             ("Max Folder Nesting Depth", format!("{} levels", app.manifest.settings.audit_max_depth)),
             ("Active Visual Theme", app.theme.as_str().to_string()),
-            ("Mouse Navigation Mode", if app.mouse_capture { "Enabled".to_string() } else { "Disabled (Text Copy)".to_string() }),
+            ("Mouse Navigation Mode", if app.mouse_capture { "Enabled (Click Nav)".to_string() } else { "Disabled (Text Selection)".to_string() }),
         ];
 
         let items: Vec<ListItem> = settings
@@ -44,19 +44,19 @@ impl SettingsView {
             .map(|(idx, (name, val))| {
                 let is_selected = idx == app.settings_selected_idx;
                 let title_style = if is_selected {
-                    Theme::selected_row()
+                    t.selected_row()
                 } else {
-                    Style::default().fg(Color::White).add_modifier(Modifier::BOLD)
+                    Style::default().fg(t.text_primary()).add_modifier(Modifier::BOLD)
                 };
 
                 ListItem::new(vec![
                     Line::from(vec![
-                        Span::styled(format!("  {}  ", if is_selected { "●" } else { "○" }), if is_selected { Style::default().fg(Theme::ACCENT) } else { Style::default().fg(Theme::TEXT_MUTED) }),
+                        Span::styled(format!("  {}  ", if is_selected { "●" } else { "○" }), if is_selected { Style::default().fg(t.accent()) } else { Style::default().fg(t.text_muted()) }),
                         Span::styled(name.to_string(), title_style),
                     ]),
                     Line::from(vec![
-                        Span::raw("      Current: "),
-                        Span::styled(val.clone(), Style::default().fg(Color::Yellow)),
+                        Span::styled("      Current: ", Style::default().fg(t.text_muted())),
+                        Span::styled(val.clone(), Style::default().fg(t.status_proposed()).add_modifier(Modifier::BOLD)),
                     ]),
                     Line::from(""),
                 ])
@@ -66,31 +66,28 @@ impl SettingsView {
         let list_block = Block::default()
             .borders(Borders::ALL)
             .border_style(Style::default().fg(border_color))
+            .style(Style::default().bg(t.bg_panel()).fg(t.text_primary()))
             .padding(Padding::new(2, 2, 1, 1))
-            .title(Span::styled(" Configurable Settings & Policy Knobs ", Theme::title()));
+            .title(Span::styled(" Configurable Settings & Policy Knobs ", t.title()));
 
         let list = List::new(items).block(list_block);
         frame.render_widget(list, area);
     }
 
     fn render_setting_detail(frame: &mut Frame, app: &App, area: Rect) {
+        let t = &app.theme;
         let border_color = if app.focused_pane == FocusedPane::Detail {
-            Theme::BORDER_FOCUSED
+            t.border_focused()
         } else {
-            Theme::BORDER
-        };
-
-        let title_style = if app.focused_pane == FocusedPane::Detail {
-            Style::default().fg(Theme::ACCENT).add_modifier(Modifier::BOLD)
-        } else {
-            Theme::title()
+            t.border()
         };
 
         let block = Block::default()
             .borders(Borders::ALL)
             .border_style(Style::default().fg(border_color))
+            .style(Style::default().bg(t.bg_panel()).fg(t.text_primary()))
             .padding(Padding::new(2, 2, 1, 1))
-            .title(Span::styled(" Setting Details & Live Adjustment ", title_style));
+            .title(Span::styled(" Setting Details & Live Adjustment ", t.title()));
 
         let (title, val_str, desc, impact) = match app.settings_selected_idx {
             0 => (
@@ -134,43 +131,43 @@ impl SettingsView {
 
         let text = vec![
             Line::from(vec![
-                Span::styled("Setting: ", Style::default().fg(Theme::TEXT_MUTED).add_modifier(Modifier::BOLD)),
-                Span::styled(title, Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+                Span::styled("Setting: ", Style::default().fg(t.text_muted()).add_modifier(Modifier::BOLD)),
+                Span::styled(title, Style::default().fg(t.accent()).add_modifier(Modifier::BOLD)),
             ]),
             Line::from(""),
             Line::from(vec![
-                Span::styled("Current Value: ", Style::default().fg(Theme::TEXT_MUTED).add_modifier(Modifier::BOLD)),
-                Span::styled(val_str, Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+                Span::styled("Current Value: ", Style::default().fg(t.text_muted()).add_modifier(Modifier::BOLD)),
+                Span::styled(val_str, Style::default().fg(t.status_proposed()).add_modifier(Modifier::BOLD)),
             ]),
             Line::from(""),
-            Line::from(Span::styled("────── Adjustment Controls ──────────────────────────────────", Style::default().fg(Theme::BORDER))),
+            Line::from(Span::styled("────── Adjustment Controls ──────────────────────────────────", Style::default().fg(t.border()))),
             Line::from(""),
             Line::from(vec![
-                Span::raw("  Use "),
-                Span::styled("[←] / [→]", Style::default().fg(Theme::ACCENT).add_modifier(Modifier::BOLD)),
-                Span::raw(" or "),
-                Span::styled("[h] / [l]", Style::default().fg(Theme::ACCENT).add_modifier(Modifier::BOLD)),
-                Span::raw(" or "),
-                Span::styled("[-] / [+]", Style::default().fg(Theme::ACCENT).add_modifier(Modifier::BOLD)),
-                Span::raw(" to adjust value."),
+                Span::styled("  Use ", Style::default().fg(t.text_primary())),
+                Span::styled("[←] / [→]", t.key_badge()),
+                Span::styled(" or ", Style::default().fg(t.text_primary())),
+                Span::styled("[h] / [l]", t.key_badge()),
+                Span::styled(" or ", Style::default().fg(t.text_primary())),
+                Span::styled("[-] / [+]", t.key_badge()),
+                Span::styled(" to adjust value live.", Style::default().fg(t.text_primary())),
             ]),
             Line::from(vec![
-                Span::raw("  Press "),
-                Span::styled("[Enter]", Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
-                Span::raw(" to save changes to "),
-                Span::styled("hyperkb.json", Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
-                Span::raw("."),
+                Span::styled("  Press ", Style::default().fg(t.text_primary())),
+                Span::styled("[Enter]", Style::default().fg(t.status_accepted()).add_modifier(Modifier::BOLD)),
+                Span::styled(" to persist changes to ", Style::default().fg(t.text_primary())),
+                Span::styled("hyperkb.json", Style::default().fg(t.text_primary()).add_modifier(Modifier::BOLD)),
+                Span::styled(".", Style::default().fg(t.text_primary())),
             ]),
             Line::from(""),
-            Line::from(Span::styled("────── Description & Rationale ──────────────────────────────", Style::default().fg(Theme::BORDER))),
+            Line::from(Span::styled("────── Description & Rationale ──────────────────────────────", Style::default().fg(t.border()))),
             Line::from(""),
-            Line::from(Span::styled(desc, Style::default().fg(Color::White))),
+            Line::from(Span::styled(desc, Style::default().fg(t.text_primary()))),
             Line::from(""),
-            Line::from(Span::styled("────── Engineering Impact ───────────────────────────────────", Style::default().fg(Theme::BORDER))),
+            Line::from(Span::styled("────── Engineering Impact ───────────────────────────────────", Style::default().fg(t.border()))),
             Line::from(""),
-            Line::from(Span::styled(impact, Style::default().fg(Theme::TEXT_MUTED))),
+            Line::from(Span::styled(impact, Style::default().fg(t.text_muted()))),
             Line::from(""),
-            Line::from(Span::styled("────────────────────────────────────────────────────────────", Style::default().fg(Theme::BORDER))),
+            Line::from(Span::styled("────────────────────────────────────────────────────────────", Style::default().fg(t.border()))),
             Line::from(vec![
                 Span::styled(
                     if app.settings_dirty {
@@ -179,9 +176,9 @@ impl SettingsView {
                         "✔ All settings synced with hyperkb.json"
                     },
                     if app.settings_dirty {
-                        Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
+                        Style::default().fg(t.status_proposed()).add_modifier(Modifier::BOLD)
                     } else {
-                        Style::default().fg(Theme::STATUS_ACCEPTED)
+                        Style::default().fg(t.status_accepted())
                     },
                 ),
             ]),

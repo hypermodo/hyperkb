@@ -37,7 +37,7 @@
     "stale_days_threshold": 90,
     "audit_max_lines": 250,
     "audit_max_depth": 3,
-    "theme": "cyberpunk",
+    "theme": "tokyo_night",
     "mouse_enabled": true
   }
 }

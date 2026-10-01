@@ -1,8 +1,7 @@
 use crate::ui::app::{ActiveTab, App};
-use crate::ui::theme::Theme;
 use ratatui::{
     layout::Rect,
-    style::{Color, Modifier, Style},
+    style::{Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Paragraph},
     Frame,
@@ -12,6 +11,7 @@ pub struct Header;
 
 impl Header {
     pub fn render(frame: &mut Frame, app: &App, area: Rect) {
+        let t = &app.theme;
         let mut tabs = vec![
             (ActiveTab::Work, "[1] Work & Risks"),
             (ActiveTab::Explore, "[2] Explore"),
@@ -26,8 +26,8 @@ impl Header {
 
         // Line 0: Main Navigation & Branding
         let mut tab_spans = vec![
-            Span::styled(" HyperKB ", Theme::title()),
-            Span::styled(format!(" [{}] ", app.collection_id), Style::default().fg(Theme::TEXT_MUTED)),
+            Span::styled(" HyperKB ", t.title()),
+            Span::styled(format!(" [{}] ", app.collection_id), Style::default().fg(t.text_muted())),
             Span::raw("    "),
         ];
 
@@ -35,15 +35,12 @@ impl Header {
             if app.active_tab == tab {
                 tab_spans.push(Span::styled(
                     format!(" {} ", label),
-                    Style::default()
-                        .bg(Color::Cyan)
-                        .fg(Color::Black)
-                        .add_modifier(Modifier::BOLD),
+                    t.active_tab(),
                 ));
             } else {
                 tab_spans.push(Span::styled(
                     format!(" {} ", label),
-                    Style::default().fg(Color::White),
+                    Style::default().fg(t.text_primary()),
                 ));
             }
             tab_spans.push(Span::raw("  "));
@@ -53,22 +50,22 @@ impl Header {
         let sub_spans = match app.active_tab {
             ActiveTab::Directives => {
                 let mut spans = vec![
-                    Span::styled("  Policy Taxonomy:  ", Style::default().fg(Theme::TEXT_MUTED).add_modifier(Modifier::BOLD)),
-                    Span::styled(" [c] ", Style::default().fg(Theme::ACCENT).add_modifier(Modifier::BOLD)),
+                    Span::styled("  Policy Taxonomy:  ", Style::default().fg(t.text_muted()).add_modifier(Modifier::BOLD)),
+                    Span::styled(" [c] ", Style::default().fg(t.accent()).add_modifier(Modifier::BOLD)),
                 ];
                 for cat in App::DIRECTIVE_CATEGORIES {
                     if *cat == app.directive_category {
                         spans.push(Span::styled(
                             format!(" [{}] ", cat.to_uppercase()),
                             Style::default()
-                                .fg(Color::Yellow)
-                                .bg(Color::Rgb(30, 41, 59))
+                                .fg(t.status_proposed())
+                                .bg(t.bg_panel())
                                 .add_modifier(Modifier::BOLD),
                         ));
                     } else {
                         spans.push(Span::styled(
                             format!("  {}  ", cat),
-                            Style::default().fg(Theme::TEXT_MUTED),
+                            Style::default().fg(t.text_muted()),
                         ));
                     }
                     spans.push(Span::raw(" "));
@@ -77,28 +74,28 @@ impl Header {
             }
             ActiveTab::Explore => {
                 let mode_pill = if app.explore_tree_mode {
-                    Span::styled(" [t: TREE VIEW] ", Style::default().fg(Color::Black).bg(Color::Cyan).add_modifier(Modifier::BOLD))
+                    Span::styled(" [t: TREE VIEW] ", Style::default().fg(t.bg()).bg(t.accent()).add_modifier(Modifier::BOLD))
                 } else {
-                    Span::styled(" [t: LIST VIEW] ", Style::default().fg(Theme::ACCENT).bg(Color::Rgb(30, 41, 59)).add_modifier(Modifier::BOLD))
+                    Span::styled(" [t: LIST VIEW] ", Style::default().fg(t.accent()).bg(t.bg_panel()).add_modifier(Modifier::BOLD))
                 };
                 let mut spans = vec![
-                    Span::styled("  View: ", Style::default().fg(Theme::TEXT_MUTED).add_modifier(Modifier::BOLD)),
+                    Span::styled("  View: ", Style::default().fg(t.text_muted()).add_modifier(Modifier::BOLD)),
                     mode_pill,
-                    Span::styled("  |  Category [c]: ", Style::default().fg(Theme::TEXT_MUTED).add_modifier(Modifier::BOLD)),
+                    Span::styled("  |  Category [c]: ", Style::default().fg(t.text_muted()).add_modifier(Modifier::BOLD)),
                 ];
                 for cat in App::CATEGORIES {
                     if *cat == app.selected_category {
                         spans.push(Span::styled(
                             format!(" [{}] ", cat.to_uppercase()),
                             Style::default()
-                                .fg(Color::Yellow)
-                                .bg(Color::Rgb(30, 41, 59))
+                                .fg(t.status_proposed())
+                                .bg(t.bg_panel())
                                 .add_modifier(Modifier::BOLD),
                         ));
                     } else {
                         spans.push(Span::styled(
                             format!("  {}  ", cat),
-                            Style::default().fg(Theme::TEXT_MUTED),
+                            Style::default().fg(t.text_muted()),
                         ));
                     }
                     spans.push(Span::raw(" "));
@@ -108,26 +105,26 @@ impl Header {
             ActiveTab::Sessions => {
                 let active_count = app.sessions.iter().filter(|s| s.status == "active").count();
                 vec![
-                    Span::styled("  Sessions Telemetry:  ", Style::default().fg(Theme::TEXT_MUTED).add_modifier(Modifier::BOLD)),
-                    Span::styled(format!("Total: {}  |  Active: {}  |  Scoring Proof: [e]  ", app.sessions.len(), active_count), Style::default().fg(Color::White)),
+                    Span::styled("  Sessions Telemetry:  ", Style::default().fg(t.text_muted()).add_modifier(Modifier::BOLD)),
+                    Span::styled(format!("Total: {}  |  Active: {}  |  Scoring Proof: [e]  ", app.sessions.len(), active_count), Style::default().fg(t.text_primary())),
                 ]
             }
             ActiveTab::Work => {
                 vec![
-                    Span::styled("  Work & Verification:  ", Style::default().fg(Theme::TEXT_MUTED).add_modifier(Modifier::BOLD)),
-                    Span::styled(format!("Branch: master  |  Active Directives: {}  |  Pre-Commit Gate: Enabled  ", app.directives.iter().filter(|d| d.status == "active").count()), Style::default().fg(Color::White)),
+                    Span::styled("  Work & Verification:  ", Style::default().fg(t.text_muted()).add_modifier(Modifier::BOLD)),
+                    Span::styled(format!("Branch: master  |  Active Directives: {}  |  Pre-Commit Gate: Enabled  ", app.directives.iter().filter(|d| d.status == "active").count()), Style::default().fg(t.text_primary())),
                 ]
             }
             ActiveTab::Settings => {
                 vec![
-                    Span::styled("  Configuration & Policy Knobs:  ", Style::default().fg(Theme::TEXT_MUTED).add_modifier(Modifier::BOLD)),
-                    Span::styled("Select knob [↑↓/jk]  |  Adjust [←→/hl/+-]  |  Commit [Enter]  |  Cycle Theme [T]  |  Mouse [m]  ", Style::default().fg(Color::White)),
+                    Span::styled("  Configuration & Policy Knobs:  ", Style::default().fg(t.text_muted()).add_modifier(Modifier::BOLD)),
+                    Span::styled("Select knob [↑↓/jk]  |  Adjust [←→/hl/+-]  |  Commit [Enter]  |  Cycle Theme [T]  |  Mouse [m]  ", Style::default().fg(t.text_primary())),
                 ]
             }
             ActiveTab::Reader => {
                 vec![
-                    Span::styled("  Document Reader:  ", Style::default().fg(Theme::TEXT_MUTED).add_modifier(Modifier::BOLD)),
-                    Span::styled("[Esc / Enter] Back to List  |  [j/k / Space] Scroll  |  [v] Toggle Raw  ", Style::default().fg(Color::Cyan)),
+                    Span::styled("  Document Reader:  ", Style::default().fg(t.text_muted()).add_modifier(Modifier::BOLD)),
+                    Span::styled("[Esc / Enter] Back to List  |  [j/k / Space] Scroll  |  [v] Toggle Raw  |  [y] Copy Content  ", Style::default().fg(t.accent())),
                 ]
             }
         };
@@ -219,114 +216,126 @@ pub struct Footer;
 
 impl Footer {
     pub fn render(frame: &mut Frame, app: &App, area: Rect) {
+        let t = &app.theme;
         let text = if let Some(ref msg) = app.status_message {
             Line::from(vec![
-                Span::styled(" ● ", Style::default().fg(Theme::STATUS_ACCEPTED)),
-                Span::styled(msg, Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
-                Span::styled("  (Press any key to dismiss)", Style::default().fg(Theme::TEXT_MUTED)),
+                Span::styled(" ● ", t.badge_accepted()),
+                Span::styled(msg, Style::default().fg(t.text_primary()).add_modifier(Modifier::BOLD)),
+                Span::styled("  (Press any key to dismiss)", Style::default().fg(t.text_muted())),
             ])
         } else if app.is_filtering {
             Line::from(vec![
-                Span::styled(" Search: ", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+                Span::styled(" Search: ", Style::default().fg(t.status_proposed()).add_modifier(Modifier::BOLD)),
                 Span::raw(&app.filter_query),
-                Span::styled("█", Style::default().fg(Color::Yellow)),
-                Span::styled("  (Press Enter to confirm, Esc to cancel)", Style::default().fg(Theme::TEXT_MUTED)),
+                Span::styled("█", Style::default().fg(t.status_proposed())),
+                Span::styled("  (Press Enter to confirm, Esc to cancel)", Style::default().fg(t.text_muted())),
             ])
         } else {
             let mouse_label = if app.mouse_capture { "Mouse: ON [m]" } else { "Mouse: OFF (copy) [m]" };
+            let mouse_fg = if app.mouse_capture { t.accent() } else { t.status_proposed() };
             let keys = match app.active_tab {
                 ActiveTab::Work => vec![
-                    Span::styled("[1-5] ", Style::default().fg(Theme::ACCENT)),
+                    Span::styled("[1-5] ", Style::default().fg(t.accent())),
                     Span::raw("Tabs  "),
-                    Span::styled("[Tab] ", Style::default().fg(Theme::ACCENT)),
+                    Span::styled("[Tab] ", Style::default().fg(t.accent())),
                     Span::raw("Pane  "),
-                    Span::styled("[↑↓/jk] ", Style::default().fg(Theme::ACCENT)),
+                    Span::styled("[↑↓/jk] ", Style::default().fg(t.accent())),
                     Span::raw("Nav  "),
-                    Span::styled("[T] ", Style::default().fg(Theme::ACCENT)),
+                    Span::styled("[y] ", Style::default().fg(t.accent())),
+                    Span::raw("Copy  "),
+                    Span::styled("[T] ", Style::default().fg(t.accent())),
                     Span::raw("Theme  "),
-                    Span::styled(format!("[{}] ", mouse_label), Style::default().fg(if app.mouse_capture { Theme::ACCENT } else { Color::Yellow })),
-                    Span::styled("[?] ", Style::default().fg(Theme::ACCENT)),
+                    Span::styled(format!("[{}] ", mouse_label), Style::default().fg(mouse_fg)),
+                    Span::styled("[?] ", Style::default().fg(t.accent())),
                     Span::raw("Help  "),
-                    Span::styled("[q] ", Style::default().fg(Theme::ACCENT)),
+                    Span::styled("[q] ", Style::default().fg(t.accent())),
                     Span::raw("Quit"),
                 ],
                 ActiveTab::Explore => vec![
-                    Span::styled("[t] ", Style::default().fg(Theme::ACCENT)),
+                    Span::styled("[t] ", Style::default().fg(t.accent())),
                     Span::raw("Tree/List  "),
-                    Span::styled("[c] ", Style::default().fg(Theme::ACCENT)),
+                    Span::styled("[c] ", Style::default().fg(t.accent())),
                     Span::raw("Category  "),
-                    Span::styled("[Enter] ", Style::default().fg(Theme::ACCENT)),
+                    Span::styled("[Enter] ", Style::default().fg(t.accent())),
                     Span::raw("Read  "),
-                    Span::styled("[Tab] ", Style::default().fg(Theme::ACCENT)),
+                    Span::styled("[y] ", Style::default().fg(t.accent())),
+                    Span::raw("Copy  "),
+                    Span::styled("[Tab] ", Style::default().fg(t.accent())),
                     Span::raw("Pane  "),
-                    Span::styled("[T] ", Style::default().fg(Theme::ACCENT)),
+                    Span::styled("[T] ", Style::default().fg(t.accent())),
                     Span::raw("Theme  "),
-                    Span::styled(format!("[{}] ", mouse_label), Style::default().fg(if app.mouse_capture { Theme::ACCENT } else { Color::Yellow })),
-                    Span::styled("[?] ", Style::default().fg(Theme::ACCENT)),
+                    Span::styled(format!("[{}] ", mouse_label), Style::default().fg(mouse_fg)),
+                    Span::styled("[?] ", Style::default().fg(t.accent())),
                     Span::raw("Help  "),
-                    Span::styled("[q] ", Style::default().fg(Theme::ACCENT)),
+                    Span::styled("[q] ", Style::default().fg(t.accent())),
                     Span::raw("Quit"),
                 ],
                 ActiveTab::Directives => vec![
-                    Span::styled("[c] ", Style::default().fg(Theme::ACCENT)),
+                    Span::styled("[c] ", Style::default().fg(t.accent())),
                     Span::raw("Taxonomy  "),
-                    Span::styled("[r] ", Style::default().fg(Theme::ACCENT)),
+                    Span::styled("[r] ", Style::default().fg(t.accent())),
                     Span::raw("Retire  "),
-                    Span::styled("[Enter] ", Style::default().fg(Theme::ACCENT)),
-                    Span::raw("Reader  "),
-                    Span::styled("[T] ", Style::default().fg(Theme::ACCENT)),
+                    Span::styled("[Enter] ", Style::default().fg(t.accent())),
+                    Span::raw("Read  "),
+                    Span::styled("[y] ", Style::default().fg(t.accent())),
+                    Span::raw("Copy  "),
+                    Span::styled("[T] ", Style::default().fg(t.accent())),
                     Span::raw("Theme  "),
-                    Span::styled(format!("[{}] ", mouse_label), Style::default().fg(if app.mouse_capture { Theme::ACCENT } else { Color::Yellow })),
-                    Span::styled("[?] ", Style::default().fg(Theme::ACCENT)),
+                    Span::styled(format!("[{}] ", mouse_label), Style::default().fg(mouse_fg)),
+                    Span::styled("[?] ", Style::default().fg(t.accent())),
                     Span::raw("Help  "),
-                    Span::styled("[q] ", Style::default().fg(Theme::ACCENT)),
+                    Span::styled("[q] ", Style::default().fg(t.accent())),
                     Span::raw("Quit"),
                 ],
                 ActiveTab::Sessions => vec![
-                    Span::styled("[e] ", Style::default().fg(Theme::ACCENT)),
+                    Span::styled("[e] ", Style::default().fg(t.accent())),
                     Span::raw("Scoring Proof  "),
-                    Span::styled("[Tab] ", Style::default().fg(Theme::ACCENT)),
+                    Span::styled("[y] ", Style::default().fg(t.accent())),
+                    Span::raw("Copy  "),
+                    Span::styled("[Tab] ", Style::default().fg(t.accent())),
                     Span::raw("Pane  "),
-                    Span::styled("[↑↓/jk] ", Style::default().fg(Theme::ACCENT)),
+                    Span::styled("[↑↓/jk] ", Style::default().fg(t.accent())),
                     Span::raw("Nav  "),
-                    Span::styled("[T] ", Style::default().fg(Theme::ACCENT)),
+                    Span::styled("[T] ", Style::default().fg(t.accent())),
                     Span::raw("Theme  "),
-                    Span::styled(format!("[{}] ", mouse_label), Style::default().fg(if app.mouse_capture { Theme::ACCENT } else { Color::Yellow })),
-                    Span::styled("[?] ", Style::default().fg(Theme::ACCENT)),
+                    Span::styled(format!("[{}] ", mouse_label), Style::default().fg(mouse_fg)),
+                    Span::styled("[?] ", Style::default().fg(t.accent())),
                     Span::raw("Help  "),
-                    Span::styled("[q] ", Style::default().fg(Theme::ACCENT)),
+                    Span::styled("[q] ", Style::default().fg(t.accent())),
                     Span::raw("Quit"),
                 ],
                 ActiveTab::Settings => vec![
-                    Span::styled("[↑↓/jk] ", Style::default().fg(Theme::ACCENT)),
+                    Span::styled("[↑↓/jk] ", Style::default().fg(t.accent())),
                     Span::raw("Select  "),
-                    Span::styled("[←→/hl/+-] ", Style::default().fg(Theme::ACCENT)),
+                    Span::styled("[←→/hl/+-] ", Style::default().fg(t.accent())),
                     Span::raw("Adjust  "),
-                    Span::styled("[Enter] ", Style::default().fg(Theme::ACCENT)),
+                    Span::styled("[Enter] ", Style::default().fg(t.accent())),
                     Span::raw("Save  "),
-                    Span::styled("[T] ", Style::default().fg(Theme::ACCENT)),
+                    Span::styled("[T] ", Style::default().fg(t.accent())),
                     Span::raw("Theme  "),
-                    Span::styled(format!("[{}] ", mouse_label), Style::default().fg(if app.mouse_capture { Theme::ACCENT } else { Color::Yellow })),
-                    Span::styled("[?] ", Style::default().fg(Theme::ACCENT)),
+                    Span::styled(format!("[{}] ", mouse_label), Style::default().fg(mouse_fg)),
+                    Span::styled("[?] ", Style::default().fg(t.accent())),
                     Span::raw("Help  "),
-                    Span::styled("[q] ", Style::default().fg(Theme::ACCENT)),
+                    Span::styled("[q] ", Style::default().fg(t.accent())),
                     Span::raw("Quit"),
                 ],
                 ActiveTab::Reader => vec![
-                    Span::styled("[Esc] ", Style::default().fg(Theme::ACCENT)),
+                    Span::styled("[Esc] ", Style::default().fg(t.accent())),
                     Span::raw("Back  "),
-                    Span::styled("[↑↓/jk] ", Style::default().fg(Theme::ACCENT)),
+                    Span::styled("[↑↓/jk] ", Style::default().fg(t.accent())),
                     Span::raw("Line  "),
-                    Span::styled("[PgDn/PgUp/Space] ", Style::default().fg(Theme::ACCENT)),
+                    Span::styled("[PgDn/PgUp/Space] ", Style::default().fg(t.accent())),
                     Span::raw("Page  "),
-                    Span::styled("[v] ", Style::default().fg(Theme::ACCENT)),
+                    Span::styled("[v] ", Style::default().fg(t.accent())),
                     Span::raw("Raw  "),
-                    Span::styled("[T] ", Style::default().fg(Theme::ACCENT)),
+                    Span::styled("[y] ", Style::default().fg(t.accent())),
+                    Span::raw("Copy  "),
+                    Span::styled("[T] ", Style::default().fg(t.accent())),
                     Span::raw("Theme  "),
-                    Span::styled(format!("[{}] ", mouse_label), Style::default().fg(if app.mouse_capture { Theme::ACCENT } else { Color::Yellow })),
-                    Span::styled("[?] ", Style::default().fg(Theme::ACCENT)),
+                    Span::styled(format!("[{}] ", mouse_label), Style::default().fg(mouse_fg)),
+                    Span::styled("[?] ", Style::default().fg(t.accent())),
                     Span::raw("Help  "),
-                    Span::styled("[q] ", Style::default().fg(Theme::ACCENT)),
+                    Span::styled("[q] ", Style::default().fg(t.accent())),
                     Span::raw("Quit"),
                 ],
             };
@@ -336,7 +345,7 @@ impl Footer {
         let paragraph = Paragraph::new(text).block(
             Block::default()
                 .borders(Borders::TOP)
-                .border_style(Style::default().fg(Theme::BORDER)),
+                .border_style(Style::default().fg(t.border())),
         );
 
         frame.render_widget(paragraph, area);

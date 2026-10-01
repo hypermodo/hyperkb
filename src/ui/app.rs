@@ -722,6 +722,131 @@ impl App {
     pub fn selected_risk(&self) -> Option<&RiskMatch> {
         self.active_risks.get(self.selected_risk_idx)
     }
+
+    pub fn copy_active_content_to_clipboard(&mut self) -> Result<String, String> {
+        let (content_to_copy, description) = match self.active_tab {
+            ActiveTab::Reader => {
+                if let Some(doc) = &self.current_document {
+                    (doc.content.clone(), format!("Document '{}'", doc.title))
+                } else {
+                    return Err("No active document in reader to copy".to_string());
+                }
+            }
+            ActiveTab::Directives => {
+                if let Some(dir) = self.selected_directive() {
+                    (dir.content.clone(), format!("Directive '{}'", dir.title))
+                } else {
+                    return Err("No directive selected to copy".to_string());
+                }
+            }
+            ActiveTab::Explore => {
+                if let Some(doc) = self.selected_document() {
+                    (doc.content.clone(), format!("Document '{}'", doc.title))
+                } else {
+                    return Err("No document selected to copy".to_string());
+                }
+            }
+            ActiveTab::Work => {
+                if let Some(risk) = self.selected_risk() {
+                    let text = format!(
+                        "Title: {}\nSeverity: {}\nPaths: {:?}\n\n{}",
+                        risk.document.title,
+                        risk.document.status.as_str(),
+                        risk.matched_paths,
+                        risk.document.content
+                    );
+                    (text, format!("Risk '{}'", risk.document.title))
+                } else {
+                    return Err("No risk item selected to copy".to_string());
+                }
+            }
+            ActiveTab::Sessions => {
+                if let Some(sess) = self.selected_session() {
+                    let edit_ratio = if sess.total_edits == 0 {
+                        sess.total_tool_calls as f64
+                    } else {
+                        sess.total_tool_calls as f64 / sess.total_edits as f64
+                    };
+                    let loop_penalty = (sess.review_loops as f64 * 0.15).min(0.45);
+                    let first_pass_penalty = if !sess.first_pass_clean { 0.15 } else { 0.0 };
+                    let thrash_penalty = if edit_ratio > 10.0 { 0.20 } else if edit_ratio > 6.0 { 0.10 } else { 0.0 };
+                    let hazard_bonus = if sess.risks_prevented > 0 { 0.10 } else { 0.0 };
+                    let mut score = 1.0f64 - loop_penalty - first_pass_penalty - thrash_penalty + hazard_bonus;
+                    score = score.clamp(0.05, 1.0);
+                    let score_pct = (score * 100.0).round() as u32;
+
+                    let text = format!(
+                        "Session ID: {}\nAgent: {}\nStatus: {}\nCoding Effectiveness: {}%\nDuration: {}\nEdits: {}\nTool Calls: {}\nDiff lines: {}\nReview Loops: {}\nFirst Pass Clean: {}\nRisks Prevented: {}",
+                        sess.id,
+                        sess.agent_id,
+                        sess.status,
+                        score_pct,
+                        sess.formatted_duration(),
+                        sess.total_edits,
+                        sess.total_tool_calls,
+                        sess.total_diff_lines,
+                        sess.review_loops,
+                        sess.first_pass_clean,
+                        sess.risks_prevented
+                    );
+                    (text, format!("Session Scorecard '{}'", sess.id))
+                } else {
+                    return Err("No session selected to copy".to_string());
+                }
+            }
+            ActiveTab::Settings => {
+                return Err("Nothing to copy in Settings view".to_string());
+            }
+        };
+
+        // 1. Native macOS pbcopy
+        #[cfg(target_os = "macos")]
+        {
+            use std::io::Write;
+            use std::process::{Command, Stdio};
+            if let Ok(mut child) = Command::new("pbcopy").stdin(Stdio::piped()).spawn() {
+                if let Some(mut stdin) = child.stdin.take() {
+                    let _ = stdin.write_all(content_to_copy.as_bytes());
+                }
+                let _ = child.wait();
+            }
+        }
+
+        // 2. OSC 52 ANSI escape code for terminal emulators
+        let b64 = base64_encode(content_to_copy.as_bytes());
+        let osc52 = format!("\x1b]52;c;{}\x07", b64);
+        use std::io::Write;
+        let mut stdout = std::io::stdout();
+        let _ = stdout.write_all(osc52.as_bytes());
+        let _ = stdout.flush();
+
+        Ok(description)
+    }
+}
+
+fn base64_encode(data: &[u8]) -> String {
+    const CHARSET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut result = String::with_capacity((data.len() + 2) / 3 * 4);
+    for chunk in data.chunks(3) {
+        let b0 = chunk[0];
+        let b1 = chunk.get(1).copied().unwrap_or(0);
+        let b2 = chunk.get(2).copied().unwrap_or(0);
+
+        let n = ((b0 as u32) << 16) | ((b1 as u32) << 8) | (b2 as u32);
+        result.push(CHARSET[((n >> 18) & 63) as usize] as char);
+        result.push(CHARSET[((n >> 12) & 63) as usize] as char);
+        if chunk.len() > 1 {
+            result.push(CHARSET[((n >> 6) & 63) as usize] as char);
+        } else {
+            result.push('=');
+        }
+        if chunk.len() > 2 {
+            result.push(CHARSET[(n & 63) as usize] as char);
+        } else {
+            result.push('=');
+        }
+    }
+    result
 }
 
 #[cfg(test)]
@@ -800,6 +925,7 @@ mod tests {
     #[test]
     fn test_settings_adjustments_and_toggles() {
         let mut app = App::new("test", "test");
+        app.theme = ThemeMode::Cyberpunk;
         assert_eq!(app.manifest.settings.max_briefing_directives, 5);
         assert!(!app.settings_dirty);
 
