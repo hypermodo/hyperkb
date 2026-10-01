@@ -649,7 +649,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
 
             // Launch the full-screen Ratatui TUI
-            ui::run(&db)?;
+            ui::run(&db, collection_id, profile_id)?;
         }
     }
 

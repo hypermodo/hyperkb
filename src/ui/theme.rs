@@ -55,4 +55,22 @@ impl Theme {
             .fg(Self::STATUS_RISK_OPEN)
             .add_modifier(Modifier::BOLD)
     }
+
+    pub fn badge_acknowledged() -> Style {
+        Style::default()
+            .fg(Color::Yellow)
+            .add_modifier(Modifier::BOLD)
+    }
+
+    pub fn badge_resolved() -> Style {
+        Style::default()
+            .fg(Self::STATUS_ACCEPTED)
+            .add_modifier(Modifier::BOLD)
+    }
+
+    pub fn badge_conflict() -> Style {
+        Style::default()
+            .fg(Color::LightRed)
+            .add_modifier(Modifier::BOLD)
+    }
 }

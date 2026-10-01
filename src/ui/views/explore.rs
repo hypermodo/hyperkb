@@ -30,6 +30,41 @@ impl ExploreView {
             Theme::BORDER
         };
 
+        // Split left column into Category Selector (3 rows) and Document List (Remaining)
+        let list_chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Length(3), Constraint::Min(5)])
+            .split(area);
+
+        // 1. Category Bar
+        let mut cat_spans = vec![
+            Span::styled(" [c] ", Style::default().fg(Theme::ACCENT).add_modifier(Modifier::BOLD)),
+        ];
+        for cat in App::CATEGORIES {
+            if *cat == app.selected_category {
+                cat_spans.push(Span::styled(
+                    format!(" [{}] ", cat.to_uppercase()),
+                    Style::default()
+                        .fg(Color::Yellow)
+                        .bg(Color::Rgb(30, 41, 59))
+                        .add_modifier(Modifier::BOLD),
+                ));
+            } else {
+                cat_spans.push(Span::styled(
+                    format!("  {}  ", cat),
+                    Style::default().fg(Theme::TEXT_MUTED),
+                ));
+            }
+        }
+
+        let cat_block = Block::default()
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(Theme::BORDER))
+            .title(Span::styled(" Category Filter ", Theme::title()));
+        let cat_widget = Paragraph::new(Line::from(cat_spans)).block(cat_block);
+        frame.render_widget(cat_widget, list_chunks[0]);
+
+        // 2. Document List
         let items: Vec<ListItem> = app
             .documents
             .iter()
@@ -41,14 +76,14 @@ impl ExploreView {
                     DocumentStatus::Accepted => ("● ACCEPTED ", Theme::badge_accepted()),
                     DocumentStatus::Proposed => ("○ PROPOSED ", Theme::badge_proposed()),
                     DocumentStatus::Open => ("▲ OPEN ", Theme::badge_risk()),
-                    DocumentStatus::Acknowledged => ("✔ ACKNOWLEDGED ", Style::default().fg(Color::Yellow)),
-                    DocumentStatus::Resolved => ("✔ RESOLVED ", Theme::badge_accepted()),
+                    DocumentStatus::Acknowledged => ("✔ ACKNOWLEDGED ", Theme::badge_acknowledged()),
+                    DocumentStatus::Resolved => ("✔ RESOLVED ", Theme::badge_resolved()),
                     DocumentStatus::Superseded => (
                         "✕ SUPERSEDED ",
                         Style::default().fg(Theme::STATUS_SUPERSEDED),
                     ),
                     DocumentStatus::Conflict => {
-                        ("! CONFLICT ", Style::default().fg(Color::LightRed))
+                        ("! CONFLICT ", Theme::badge_conflict())
                     }
                     DocumentStatus::Unknown => {
                         if doc.kind == DocumentKind::Risk {
@@ -81,7 +116,7 @@ impl ExploreView {
             })
             .collect();
 
-        let title_text = format!(" Knowledge Explorer ({} docs) ", app.documents.len());
+        let title_text = format!(" Knowledge Documents ({}) ", app.documents.len());
         let list = List::new(items)
             .block(
                 Block::default()
@@ -91,7 +126,7 @@ impl ExploreView {
             )
             .highlight_style(Theme::selected_row());
 
-        frame.render_widget(list, area);
+        frame.render_widget(list, list_chunks[1]);
     }
 
     fn render_document_preview(frame: &mut Frame, app: &App, area: Rect) {
@@ -129,13 +164,27 @@ impl ExploreView {
                     Span::styled("Kind: ", Style::default().add_modifier(Modifier::BOLD)),
                     Span::styled(doc.kind.as_str(), Style::default().fg(Color::LightBlue)),
                 ]),
-                Line::from(""),
-                Line::from(Span::styled(
-                    "────── Content Preview ──────",
-                    Style::default().fg(Theme::BORDER),
-                )),
-                Line::from(""),
             ];
+
+            if let Ok(parsed) = crate::core::MetadataParser::parse(&doc.content) {
+                if let Some(ref del) = parsed.meta.as_ref().and_then(|m| m.delegation.as_ref()) {
+                    let grant_str = del.grant_id.to_string();
+                    let short_grant = if grant_str.len() >= 8 { &grant_str[..8] } else { &grant_str };
+                    text.push(Line::from(vec![
+                        Span::styled("Governance: ", Style::default().add_modifier(Modifier::BOLD)),
+                        Span::styled(format!("Agent [{}] ", del.agent_id), Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+                        Span::styled(format!("via Grant #{} ", short_grant), Style::default().fg(Color::LightBlue)),
+                        Span::styled(format!("(Authorizer: {})", del.granted_by), Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
+                    ]));
+                }
+            }
+
+            text.push(Line::from(""));
+            text.push(Line::from(Span::styled(
+                "────── Content Preview ──────",
+                Style::default().fg(Theme::BORDER),
+            )));
+            text.push(Line::from(""));
 
             let preview_width = area.width.saturating_sub(4) as usize;
             let formatted_body = crate::ui::markdown::MarkdownFormatter::format_markdown(&doc.content, preview_width);

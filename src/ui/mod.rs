@@ -22,7 +22,7 @@ use std::time::Duration;
 use views::{ExploreView, ReaderView, WorkView};
 use crate::storage::Database;
 
-pub fn run(db: &Database) -> io::Result<()> {
+pub fn run(db: &Database, collection_id: &str, profile_id: &str) -> io::Result<()> {
     // 1. Setup panic hook so terminal is ALWAYS restored safely if something panics
     let original_hook = panic::take_hook();
     panic::set_hook(Box::new(move |panic_info| {
@@ -39,11 +39,11 @@ pub fn run(db: &Database) -> io::Result<()> {
     let mut terminal = Terminal::new(backend)?;
 
     // 3. Initialize App and load initial data
-    let mut app = App::new("local_collection", "default_profile");
+    let mut app = App::new(collection_id, profile_id);
     app.refresh_data(db);
 
     // 4. Main Event Loop (Smooth 60 FPS non-blocking polling)
-    let res = run_loop(&mut terminal, &mut app);
+    let res = run_loop(&mut terminal, &mut app, db);
 
     // 5. Restore terminal state
     disable_raw_mode()?;
@@ -56,6 +56,7 @@ pub fn run(db: &Database) -> io::Result<()> {
 fn run_loop<B: ratatui::backend::Backend>(
     terminal: &mut Terminal<B>,
     app: &mut App,
+    db: &Database,
 ) -> io::Result<()> {
     while !app.should_quit {
         terminal.draw(|frame| {
@@ -126,6 +127,9 @@ fn run_loop<B: ratatui::backend::Backend>(
                         KeyCode::Enter => app.open_selected(),
                         KeyCode::Esc => app.go_back(),
                         KeyCode::Char('v') => app.toggle_raw_view(),
+                        KeyCode::Char('c') | KeyCode::Char('C') if app.active_tab == ActiveTab::Explore => {
+                            app.next_category(db);
+                        }
                         KeyCode::Char('/') => {
                             app.is_filtering = true;
                             app.filter_query.clear();

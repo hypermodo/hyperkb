@@ -33,10 +33,13 @@ impl ReaderView {
     }
 
     fn render_formatted(frame: &mut Frame, app: &App, area: Rect, doc: &crate::domain::Document) {
-        // Vertical split: Metadata Card (5 rows) + Formatted Document Body (Remaining)
+        let meta_lines = MarkdownFormatter::format_metadata_card(doc);
+        let meta_height = (meta_lines.len() as u16 + 2).clamp(4, 8);
+
+        // Vertical split: Adaptive Metadata Card + Formatted Document Body (Remaining)
         let chunks = Layout::default()
             .direction(Direction::Vertical)
-            .constraints([Constraint::Length(5), Constraint::Min(8)])
+            .constraints([Constraint::Length(meta_height), Constraint::Min(8)])
             .split(area);
 
         // 1. Metadata Card Header
@@ -45,7 +48,6 @@ impl ReaderView {
             .border_style(Style::default().fg(Theme::BORDER))
             .title(Span::styled(format!(" {} ", doc.title), Theme::title()));
 
-        let meta_lines = MarkdownFormatter::format_metadata_card(doc);
         let meta_widget = Paragraph::new(meta_lines).block(meta_block);
         frame.render_widget(meta_widget, chunks[0]);
 

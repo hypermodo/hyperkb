@@ -21,10 +21,10 @@ impl MarkdownFormatter {
             DocumentStatus::Accepted => ("● ACCEPTED", Theme::badge_accepted()),
             DocumentStatus::Proposed => ("○ PROPOSED", Theme::badge_proposed()),
             DocumentStatus::Open => ("▲ OPEN", Theme::badge_risk()),
-            DocumentStatus::Acknowledged => ("✔ ACKNOWLEDGED", Style::default().fg(Color::Yellow)),
-            DocumentStatus::Resolved => ("✔ RESOLVED", Theme::badge_accepted()),
+            DocumentStatus::Acknowledged => ("✔ ACKNOWLEDGED", Theme::badge_acknowledged()),
+            DocumentStatus::Resolved => ("✔ RESOLVED", Theme::badge_resolved()),
             DocumentStatus::Superseded => ("✕ SUPERSEDED", Style::default().fg(Theme::STATUS_SUPERSEDED)),
-            DocumentStatus::Conflict => ("! CONFLICT", Style::default().fg(Color::LightRed)),
+            DocumentStatus::Conflict => ("! CONFLICT", Theme::badge_conflict()),
             DocumentStatus::Unknown => ("· UNKNOWN", Style::default().fg(Theme::STATUS_UNKNOWN)),
         };
 
@@ -77,6 +77,19 @@ impl MarkdownFormatter {
                 Span::styled("  Replacement: ", Style::default().fg(Theme::TEXT_MUTED)),
                 Span::styled(repl.clone(), Style::default().fg(Theme::STATUS_ACCEPTED)),
             ]));
+        }
+
+        if let Ok(parsed) = MetadataParser::parse(&doc.content) {
+            if let Some(ref del) = parsed.meta.as_ref().and_then(|m| m.delegation.as_ref()) {
+                let grant_str = del.grant_id.to_string();
+                let short_grant = if grant_str.len() >= 8 { &grant_str[..8] } else { &grant_str };
+                lines.push(Line::from(vec![
+                    Span::styled("  Delegation: ", Style::default().fg(Theme::TEXT_MUTED)),
+                    Span::styled(format!("Agent [{}] ", del.agent_id), Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+                    Span::styled(format!("via Grant #{} ", short_grant), Style::default().fg(Color::LightBlue)),
+                    Span::styled(format!("(Authorizer: {})", del.granted_by), Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
+                ]));
+            }
         }
 
         lines
@@ -882,5 +895,46 @@ This is **important** and uses `rustc`.
         assert!(has_hanging, "Expected hanging indent on wrapped bullet continuation lines");
         let has_empty = lines.iter().any(|l| l.spans.is_empty() || l.spans.iter().all(|s| s.content.trim().is_empty()));
         assert!(has_empty, "Expected blank line between multi-line bullets");
+    }
+
+    #[test]
+    fn test_format_metadata_card_with_delegation() {
+        use crate::domain::{Document, DocumentKind, DocumentStatus};
+        use uuid::Uuid;
+
+        let grant_id = Uuid::now_v7();
+        let content = format!(
+            "---hyperkb\n{{\n  \"id\": \"test-id-001\",\n  \"kind\": \"decision\",\n  \"status\": \"accepted\",\n  \"owner\": \"Alice (Architect)\",\n  \"paths\": [],\n  \"versions\": [],\n  \"environments\": [],\n  \"delegation\": {{\n    \"agent_id\": \"claude-3-7-sonnet\",\n    \"grant_id\": \"{}\",\n    \"granted_by\": \"Alice (Architect)\",\n    \"timestamp\": \"2026-10-01T00:00:00Z\"\n  }}\n}}\n---\n# Title\nBody",
+            grant_id
+        );
+
+        let doc = Document {
+            id: "test-id-001".to_string(),
+            collection_id: "test-coll".to_string(),
+            path: "docs/decisions/0001-test.md".to_string(),
+            title: "Test Decision".to_string(),
+            topic: "Architecture".to_string(),
+            status: DocumentStatus::Accepted,
+            kind: DocumentKind::Decision,
+            owner: "Alice (Architect)".to_string(),
+            issue: "".to_string(),
+            replacement_id: None,
+            supersedes: None,
+            content,
+            source: "repo document".to_string(),
+            available: true,
+            stale: false,
+            declared_status: Some("accepted".to_string()),
+            checksum: "hash123".to_string(),
+            worktree_state: None,
+        };
+
+        let card_lines = MarkdownFormatter::format_metadata_card(&doc);
+        let has_delegation = card_lines.iter().any(|l| {
+            l.spans.iter().any(|s| s.content.contains("Delegation:"))
+                && l.spans.iter().any(|s| s.content.contains("claude-3-7-sonnet"))
+                && l.spans.iter().any(|s| s.content.contains("Alice (Architect)"))
+        });
+        assert!(has_delegation, "Expected delegation provenance in metadata card: {:?}", card_lines);
     }
 }

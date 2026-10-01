@@ -20,7 +20,7 @@ impl Header {
 
         let mut spans = vec![
             Span::styled(" HyperKB ", Theme::title()),
-            Span::styled(" [local] ", Style::default().fg(Theme::TEXT_MUTED)),
+            Span::styled(format!(" [{}] ", app.collection_id), Style::default().fg(Theme::TEXT_MUTED)),
             Span::raw("    "),
         ];
 
@@ -76,6 +76,8 @@ impl Footer {
                     Span::raw("Quit"),
                 ],
                 ActiveTab::Explore => vec![
+                    Span::styled("[c] ", Style::default().fg(Theme::ACCENT)),
+                    Span::raw("Category  "),
                     Span::styled("[Enter] ", Style::default().fg(Theme::ACCENT)),
                     Span::raw("Read Doc  "),
                     Span::styled("[Tab] ", Style::default().fg(Theme::ACCENT)),

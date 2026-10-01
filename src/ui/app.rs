@@ -85,6 +85,24 @@ impl App {
         }
     }
 
+    pub const CATEGORIES: &'static [&'static str] = &["all", "decisions", "risks", "specs", "plans"];
+
+    pub fn next_category(&mut self, db: &Database) {
+        let current_pos = Self::CATEGORIES
+            .iter()
+            .position(|&c| c == self.selected_category)
+            .unwrap_or(0);
+        let next_pos = (current_pos + 1) % Self::CATEGORIES.len();
+        self.set_category(Self::CATEGORIES[next_pos], db);
+    }
+
+    pub fn set_category(&mut self, category: &str, db: &Database) {
+        self.selected_category = category.to_string();
+        self.selected_doc_idx = 0;
+        self.preview_scroll_offset = 0;
+        self.refresh_data(db);
+    }
+
     pub fn switch_tab(&mut self, tab: ActiveTab) {
         self.active_tab = tab;
         self.focused_pane = FocusedPane::List;
