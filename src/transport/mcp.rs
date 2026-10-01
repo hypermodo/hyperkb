@@ -480,6 +480,16 @@ impl McpServer {
                     "properties": {}
                 }
             }),
+            json!({
+                "name": "audit_kb",
+                "description": "Audit the repository knowledge base and documentation against anti-bloat ceilings (<250 lines, <2000 words), folder nesting limits (max 3 levels), frontmatter schema validity, and stale proposals (>90 days).",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "path": { "type": "string", "description": "Optional subdirectory to audit (defaults to 'docs')" }
+                    }
+                }
+            }),
         ]
     }
 
@@ -540,7 +550,18 @@ impl McpServer {
                 let mut check = Queries::check_work(conn, collection_id, &files, version, env)
                     .map_err(|e| format!("Failed to check work: {}", e))?;
 
+                let docs_dir = root.join("docs");
                 for file in &files {
+                    if file.ends_with(".md") || file.ends_with(".markdown") {
+                        let full_p = root.join(file);
+                        if full_p.exists() {
+                            if let Ok(issues) = crate::core::KbLinter::lint_single_file(&full_p, &docs_dir) {
+                                for issue in issues {
+                                    check.hygiene_warnings.push(format!("KB Linter [{}]: {}", file, issue));
+                                }
+                            }
+                        }
+                    }
                     if let Ok(Some(rep)) = Git::check_file_comment_hygiene(root, file, false) {
                         if rep.is_excessive {
                             check.hygiene_warnings.push(format!(
@@ -1223,6 +1244,30 @@ impl McpServer {
                 }
             }
 
+            "audit_kb" => {
+                if let Some(ref sess_id) = current_sess_id {
+                    let _ = SessionManager::record_tool_call(conn, sess_id, "audit_kb", "", "");
+                }
+
+                let sub_path = args.get("path").and_then(|v| v.as_str()).unwrap_or("docs");
+                let audit_dir = root.join(sub_path);
+
+                match crate::core::KbLinter::audit_directory(&audit_dir) {
+                    Ok(rep) => {
+                        let serialized = serde_json::to_string_pretty(&rep)
+                            .map_err(|e| format!("Serialization error: {}", e))?;
+                        Ok(json!({
+                            "content": [{ "type": "text", "text": serialized }],
+                            "isError": false
+                        }))
+                    }
+                    Err(err) => Ok(json!({
+                        "content": [{ "type": "text", "text": format!("Error running KB audit: {}", err) }],
+                        "isError": true
+                    })),
+                }
+            }
+
             _ => Err(format!("Unknown tool '{}'", tool_name)),
         }
     }
@@ -1590,6 +1635,79 @@ mod tests {
         let retire_resp = McpServer::handle_request(&temp_dir, db.conn(), "coll_dir", "prof_dir", retire_req).unwrap();
         let retire_text = retire_resp.result.unwrap()["content"][0]["text"].as_str().unwrap().to_string();
         assert!(retire_text.contains("successfully retired"));
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_mcp_audit_kb_tool() {
+        let temp_dir = std::env::temp_dir().join(format!("hyperkb-mcp-kb-{}", uuid::Uuid::now_v7()));
+        let docs_dir = temp_dir.join("docs").join("decisions");
+        let _ = std::fs::create_dir_all(&docs_dir);
+        let db = Database::open_in_memory("coll_kb", "prof_kb").unwrap();
+
+        // 1. Create a valid concise document
+        let doc1 = docs_dir.join("dec-001.md");
+        std::fs::write(&doc1, "---hyperkb\n{\n  \"id\": \"DEC-2026-001\",\n  \"title\": \"Use SQLite\",\n  \"status\": \"accepted\",\n  \"kind\": \"decision\",\n  \"owner\": \"Developer\"\n}\n---\n# Architecture\nShort and clean.\n").unwrap();
+
+        // 2. Call audit_kb via MCP
+        let audit_req = JsonRpcRequest {
+            jsonrpc: "2.0".into(),
+            id: Some(json!(41)),
+            method: "tools/call".into(),
+            params: Some(json!({
+                "name": "audit_kb",
+                "arguments": {
+                    "path": "docs"
+                }
+            })),
+        };
+        let audit_resp = McpServer::handle_request(&temp_dir, db.conn(), "coll_kb", "prof_kb", audit_req).unwrap();
+        let audit_val: Value = serde_json::from_str(audit_resp.result.unwrap()["content"][0]["text"].as_str().unwrap()).unwrap();
+        assert_eq!(audit_val["total_documents"], 1);
+        assert_eq!(audit_val["valid_documents"], 1);
+        assert!(audit_val["bloat_warnings"].as_array().unwrap().is_empty());
+
+        // 3. Create a bloated document (>250 lines)
+        let doc2 = docs_dir.join("dec-002-bloat.md");
+        let mut bloated_content = String::from("---hyperkb\n{\n  \"id\": \"DEC-2026-002\",\n  \"title\": \"Bloated Spec\",\n  \"status\": \"proposed\",\n  \"kind\": \"decision\",\n  \"owner\": \"Developer\"\n}\n---\n");
+        for i in 0..270 {
+            bloated_content.push_str(&format!("Line {} of excessive text that should be kept concise.\n", i));
+        }
+        std::fs::write(&doc2, &bloated_content).unwrap();
+
+        // 4. Audit again and assert bloat warning
+        let audit_req2 = JsonRpcRequest {
+            jsonrpc: "2.0".into(),
+            id: Some(json!(42)),
+            method: "tools/call".into(),
+            params: Some(json!({
+                "name": "audit_kb",
+                "arguments": {}
+            })),
+        };
+        let audit_resp2 = McpServer::handle_request(&temp_dir, db.conn(), "coll_kb", "prof_kb", audit_req2).unwrap();
+        let audit_val2: Value = serde_json::from_str(audit_resp2.result.unwrap()["content"][0]["text"].as_str().unwrap()).unwrap();
+        assert_eq!(audit_val2["total_documents"], 2);
+        assert_eq!(audit_val2["bloat_warnings"].as_array().unwrap().len(), 2);
+
+        // 5. Test check_work with this bloated markdown doc
+        let check_req = JsonRpcRequest {
+            jsonrpc: "2.0".into(),
+            id: Some(json!(43)),
+            method: "tools/call".into(),
+            params: Some(json!({
+                "name": "check_work",
+                "arguments": {
+                    "files": ["docs/decisions/dec-002-bloat.md"]
+                }
+            })),
+        };
+        let check_resp = McpServer::handle_request(&temp_dir, db.conn(), "coll_kb", "prof_kb", check_req).unwrap();
+        let check_val: Value = serde_json::from_str(check_resp.result.unwrap()["content"][0]["text"].as_str().unwrap()).unwrap();
+        let warnings = check_val["hygiene_warnings"].as_array().unwrap();
+        assert!(!warnings.is_empty());
+        assert!(warnings[0].as_str().unwrap().contains("KB Linter"));
 
         let _ = std::fs::remove_dir_all(&temp_dir);
     }

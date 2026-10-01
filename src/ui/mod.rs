@@ -4,7 +4,7 @@ pub mod markdown;
 pub mod theme;
 pub mod views;
 
-use app::{ActiveTab, App};
+use app::{ActiveTab, App, ExploreTreeItem};
 use crossterm::{
     event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyModifiers, MouseButton, MouseEventKind},
     execute,
@@ -132,9 +132,20 @@ fn run_loop<B: ratatui::backend::Backend>(
                             KeyCode::PageUp => app.page_up(),
                             KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => app.page_down(),
                             KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => app.page_up(),
-                            KeyCode::Char(' ') if app.active_tab == ActiveTab::Reader => app.page_down(),
+                            KeyCode::Char(' ') => {
+                                if app.active_tab == ActiveTab::Reader {
+                                    app.page_down();
+                                } else if app.active_tab == ActiveTab::Explore && app.explore_tree_mode {
+                                    app.open_selected();
+                                }
+                            }
                             KeyCode::Enter => app.open_selected(),
                             KeyCode::Esc => app.go_back(),
+                            KeyCode::Char('t') | KeyCode::Char('T') => {
+                                if app.active_tab == ActiveTab::Explore {
+                                    app.toggle_explore_tree_mode();
+                                }
+                            }
                             KeyCode::Char('v') => app.toggle_raw_view(),
                             KeyCode::Char('c') | KeyCode::Char('C') => {
                                 if app.active_tab == ActiveTab::Explore {
@@ -184,21 +195,38 @@ fn run_loop<B: ratatui::backend::Backend>(
                                     app.focused_pane = crate::ui::app::FocusedPane::List;
                                     let rel_row = row - 3;
                                     if rel_row >= 1 {
-                                        let item_idx = ((rel_row - 1) / 3) as usize;
                                         match app.active_tab {
                                             ActiveTab::Directives => {
+                                                let item_idx = ((rel_row - 1) / 3) as usize;
                                                 if item_idx < app.directives.len() {
                                                     app.selected_directive_idx = item_idx;
                                                 }
                                             }
                                             ActiveTab::Sessions => {
+                                                let item_idx = ((rel_row - 1) / 3) as usize;
                                                 if item_idx < app.sessions.len() {
                                                     app.selected_session_idx = item_idx;
                                                 }
                                             }
                                             ActiveTab::Explore => {
-                                                if item_idx < app.documents.len() {
-                                                    app.selected_doc_idx = item_idx;
+                                                if app.explore_tree_mode {
+                                                    let tree_idx = ((rel_row - 1) / 2) as usize;
+                                                    let tree = app.build_explore_tree();
+                                                    if tree_idx < tree.len() {
+                                                        if app.selected_tree_idx == tree_idx {
+                                                            app.open_selected();
+                                                        } else {
+                                                            app.selected_tree_idx = tree_idx;
+                                                            if let ExploreTreeItem::Doc { doc_idx, .. } = &tree[tree_idx] {
+                                                                app.selected_doc_idx = *doc_idx;
+                                                            }
+                                                        }
+                                                    }
+                                                } else {
+                                                    let item_idx = ((rel_row - 1) / 3) as usize;
+                                                    if item_idx < app.documents.len() {
+                                                        app.selected_doc_idx = item_idx;
+                                                    }
                                                 }
                                             }
                                             _ => {}

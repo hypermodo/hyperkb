@@ -1,5 +1,5 @@
 use crate::domain::{DocumentKind, DocumentStatus};
-use crate::ui::app::{App, FocusedPane};
+use crate::ui::app::{App, ExploreTreeItem, FocusedPane};
 use crate::ui::theme::Theme;
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
@@ -19,8 +19,13 @@ impl ExploreView {
             .constraints([Constraint::Length(list_width), Constraint::Min(40)])
             .split(area);
 
-        Self::render_document_list(frame, app, chunks[0]);
-        Self::render_document_preview(frame, app, chunks[1]);
+        if app.explore_tree_mode {
+            Self::render_tree_view(frame, app, chunks[0]);
+            Self::render_tree_preview(frame, app, chunks[1]);
+        } else {
+            Self::render_document_list(frame, app, chunks[0]);
+            Self::render_document_preview(frame, app, chunks[1]);
+        }
     }
 
     fn render_document_list(frame: &mut Frame, app: &App, area: Rect) {
@@ -166,6 +171,167 @@ impl ExploreView {
                 .block(block)
                 .style(Style::default().fg(Theme::TEXT_MUTED));
             frame.render_widget(paragraph, area);
+        }
+    }
+
+    fn render_tree_view(frame: &mut Frame, app: &App, area: Rect) {
+        let border_color = if app.focused_pane == FocusedPane::List {
+            Theme::BORDER_FOCUSED
+        } else {
+            Theme::BORDER
+        };
+
+        let tree = app.build_explore_tree();
+        let items: Vec<ListItem> = tree
+            .iter()
+            .enumerate()
+            .map(|(idx, item)| {
+                let is_selected = idx == app.selected_tree_idx;
+                match item {
+                    ExploreTreeItem::Folder { name, doc_count, is_collapsed, .. } => {
+                        let arrow = if *is_collapsed { "▶ " } else { "▼ " };
+                        let folder_style = if is_selected {
+                            Theme::selected_row()
+                        } else {
+                            Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
+                        };
+
+                        ListItem::new(vec![
+                            Line::from(vec![
+                                Span::styled(arrow, Style::default().fg(Color::Yellow)),
+                                Span::styled("📁 ", Style::default()),
+                                Span::styled(name, folder_style),
+                                Span::raw(" "),
+                                Span::styled(format!("({} docs)", doc_count), Style::default().fg(Theme::TEXT_MUTED)),
+                            ]),
+                            Line::from(""),
+                        ])
+                    }
+                    ExploreTreeItem::Doc { title, status, .. } => {
+                        let doc_style = if is_selected {
+                            Theme::selected_row()
+                        } else {
+                            Style::default().fg(Color::White)
+                        };
+
+                        let (badge_text, badge_style) = match status.as_str() {
+                            "accepted" => ("● ", Theme::badge_accepted()),
+                            "proposed" => ("○ ", Theme::badge_proposed()),
+                            "open" => ("▲ ", Theme::badge_risk()),
+                            "acknowledged" => ("✔ ", Theme::badge_acknowledged()),
+                            "resolved" => ("✔ ", Theme::badge_resolved()),
+                            "retired" | "superseded" => ("✕ ", Style::default().fg(Theme::STATUS_SUPERSEDED)),
+                            _ => ("· ", Style::default().fg(Theme::STATUS_UNKNOWN)),
+                        };
+
+                        ListItem::new(vec![
+                            Line::from(vec![
+                                Span::raw("    "),
+                                Span::styled(badge_text, badge_style),
+                                Span::styled(title, doc_style),
+                            ]),
+                            Line::from(""),
+                        ])
+                    }
+                }
+            })
+            .collect();
+
+        let title_text = format!(" Folder Tree [t: List View, Enter/Space: Expand] ({}) ", app.documents.len());
+        let list = List::new(items)
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .border_style(Style::default().fg(border_color))
+                    .title(Span::styled(title_text, Theme::title())),
+            )
+            .highlight_style(Theme::selected_row());
+
+        frame.render_widget(list, area);
+    }
+
+    fn render_tree_preview(frame: &mut Frame, app: &App, area: Rect) {
+        if let Some(item) = app.selected_tree_item() {
+            match item {
+                ExploreTreeItem::Doc { .. } => {
+                    Self::render_document_preview(frame, app, area);
+                }
+                ExploreTreeItem::Folder { path, name, doc_count, is_collapsed } => {
+                    let border_color = if app.focused_pane == FocusedPane::Detail {
+                        Theme::BORDER_FOCUSED
+                    } else {
+                        Theme::BORDER
+                    };
+
+                    let title_style = if app.focused_pane == FocusedPane::Detail {
+                        Style::default().fg(Theme::ACCENT).add_modifier(Modifier::BOLD)
+                    } else {
+                        Theme::title()
+                    };
+
+                    let block = Block::default()
+                        .borders(Borders::ALL)
+                        .border_style(Style::default().fg(border_color))
+                        .title(Span::styled(" Folder Overview ", title_style));
+
+                    let matching_docs: Vec<&crate::domain::Document> = app.documents.iter().filter(|d| {
+                        let f = std::path::Path::new(&d.path).parent().map(|p| p.to_string_lossy().to_string()).unwrap_or_default();
+                        let clean = if f.is_empty() { "general" } else { &f };
+                        clean == path
+                    }).collect();
+
+                    let mut text = vec![
+                        Line::from(""),
+                        Line::from(vec![
+                            Span::styled("  📁 Folder: ", Style::default().fg(Theme::TEXT_MUTED)),
+                            Span::styled(&name, Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+                            Span::raw("   "),
+                            Span::styled(format!("({} documents)", doc_count), Style::default().fg(Color::Cyan)),
+                        ]),
+                        Line::from(""),
+                        Line::from(Span::styled("  ────── Documents in this Folder ──────", Style::default().fg(Theme::BORDER))),
+                        Line::from(""),
+                    ];
+
+                    for doc in matching_docs {
+                        let badge = match doc.status.as_str() {
+                            "accepted" => ("● ACCEPTED", Theme::badge_accepted()),
+                            "proposed" => ("○ PROPOSED", Theme::badge_proposed()),
+                            "open" => ("▲ OPEN", Theme::badge_risk()),
+                            "acknowledged" => ("✔ ACKNOWLEDGED", Theme::badge_acknowledged()),
+                            _ => ("· DOC", Style::default().fg(Theme::STATUS_UNKNOWN)),
+                        };
+                        text.push(Line::from(vec![
+                            Span::raw("    "),
+                            Span::styled(badge.0, badge.1),
+                            Span::raw("  "),
+                            Span::styled(&doc.title, Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
+                        ]));
+                        text.push(Line::from(vec![
+                            Span::raw("       "),
+                            Span::styled(&doc.path, Style::default().fg(Theme::TEXT_MUTED)),
+                        ]));
+                        text.push(Line::from(""));
+                    }
+
+                    text.push(Line::from(Span::styled("  ──────────────────────────────────────", Style::default().fg(Theme::BORDER))));
+                    text.push(Line::from(vec![
+                        Span::raw("  Press "),
+                        Span::styled("[Enter]", Style::default().fg(Theme::ACCENT)),
+                        Span::raw(" or "),
+                        Span::styled("[Space]", Style::default().fg(Theme::ACCENT)),
+                        Span::raw(if is_collapsed { " to expand this folder" } else { " to collapse this folder" }),
+                        Span::raw(", or "),
+                        Span::styled("[t]", Style::default().fg(Theme::ACCENT)),
+                        Span::raw(" to switch back to List view."),
+                    ]));
+
+                    let p = Paragraph::new(text).block(block).wrap(Wrap { trim: false });
+                    frame.render_widget(p, area);
+                }
+            }
+        } else {
+            Self::render_document_preview(frame, app, area);
         }
     }
 }

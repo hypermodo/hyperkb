@@ -1,8 +1,8 @@
 use chrono::Utc;
 use clap::{Parser, Subcommand};
 use hyperkb_rs::core::{
-    Archeology, DecisionWorkflow, DirectiveWorkflow, Git, GrantStore, MaintenanceManager,
-    RiskWorkflow, Scanner, SessionManager,
+    Archeology, DecisionWorkflow, DirectiveWorkflow, Git, GrantStore, KbLinter,
+    MaintenanceManager, RiskWorkflow, Scanner, SessionManager,
 };
 use hyperkb_rs::domain::{ActionKind, Actor, BrowseOptions, GrantConstraints, RepoManifest};
 use hyperkb_rs::storage::{Database, Queries};
@@ -193,6 +193,18 @@ enum Commands {
     Taxonomy {
         #[command(subcommand)]
         command: TaxonomyCommands,
+    },
+    /// Audit repository documentation and policy directives for bloat, invalid schemas, and decay
+    Audit {
+        /// Audit KB documentation (nesting depth, line/word bloat, stale docs, metadata schema)
+        #[arg(long)]
+        kb: bool,
+        /// Audit policy directives (dormant rules, category bloat, staleness)
+        #[arg(long)]
+        directives: bool,
+        /// Output audit results as JSON
+        #[arg(long)]
+        json: bool,
     },
 }
 
@@ -446,6 +458,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 "Excessive comment density in '{}': {}/{} added lines ({:.1}%) are comments. Keep code self-documenting per Comment Directive.",
                                 rep.file_path, rep.comment_lines, rep.added_lines, rep.comment_ratio * 100.0
                             ));
+                        }
+                    }
+                }
+            }
+
+            // Lint markdown documentation files for KB anti-bloat & schema compliance
+            let docs_dir = cli.root.join(&manifest.docs_root);
+            for path in &check.checked_paths {
+                if path.ends_with(".md") || path.ends_with(".markdown") {
+                    let file_p = cli.root.join(path);
+                    if file_p.exists() {
+                        if let Ok(issues) = KbLinter::lint_single_file(&file_p, &docs_dir) {
+                            for issue in issues {
+                                check.hygiene_warnings.push(format!("KB Linter [{}]: {}", path, issue));
+                            }
                         }
                     }
                 }
@@ -990,6 +1017,110 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 println!("✓ Added taxonomy category '{}' to hyperkb.json.", id);
             }
         },
+        Some(Commands::Audit { kb, directives, json }) => {
+            let audit_kb_flag = if !kb && !directives { true } else { kb };
+            let audit_directives_flag = if !kb && !directives { true } else { directives };
+
+            let mut kb_report = None;
+            let mut dir_report = None;
+
+            if audit_kb_flag {
+                let docs_dir = cli.root.join(&manifest.docs_root);
+                let report = KbLinter::audit_directory(&docs_dir)?;
+                kb_report = Some(report);
+            }
+
+            if audit_directives_flag {
+                let report = DirectiveWorkflow::audit_directives(&cli.root, db.conn(), collection_id)?;
+                dir_report = Some(report);
+            }
+
+            if json {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&serde_json::json!({
+                        "kb": kb_report,
+                        "directives": dir_report,
+                    }))?
+                );
+            } else {
+                if let Some(report) = kb_report {
+                    println!("=== HyperKB Knowledge Base & Documentation Audit ===");
+                    println!("  Scanned Documents: {}", report.total_documents);
+                    println!("  Valid Documents:   {}", report.valid_documents);
+                    if !report.topics.is_empty() {
+                        println!("  Topics / Folders:  {}", report.topics.join(", "));
+                    }
+                    println!();
+
+                    if !report.bloat_warnings.is_empty() {
+                        println!("⚠️  Document Bloat Warnings (>250 lines / >2000 words):");
+                        for w in &report.bloat_warnings {
+                            println!("  - {}", w);
+                        }
+                        println!();
+                    }
+
+                    if !report.depth_warnings.is_empty() {
+                        println!("⚠️  Folder Depth Warnings (>3 levels):");
+                        for w in &report.depth_warnings {
+                            println!("  - {}", w);
+                        }
+                        println!();
+                    }
+
+                    if !report.schema_errors.is_empty() {
+                        println!("⚠️  Metadata Schema Errors:");
+                        for w in &report.schema_errors {
+                            println!("  - {}", w);
+                        }
+                        println!();
+                    }
+
+                    if !report.stale_warnings.is_empty() {
+                        println!("⚠️  Stale Proposals (>90 days in proposed status):");
+                        for w in &report.stale_warnings {
+                            println!("  - {}", w);
+                        }
+                        println!();
+                    }
+
+                    if report.is_clean() {
+                        println!("✓ KB Clean: All documents comply with line count (<250), word count (<2000), nesting depth (≤3), and frontmatter schema.");
+                        println!();
+                    }
+                }
+
+                if let Some(report) = dir_report {
+                    println!("=== HyperKB Policy Directives Audit ===");
+                    println!("  Total Directives:  {}", report.total_directives);
+                    println!("  Active Directives: {}", report.active_directives);
+                    println!("  Global Rules:      {} (Threshold: ≤ 5)", report.global_count);
+                    println!("  Taxonomies Used:   {}", report.taxonomies_used.join(", "));
+                    println!();
+
+                    if !report.bloat_warnings.is_empty() {
+                        println!("⚠️  Rule Bloat Warnings:");
+                        for w in &report.bloat_warnings {
+                            println!("  - {}", w);
+                        }
+                        println!();
+                    }
+
+                    if !report.stale_directives.is_empty() {
+                        println!("⚠️  Stale Scope Warnings:");
+                        for w in &report.stale_directives {
+                            println!("  - {}", w);
+                        }
+                        println!();
+                    }
+
+                    if report.bloat_warnings.is_empty() && report.stale_directives.is_empty() {
+                        println!("✓ Hygiene Clean: All active directives are scoped, fresh, and within the Rule of 5 threshold.");
+                    }
+                }
+            }
+        }
         None => {
             // Index existing docs in workspace so the TUI opens with real knowledge ready to browse
             let docs_dir = cli.root.join(&manifest.docs_root);

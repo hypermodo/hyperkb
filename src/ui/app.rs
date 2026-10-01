@@ -17,6 +17,23 @@ pub enum FocusedPane {
     Detail,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ExploreTreeItem {
+    Folder {
+        path: String,
+        name: String,
+        doc_count: usize,
+        is_collapsed: bool,
+    },
+    Doc {
+        doc_idx: usize,
+        title: String,
+        path: String,
+        status: String,
+        kind: String,
+    },
+}
+
 pub struct App {
     pub should_quit: bool,
     pub active_tab: ActiveTab,
@@ -28,6 +45,9 @@ pub struct App {
     pub documents: Vec<Document>,
     pub selected_doc_idx: usize,
     pub selected_category: String,
+    pub explore_tree_mode: bool,
+    pub collapsed_folders: std::collections::HashSet<String>,
+    pub selected_tree_idx: usize,
 
     // Directives state
     pub directives: Vec<Directive>,
@@ -67,6 +87,9 @@ impl App {
             documents: Vec::new(),
             selected_doc_idx: 0,
             selected_category: "all".into(),
+            explore_tree_mode: false,
+            collapsed_folders: std::collections::HashSet::new(),
+            selected_tree_idx: 0,
             directives: Vec::new(),
             selected_directive_idx: 0,
             directive_category: "all".into(),
@@ -88,6 +111,98 @@ impl App {
 
     pub fn toggle_raw_view(&mut self) {
         self.show_raw = !self.show_raw;
+    }
+
+    pub fn toggle_explore_tree_mode(&mut self) {
+        self.explore_tree_mode = !self.explore_tree_mode;
+        self.selected_tree_idx = 0;
+        self.preview_scroll_offset = 0;
+        if self.explore_tree_mode {
+            let tree = self.build_explore_tree();
+            for (idx, item) in tree.iter().enumerate() {
+                if let ExploreTreeItem::Doc { doc_idx, .. } = item {
+                    if *doc_idx == self.selected_doc_idx {
+                        self.selected_tree_idx = idx;
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    pub fn toggle_tree_collapse(&mut self, folder: &str) {
+        if self.collapsed_folders.contains(folder) {
+            self.collapsed_folders.remove(folder);
+        } else {
+            self.collapsed_folders.insert(folder.to_string());
+        }
+    }
+
+    pub fn build_explore_tree(&self) -> Vec<ExploreTreeItem> {
+        let mut folders: Vec<String> = Vec::new();
+        for doc in &self.documents {
+            let folder = Path::new(&doc.path)
+                .parent()
+                .map(|p| p.to_string_lossy().to_string())
+                .unwrap_or_default();
+            let clean_folder = if folder.is_empty() {
+                "general".to_string()
+            } else {
+                folder
+            };
+            if !folders.contains(&clean_folder) {
+                folders.push(clean_folder);
+            }
+        }
+        folders.sort();
+
+        let mut items = Vec::new();
+        for folder in folders {
+            let matching_indices: Vec<usize> = self
+                .documents
+                .iter()
+                .enumerate()
+                .filter(|(_, doc)| {
+                    let f = Path::new(&doc.path)
+                        .parent()
+                        .map(|p| p.to_string_lossy().to_string())
+                        .unwrap_or_default();
+                    let cf = if f.is_empty() { "general" } else { &f };
+                    cf == folder
+                })
+                .map(|(idx, _)| idx)
+                .collect();
+
+            let doc_count = matching_indices.len();
+            let is_collapsed = self.collapsed_folders.contains(&folder);
+
+            items.push(ExploreTreeItem::Folder {
+                path: folder.clone(),
+                name: format!("{}/", folder),
+                doc_count,
+                is_collapsed,
+            });
+
+            if !is_collapsed {
+                for idx in matching_indices {
+                    let doc = &self.documents[idx];
+                    items.push(ExploreTreeItem::Doc {
+                        doc_idx: idx,
+                        title: doc.title.clone(),
+                        path: doc.path.clone(),
+                        status: doc.status.as_str().to_string(),
+                        kind: doc.kind.as_str().to_string(),
+                    });
+                }
+            }
+        }
+
+        items
+    }
+
+    pub fn selected_tree_item(&self) -> Option<ExploreTreeItem> {
+        let tree = self.build_explore_tree();
+        tree.get(self.selected_tree_idx).cloned()
     }
 
     /// Loads initial data from the database.
@@ -207,6 +322,15 @@ impl App {
             ActiveTab::Explore => {
                 if self.focused_pane == FocusedPane::Detail {
                     self.preview_scroll_offset += 2;
+                } else if self.explore_tree_mode {
+                    let tree = self.build_explore_tree();
+                    if !tree.is_empty() {
+                        self.selected_tree_idx = (self.selected_tree_idx + 1) % tree.len();
+                        if let ExploreTreeItem::Doc { doc_idx, .. } = &tree[self.selected_tree_idx] {
+                            self.selected_doc_idx = *doc_idx;
+                        }
+                        self.preview_scroll_offset = 0;
+                    }
                 } else if !self.documents.is_empty() {
                     self.selected_doc_idx = (self.selected_doc_idx + 1) % self.documents.len();
                     self.preview_scroll_offset = 0;
@@ -248,6 +372,19 @@ impl App {
             ActiveTab::Explore => {
                 if self.focused_pane == FocusedPane::Detail {
                     self.preview_scroll_offset = self.preview_scroll_offset.saturating_sub(2);
+                } else if self.explore_tree_mode {
+                    let tree = self.build_explore_tree();
+                    if !tree.is_empty() {
+                        if self.selected_tree_idx == 0 {
+                            self.selected_tree_idx = tree.len() - 1;
+                        } else {
+                            self.selected_tree_idx -= 1;
+                        }
+                        if let ExploreTreeItem::Doc { doc_idx, .. } = &tree[self.selected_tree_idx] {
+                            self.selected_doc_idx = *doc_idx;
+                        }
+                        self.preview_scroll_offset = 0;
+                    }
                 } else if !self.documents.is_empty() {
                     if self.selected_doc_idx == 0 {
                         self.selected_doc_idx = self.documents.len() - 1;
@@ -297,6 +434,15 @@ impl App {
             ActiveTab::Explore => {
                 if self.focused_pane == FocusedPane::Detail {
                     self.preview_scroll_offset += 15;
+                } else if self.explore_tree_mode {
+                    let tree = self.build_explore_tree();
+                    if !tree.is_empty() {
+                        self.selected_tree_idx = (self.selected_tree_idx + 8).min(tree.len() - 1);
+                        if let ExploreTreeItem::Doc { doc_idx, .. } = &tree[self.selected_tree_idx] {
+                            self.selected_doc_idx = *doc_idx;
+                        }
+                        self.preview_scroll_offset = 0;
+                    }
                 } else if !self.documents.is_empty() {
                     self.selected_doc_idx = (self.selected_doc_idx + 8).min(self.documents.len() - 1);
                     self.preview_scroll_offset = 0;
@@ -330,6 +476,13 @@ impl App {
             ActiveTab::Explore => {
                 if self.focused_pane == FocusedPane::Detail {
                     self.preview_scroll_offset = self.preview_scroll_offset.saturating_sub(15);
+                } else if self.explore_tree_mode {
+                    self.selected_tree_idx = self.selected_tree_idx.saturating_sub(8);
+                    let tree = self.build_explore_tree();
+                    if let Some(ExploreTreeItem::Doc { doc_idx, .. }) = tree.get(self.selected_tree_idx) {
+                        self.selected_doc_idx = *doc_idx;
+                    }
+                    self.preview_scroll_offset = 0;
                 } else if !self.documents.is_empty() {
                     self.selected_doc_idx = self.selected_doc_idx.saturating_sub(8);
                     self.preview_scroll_offset = 0;
@@ -359,6 +512,21 @@ impl App {
 
     pub fn open_selected(&mut self) {
         if self.active_tab == ActiveTab::Explore {
+            if self.explore_tree_mode {
+                let tree = self.build_explore_tree();
+                if let Some(item) = tree.get(self.selected_tree_idx) {
+                    match item {
+                        ExploreTreeItem::Folder { path, .. } => {
+                            let p = path.clone();
+                            self.toggle_tree_collapse(&p);
+                            return;
+                        }
+                        ExploreTreeItem::Doc { doc_idx, .. } => {
+                            self.selected_doc_idx = *doc_idx;
+                        }
+                    }
+                }
+            }
             if let Some(doc) = self.documents.get(self.selected_doc_idx) {
                 self.current_document = Some(doc.clone());
                 self.active_tab = ActiveTab::Reader;
@@ -416,5 +584,79 @@ impl App {
 
     pub fn selected_risk(&self) -> Option<&RiskMatch> {
         self.active_risks.get(self.selected_risk_idx)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::domain::{DocumentKind, DocumentStatus};
+
+    fn make_test_doc(id: &str, path: &str, title: &str) -> Document {
+        Document {
+            id: id.to_string(),
+            collection_id: "test".to_string(),
+            path: path.to_string(),
+            title: title.to_string(),
+            topic: "topic".to_string(),
+            status: DocumentStatus::Accepted,
+            kind: DocumentKind::Decision,
+            owner: "user".to_string(),
+            issue: String::new(),
+            replacement_id: None,
+            supersedes: None,
+            content: "content".to_string(),
+            source: "file".to_string(),
+            available: true,
+            stale: false,
+            declared_status: None,
+            checksum: "abc".to_string(),
+            worktree_state: None,
+        }
+    }
+
+    #[test]
+    fn test_explore_tree_build_and_collapse() {
+        let mut app = App::new("test", "test");
+        app.documents = vec![
+            make_test_doc("d1", "decisions/adr-001.md", "Use Rust"),
+            make_test_doc("d2", "decisions/adr-002.md", "SQLite DB"),
+            make_test_doc("d3", "risks/risk-001.md", "Disk Thrashing"),
+        ];
+
+        let tree = app.build_explore_tree();
+        assert_eq!(tree.len(), 5); // folder "decisions/", 2 docs, folder "risks/", 1 doc
+
+        match &tree[0] {
+            ExploreTreeItem::Folder { path, doc_count, is_collapsed, .. } => {
+                assert_eq!(path, "decisions");
+                assert_eq!(*doc_count, 2);
+                assert!(!is_collapsed);
+            }
+            _ => panic!("Expected folder at root"),
+        }
+
+        // Collapse "decisions" folder
+        app.toggle_tree_collapse("decisions");
+        let collapsed_tree = app.build_explore_tree();
+        assert_eq!(collapsed_tree.len(), 3); // folder "decisions/" (collapsed), folder "risks/", 1 doc
+
+        match &collapsed_tree[0] {
+            ExploreTreeItem::Folder { path, is_collapsed, .. } => {
+                assert_eq!(path, "decisions");
+                assert!(is_collapsed);
+            }
+            _ => panic!("Expected folder"),
+        }
+
+        // Toggle tree mode on app
+        assert!(!app.explore_tree_mode);
+        app.active_tab = ActiveTab::Explore;
+        app.toggle_explore_tree_mode();
+        assert!(app.explore_tree_mode);
+
+        // Next item navigation in tree mode
+        app.next();
+        assert_eq!(app.selected_tree_idx, 1);
     }
 }

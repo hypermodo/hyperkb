@@ -75,9 +75,15 @@ impl Header {
                 spans
             }
             ActiveTab::Explore => {
+                let mode_pill = if app.explore_tree_mode {
+                    Span::styled(" [t: TREE VIEW] ", Style::default().fg(Color::Black).bg(Color::Cyan).add_modifier(Modifier::BOLD))
+                } else {
+                    Span::styled(" [t: LIST VIEW] ", Style::default().fg(Theme::ACCENT).bg(Color::Rgb(30, 41, 59)).add_modifier(Modifier::BOLD))
+                };
                 let mut spans = vec![
-                    Span::styled("  Category Filter:  ", Style::default().fg(Theme::TEXT_MUTED).add_modifier(Modifier::BOLD)),
-                    Span::styled(" [c] ", Style::default().fg(Theme::ACCENT).add_modifier(Modifier::BOLD)),
+                    Span::styled("  View: ", Style::default().fg(Theme::TEXT_MUTED).add_modifier(Modifier::BOLD)),
+                    mode_pill,
+                    Span::styled("  |  Category [c]: ", Style::default().fg(Theme::TEXT_MUTED).add_modifier(Modifier::BOLD)),
                 ];
                 for cat in App::CATEGORIES {
                     if *cat == app.selected_category {
@@ -176,12 +182,17 @@ impl Header {
                     }
                 }
                 ActiveTab::Explore => {
-                    // "  Category Filter:  [c] " is 20 chars
-                    if col >= 20 && col <= 23 {
+                    // "  View: " (8 chars) -> [t: TREE VIEW] (16 chars, col 8..23)
+                    if col >= 8 && col <= 23 {
+                        app.toggle_explore_tree_mode();
+                        return true;
+                    }
+                    // "  |  Category [c]: " (19 chars: 24..42). [c] is around col 38..40
+                    if col >= 37 && col <= 41 {
                         app.next_category(db);
                         return true;
                     }
-                    let mut cur_x = 24u16;
+                    let mut cur_x = 43u16;
                     for cat in App::CATEGORIES {
                         let pill_w = (cat.len() + 4) as u16;
                         if col >= cur_x && col < cur_x + pill_w {
@@ -228,10 +239,12 @@ impl Footer {
                     Span::raw("Quit"),
                 ],
                 ActiveTab::Explore => vec![
+                    Span::styled("[t] ", Style::default().fg(Theme::ACCENT)),
+                    Span::raw("Tree/List  "),
                     Span::styled("[c] ", Style::default().fg(Theme::ACCENT)),
                     Span::raw("Category  "),
                     Span::styled("[Enter] ", Style::default().fg(Theme::ACCENT)),
-                    Span::raw("Read Doc  "),
+                    Span::raw("Read/Expand  "),
                     Span::styled("[Tab] ", Style::default().fg(Theme::ACCENT)),
                     Span::raw("Switch Pane  "),
                     Span::styled("[↑↓/jk] ", Style::default().fg(Theme::ACCENT)),
