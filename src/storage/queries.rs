@@ -138,14 +138,11 @@ impl Queries {
         limit: usize,
         include_private: bool,
     ) -> Result<Vec<Hit>> {
-        let terms = Self::tokenize_query(query);
-        if terms.is_empty() || collection_ids.is_empty() {
+        let (and_expr, or_expr) = crate::core::QueryExpander::expand(query);
+        if and_expr.is_empty() || collection_ids.is_empty() {
             return Ok(Vec::new());
         }
 
-        let quoted_terms: Vec<String> = terms.iter().map(|t| format!("\"{}\"", t)).collect();
-
-        let and_expr = quoted_terms.join(" AND ");
         let mut hits = Self::execute_fts_match(
             conn,
             collection_ids,
@@ -156,17 +153,18 @@ impl Queries {
             false,
         )?;
 
-        if hits.is_empty() && terms.len() >= 2 {
-            let or_expr = quoted_terms.join(" OR ");
-            hits = Self::execute_fts_match(
-                conn,
-                collection_ids,
-                profile_id,
-                &or_expr,
-                limit,
-                include_private,
-                true,
-            )?;
+        if hits.is_empty() {
+            if let Some(ref or_str) = or_expr {
+                hits = Self::execute_fts_match(
+                    conn,
+                    collection_ids,
+                    profile_id,
+                    or_str,
+                    limit,
+                    include_private,
+                    true,
+                )?;
+            }
         }
 
         Ok(hits)
@@ -719,5 +717,101 @@ mod tests {
 
         Ok(())
     }
+
+    #[test]
+    fn test_synonym_expansion_search() -> Result<()> {
+        let db = Database::open_in_memory("coll_syn", "prof_syn")?;
+
+        let meta1 = RecordMeta {
+            id: "doc_db".into(),
+            kind: "decision".into(),
+            status: "accepted".into(),
+            owner: "architect".into(),
+            issue: None,
+            paths: vec!["src/storage/mod.rs".into()],
+            versions: vec!["1.0.0".into()],
+            environments: vec!["production".into()],
+            supersedes: None,
+            delegation: None,
+        };
+
+        Queries::upsert_document(
+            db.conn(),
+            "doc_db",
+            "coll_syn",
+            "docs/decisions/0010-storage.md",
+            "Storage",
+            "Relational Storage Engine",
+            "We are standardizing our database layer with WAL journal mode and busy timeouts.",
+            "Relational Storage Engine We are standardizing our database layer with WAL journal mode and busy timeouts.",
+            &meta1,
+            "hash_db_1",
+        )?;
+
+        let meta2 = RecordMeta {
+            id: "doc_auth".into(),
+            kind: "decision".into(),
+            status: "accepted".into(),
+            owner: "security".into(),
+            issue: None,
+            paths: vec!["src/security/mod.rs".into()],
+            versions: vec!["1.0.0".into()],
+            environments: vec!["production".into()],
+            supersedes: None,
+            delegation: None,
+        };
+
+        Queries::upsert_document(
+            db.conn(),
+            "doc_auth",
+            "coll_syn",
+            "docs/decisions/0011-tokens.md",
+            "Security",
+            "Session Invalidation",
+            "All user credentials and tokens must be verified before granting access.",
+            "Session Invalidation All user credentials and tokens must be verified before granting access.",
+            &meta2,
+            "hash_auth_1",
+        )?;
+
+        // Search for shorthand "db" should find the document that only mentions "database"
+        let db_hits = Queries::search(
+            db.conn(),
+            &["coll_syn".into()],
+            "prof_syn",
+            "db",
+            10,
+            false,
+        )?;
+        assert_eq!(db_hits.len(), 1);
+        assert_eq!(db_hits[0].id, "doc_db");
+
+        // Search for shorthand "auth" should find the document that only mentions "credentials" and "tokens"
+        let auth_hits = Queries::search(
+            db.conn(),
+            &["coll_syn".into()],
+            "prof_syn",
+            "auth",
+            10,
+            false,
+        )?;
+        assert_eq!(auth_hits.len(), 1);
+        assert_eq!(auth_hits[0].id, "doc_auth");
+
+        // Search with exact phrase
+        let phrase_hits = Queries::search(
+            db.conn(),
+            &["coll_syn".into()],
+            "prof_syn",
+            r#""database layer""#,
+            10,
+            false,
+        )?;
+        assert_eq!(phrase_hits.len(), 1);
+        assert_eq!(phrase_hits[0].id, "doc_db");
+
+        Ok(())
+    }
 }
+
 

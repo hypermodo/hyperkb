@@ -4,6 +4,7 @@ pub mod git;
 pub mod grants;
 pub mod maintenance;
 pub mod metadata;
+pub mod query;
 pub mod risk_engine;
 pub mod risks;
 pub mod scanner;
@@ -14,7 +15,9 @@ pub use git::Git;
 pub use grants::GrantStore;
 pub use maintenance::{BackupManifest, BackupReport, MaintenanceManager};
 pub use metadata::{MetadataParser, ParsedMetadata};
+pub use query::{QueryExpander, QueryToken};
 pub use risk_engine::RiskEngine;
 pub use risks::{RiskDraft, RiskWorkflow};
 pub use scanner::Scanner;
+
 
