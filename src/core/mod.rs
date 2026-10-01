@@ -1,3 +1,4 @@
+pub mod archeology;
 pub mod decisions;
 pub mod git;
 pub mod grants;
@@ -7,6 +8,7 @@ pub mod risk_engine;
 pub mod risks;
 pub mod scanner;
 
+pub use archeology::{Archeology, ArcheologyCandidate, ArcheologyReport, IncidentCommit};
 pub use decisions::{DecisionDraft, DecisionReview, DecisionWorkflow};
 pub use git::Git;
 pub use grants::GrantStore;
@@ -15,3 +17,4 @@ pub use metadata::{MetadataParser, ParsedMetadata};
 pub use risk_engine::RiskEngine;
 pub use risks::{RiskDraft, RiskWorkflow};
 pub use scanner::Scanner;
+

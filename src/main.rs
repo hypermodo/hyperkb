@@ -1,7 +1,7 @@
 use chrono::Utc;
 use clap::{Parser, Subcommand};
 use hyperkb_rs::core::{
-    DecisionWorkflow, Git, GrantStore, MaintenanceManager, RiskWorkflow, Scanner,
+    Archeology, DecisionWorkflow, Git, GrantStore, MaintenanceManager, RiskWorkflow, Scanner,
 };
 use hyperkb_rs::domain::{ActionKind, Actor, BrowseOptions, GrantConstraints};
 use hyperkb_rs::storage::{Database, Queries};
@@ -68,6 +68,21 @@ enum Commands {
     },
     /// Install a pre-commit risk interception hook into .git/hooks/pre-commit
     InstallHook,
+    /// Discover historical incident hotspots and draft proactive risk cards from Git history
+    Bootstrap {
+        /// Maximum number of candidate risk cards to draft
+        #[arg(short, long, default_value_t = 5)]
+        limit: usize,
+        /// Maximum commits in Git history to analyze
+        #[arg(long, default_value_t = 500)]
+        max_commits: usize,
+        /// Show proposed risk candidates without writing them to disk
+        #[arg(long)]
+        dry_run: bool,
+        /// Responsible human owner for the drafted risks (defaults to git user or "Developer")
+        #[arg(short, long)]
+        owner: Option<String>,
+    },
     /// Propose an architectural risk record citing affected file paths
     DraftRisk {
         #[arg(short, long)]
@@ -331,6 +346,50 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!("✓ Pre-commit risk interception hook installed successfully at:");
             println!("  {}", path.display());
             println!("\nAll staged commits will now be evaluated against cited open risks.");
+        }
+        Some(Commands::Bootstrap {
+            limit,
+            max_commits,
+            dry_run,
+            owner,
+        }) => {
+            println!("Performing Git history archeology across up to {} commits...", max_commits);
+            let report = Archeology::bootstrap(
+                &cli.root,
+                db.conn(),
+                "local_collection",
+                limit,
+                max_commits,
+                dry_run,
+                owner.as_deref(),
+            )?;
+
+            println!(
+                "Analyzed {} commits; found {} historical incident commits.",
+                report.analyzed_commits, report.incident_commits
+            );
+
+            if report.candidates.is_empty() {
+                println!("No recurring incident hotspots detected in Git history matching incident criteria.");
+            } else {
+                let mode_str = if dry_run { "Candidate Risk Hotspots (DRY RUN):" } else { "Created Risk Cards:" };
+                println!("\n{}", mode_str);
+                for (i, c) in report.candidates.iter().enumerate() {
+                    println!("\n[{}] {}", i + 1, c.title);
+                    println!("    Affected Paths: {:?}", c.affected_paths);
+                    println!("    Incident Count: {} commits", c.incident_count);
+                    let cited = c.cited_commits.iter().map(|s| &s[..s.len().min(8)]).collect::<Vec<_>>().join(", ");
+                    println!("    Cited Commits:  {}", cited);
+                    if let Some(ref path) = c.created_path {
+                        println!("    Created File:   {}", path);
+                    }
+                }
+                if dry_run {
+                    println!("\nRun without --dry-run to generate and index these risk records into docs/risks/.");
+                } else {
+                    println!("\n✓ {} risk cards drafted and indexed into docs/risks/.", report.candidates.len());
+                }
+            }
         }
         Some(Commands::DraftRisk {
             title,
