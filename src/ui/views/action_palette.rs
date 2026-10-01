@@ -38,7 +38,7 @@ impl ActionPaletteModal {
             .border_style(Style::default().fg(t.accent()).add_modifier(Modifier::BOLD))
             .style(Style::default().bg(t.bg_panel()).fg(t.text_primary()))
             .padding(Padding::new(2, 2, 1, 1))
-            .title(Span::styled(" ⚡ Action Palette & Tool Launcher ", t.title()))
+            .title(Span::styled(" ⚡ KB Lifecycle & Operations Palette ", t.title()))
             .title_bottom(Line::from(vec![
                 Span::styled(" [↑/↓] ", t.key_badge()),
                 Span::styled("Navigate  •  ", Style::default().fg(t.text_muted())),
@@ -67,7 +67,7 @@ impl ActionPaletteModal {
                 Span::styled("  🔍 ", Style::default().fg(t.accent()).add_modifier(Modifier::BOLD)),
                 Span::styled(
                     if app.action_palette_query.is_empty() {
-                        "Type a command name, keyword, or CLI shortcut to filter...".to_string()
+                        "Type to filter lifecycle actions (e.g. directive, grant, check, index, backup)...".to_string()
                     } else {
                         app.action_palette_query.clone()
                     },
@@ -98,12 +98,12 @@ impl ActionPaletteModal {
             let empty_text = vec![
                 Line::from(""),
                 Line::from(Span::styled(
-                    "   No matching actions found for query.",
+                    "   No matching lifecycle actions found for query.",
                     Style::default().fg(t.text_muted()),
                 )),
                 Line::from(""),
                 Line::from(Span::styled(
-                    "   Try keywords like 'check', 'directive', 'grant', 'editor', 'audit', or 'theme'.",
+                    "   Try keywords like 'directive', 'grant', 'check', 'index', 'archeology', 'backup', or 'compact'.",
                     Style::default().fg(t.text_muted()),
                 )),
             ];

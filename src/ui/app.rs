@@ -36,6 +36,13 @@ pub static ACTION_PALETTE_ITEMS: &[ActionPaletteItem] = &[
         cli_command: "hyperkb draft-directive",
     },
     ActionPaletteItem {
+        id: "toggle_directive_status",
+        title: "Toggle Policy Directive Status (Active ⇄ Retired)",
+        shortcut: "r",
+        description: "Retire obsolete directive or reactivate rule into pre-commit enforcement gate",
+        cli_command: "Directives Lifecycle (Active ⇄ Retired)",
+    },
+    ActionPaletteItem {
         id: "issue_grant",
         title: "Issue Agent Authority Grant",
         shortcut: "n",
@@ -43,11 +50,32 @@ pub static ACTION_PALETTE_ITEMS: &[ActionPaletteItem] = &[
         cli_command: "hyperkb issue-grant",
     },
     ActionPaletteItem {
+        id: "revoke_grant",
+        title: "Revoke Selected Agent Authority Grant",
+        shortcut: "r",
+        description: "Immediately revoke and invalidate an agent capability grant token",
+        cli_command: "hyperkb revoke-grant",
+    },
+    ActionPaletteItem {
         id: "audit_kb",
         title: "Audit Knowledge Base & Directives",
         shortcut: "a",
         description: "Verify document bloat, file hierarchy depth, and schema validity",
         cli_command: "hyperkb audit-kb",
+    },
+    ActionPaletteItem {
+        id: "reindex_kb",
+        title: "Re-index Knowledge Base (Incremental FTS5)",
+        shortcut: "I",
+        description: "Scan docs directory, parse frontmatter, and update full-text SQLite search index",
+        cli_command: "hyperkb index",
+    },
+    ActionPaletteItem {
+        id: "bootstrap_risks",
+        title: "Bootstrap Risks from Git Incident Archeology",
+        shortcut: "G",
+        description: "Analyze git commit history for regression hotspots and draft proactive risk cards",
+        cli_command: "hyperkb bootstrap",
     },
     ActionPaletteItem {
         id: "open_editor",
@@ -69,27 +97,6 @@ pub static ACTION_PALETTE_ITEMS: &[ActionPaletteItem] = &[
         shortcut: "C",
         description: "Vacuum SQLite database and truncate WAL log to optimize storage",
         cli_command: "hyperkb compact",
-    },
-    ActionPaletteItem {
-        id: "toggle_theme",
-        title: "Cycle Visual Theme",
-        shortcut: "T",
-        description: "Switch between Cyberpunk, Modern, Nord, Tokyo Night, and Light themes",
-        cli_command: "hyperkb ui (or press [T])",
-    },
-    ActionPaletteItem {
-        id: "toggle_mouse",
-        title: "Toggle Mouse Mode",
-        shortcut: "m",
-        description: "Switch between Click Navigation (ON) and Native Drag Selection (OFF)",
-        cli_command: "hyperkb ui (or press [m])",
-    },
-    ActionPaletteItem {
-        id: "view_help",
-        title: "View System Documentation & Shortcuts",
-        shortcut: "?",
-        description: "Open the interactive documentation, keyboard shortcuts, and MCP guides",
-        cli_command: "hyperkb --help (or press [?])",
     },
 ];
 
@@ -1301,10 +1308,15 @@ impl App {
                     }
                 }
                 if all_files.is_empty() {
+                    self.active_risks.clear();
+                    self.switch_tab(ActiveTab::Work);
                     Ok("Git Check-Work: Clean. Working tree and index have no pending changes.".to_string())
                 } else {
                     match Queries::check_work(db.conn(), &self.collection_id, &all_files, None, None) {
                         Ok(report) => {
+                            self.active_risks = report.matches.clone();
+                            self.selected_risk_idx = 0;
+                            self.switch_tab(ActiveTab::Work);
                             if report.matches.is_empty() && report.hygiene_warnings.is_empty() {
                                 Ok(format!("Git Check-Work: Clean across {} changed file(s). No risks cited.", all_files.len()))
                             } else {
@@ -1326,12 +1338,21 @@ impl App {
                 self.new_directive_field = 0;
                 Ok("New Directive Wizard opened".to_string())
             }
+            "toggle_directive_status" => {
+                self.switch_tab(ActiveTab::Directives);
+                self.toggle_selected_directive_status(db)
+            }
             "issue_grant" => {
                 self.switch_tab(ActiveTab::Sessions);
                 self.governance_tab_mode = GovernanceTabMode::Grants;
                 self.show_issue_grant_modal = true;
                 self.new_grant_field = 0;
                 Ok("Issue Agent Authority Grant Wizard opened".to_string())
+            }
+            "revoke_grant" => {
+                self.switch_tab(ActiveTab::Sessions);
+                self.governance_tab_mode = GovernanceTabMode::Grants;
+                self.revoke_selected_grant()
             }
             "audit_kb" => {
                 let docs_dir = self.root.join(&self.manifest.docs_root);
@@ -1344,6 +1365,40 @@ impl App {
                     report.schema_errors.len() + report.bloat_warnings.len(),
                     dir_count
                 ))
+            }
+            "reindex_kb" => {
+                let docs_dir = self.root.join(&self.manifest.docs_root);
+                match crate::core::Scanner::index_directory(db.conn(), &docs_dir, &self.collection_id) {
+                    Ok(rep) => {
+                        self.refresh_data(db);
+                        Ok(format!(
+                            "KB Re-index Complete: {} scanned, {} added, {} updated, {} unchanged.",
+                            rep.scanned, rep.added, rep.updated, rep.unchanged
+                        ))
+                    }
+                    Err(e) => Err(format!("Re-index error: {}", e)),
+                }
+            }
+            "bootstrap_risks" => {
+                match crate::core::Archeology::bootstrap(
+                    &self.root,
+                    db.conn(),
+                    &self.collection_id,
+                    5,
+                    300,
+                    false,
+                    None,
+                ) {
+                    Ok(rep) => {
+                        self.refresh_data(db);
+                        self.switch_tab(ActiveTab::Work);
+                        Ok(format!(
+                            "Git Archeology: Analyzed {} commits, drafted {} candidate risk(s).",
+                            rep.analyzed_commits, rep.candidates.len()
+                        ))
+                    }
+                    Err(e) => Err(format!("Archeology bootstrap error: {}", e)),
+                }
             }
             "open_editor" => {
                 self.open_active_document_in_editor()
@@ -1363,18 +1418,6 @@ impl App {
                     .execute_batch("VACUUM; PRAGMA wal_checkpoint(TRUNCATE);")
                     .map_err(|e| format!("Compaction error: {}", e))?;
                 Ok("Database VACUUM & WAL journal truncation complete".to_string())
-            }
-            "toggle_theme" => {
-                self.next_theme();
-                Ok(format!("Active Theme: {}", self.theme.as_str()))
-            }
-            "toggle_mouse" => {
-                let on = self.toggle_mouse();
-                Ok(format!("Mouse Mode: {}", if on { "ON (Click Navigation & Drag Copy)" } else { "OFF (Native Selection)" }))
-            }
-            "view_help" => {
-                self.show_help = true;
-                Ok("Documentation & Shortcuts opened".to_string())
             }
             _ => Err(format!("Unknown action '{}'", action_id)),
         }
@@ -1558,6 +1601,7 @@ mod tests {
         app.action_palette_query = "grant".to_string();
         let filtered = app.filtered_actions();
         assert!(filtered.iter().any(|item| item.id == "issue_grant"));
+        assert!(filtered.iter().any(|item| item.id == "revoke_grant"));
 
         // Match by cli_command
         app.action_palette_query = "draft-directive".to_string();
@@ -1565,10 +1609,25 @@ mod tests {
         assert_eq!(filtered.len(), 1);
         assert_eq!(filtered[0].id, "new_directive");
 
+        // Match lifecycle actions: index and archeology
+        app.action_palette_query = "index".to_string();
+        let filtered = app.filtered_actions();
+        assert!(filtered.iter().any(|item| item.id == "reindex_kb"));
+
+        app.action_palette_query = "archeology".to_string();
+        let filtered = app.filtered_actions();
+        assert!(filtered.iter().any(|item| item.id == "bootstrap_risks"));
+
         // Match by shortcut
         app.action_palette_query = "Space".to_string();
         let filtered = app.filtered_actions();
         assert!(filtered.iter().any(|item| item.id == "check_work"));
+
+        // Settings like theme and mouse must NOT be in action palette
+        app.action_palette_query = "theme".to_string();
+        assert!(app.filtered_actions().is_empty());
+        app.action_palette_query = "toggle_mouse".to_string();
+        assert!(app.filtered_actions().is_empty());
 
         app.action_palette_query = "xyznonexistent".to_string();
         assert!(app.filtered_actions().is_empty());
