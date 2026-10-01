@@ -175,6 +175,11 @@ fn run_loop(
                             KeyCode::Esc | KeyCode::Char('?') | KeyCode::Char('q') => {
                                 app.show_help = false;
                             }
+                            KeyCode::Char('y') | KeyCode::Char('Y') => {
+                                let plain = HelpModal::help_text_plain();
+                                App::copy_text_to_clipboard(&plain);
+                                app.status_message = Some("✔ Copied System Documentation to clipboard (Cmd+V to paste)".to_string());
+                            }
                             KeyCode::Down | KeyCode::Char('j') => {
                                 app.help_scroll += 1;
                             }
@@ -347,25 +352,58 @@ fn run_loop(
 
                     // If Help modal is currently open, isolate all mouse actions to the modal overlay.
                     if app.show_help {
+                        let modal = HelpModal::modal_area(area);
+                        let inside = col >= modal.x
+                            && col < modal.x + modal.width
+                            && row >= modal.y
+                            && row < modal.y + modal.height;
+
                         match mouse.kind {
                             MouseEventKind::Down(MouseButton::Left) => {
-                                let modal = HelpModal::modal_area(area);
-                                let inside = col >= modal.x
-                                    && col < modal.x + modal.width
-                                    && row >= modal.y
-                                    && row < modal.y + modal.height;
-
                                 if !inside {
                                     // Clicking outside the help modal dismisses it safely!
-                                    // Under no circumstances should this click trigger footer [q] quit or underlying view clicks!
                                     app.show_help = false;
                                 } else {
-                                    // If clicked on the top title bar or bottom bar of modal:
+                                    app.drag_start = Some((col, row));
+                                    app.drag_current = Some((col, row));
+                                    app.is_dragging = false;
+                                }
+                                continue;
+                            }
+                            MouseEventKind::Drag(MouseButton::Left) => {
+                                if let Some((sc, sr)) = app.drag_start {
+                                    if col != sc || row != sr {
+                                        app.is_dragging = true;
+                                        app.drag_current = Some((col, row));
+                                    }
+                                }
+                                continue;
+                            }
+                            MouseEventKind::Up(MouseButton::Left) => {
+                                if app.is_dragging {
+                                    if let Some(text) = app.last_selected_text.take() {
+                                        let trimmed = text.trim();
+                                        if !trimmed.is_empty() {
+                                            App::copy_text_to_clipboard(trimmed);
+                                            let preview = if trimmed.len() > 32 {
+                                                format!("{}...", &trimmed[..32])
+                                            } else {
+                                                trimmed.to_string()
+                                            };
+                                            app.status_message = Some(format!("✔ Copied '{}' to clipboard (Cmd+V to paste)", preview));
+                                        }
+                                    }
+                                    app.is_dragging = false;
+                                    app.drag_start = None;
+                                    app.drag_current = None;
+                                } else if inside {
                                     let is_top_bar = row == modal.y;
                                     let is_bottom_bar = row == modal.y + modal.height.saturating_sub(1);
                                     if is_top_bar || is_bottom_bar {
                                         app.show_help = false;
                                     }
+                                    app.drag_start = None;
+                                    app.drag_current = None;
                                 }
                                 continue;
                             }
