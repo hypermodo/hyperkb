@@ -123,8 +123,18 @@ impl NewDirectiveModal {
 
         // Field 1: Category
         let is_f1 = app.new_directive_field == 1;
-        let categories = &["architecture", "behavior", "deployment", "security"];
-        let selected_cat = categories[app.new_directive_category_idx % categories.len()];
+        let categories = &app.manifest.taxonomy.categories;
+        let selected_cat = if categories.is_empty() {
+            "behavior"
+        } else {
+            &categories[app.new_directive_category_idx % categories.len()].id
+        };
+        let cat_label = if categories.is_empty() {
+            "Code & Agent Behavior"
+        } else {
+            &categories[app.new_directive_category_idx % categories.len()].label
+        };
+
         let f1_block = Block::default()
             .borders(Borders::ALL)
             .border_style(if is_f1 {
@@ -141,6 +151,10 @@ impl NewDirectiveModal {
             Span::styled(
                 selected_cat.to_uppercase(),
                 Style::default().fg(t.status_proposed()).add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(
+                format!("  ({})", cat_label),
+                Style::default().fg(t.text_muted()),
             ),
         ])];
         frame.render_widget(Paragraph::new(cat_content).block(f1_block), row2_chunks[0]);

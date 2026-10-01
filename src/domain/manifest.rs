@@ -81,6 +81,9 @@ pub struct RepoManifest {
     pub taxonomy: TaxonomyConfig,
 
     #[serde(default)]
+    pub harnesses: crate::domain::HarnessConfig,
+
+    #[serde(default)]
     pub settings: KbSettings,
 }
 
@@ -126,7 +129,7 @@ fn default_theme() -> String {
 }
 
 fn default_mouse_enabled() -> bool {
-    false
+    true
 }
 
 impl Default for KbSettings {
@@ -191,6 +194,7 @@ impl Default for RepoManifest {
             directives_path: default_directives_path(),
             memory_path: default_memory_path(),
             taxonomy: TaxonomyConfig::default(),
+            harnesses: crate::domain::HarnessConfig::default(),
             settings: KbSettings::default(),
         }
     }
@@ -348,7 +352,7 @@ mod tests {
         assert_eq!(settings.audit_max_lines, 250);
         assert_eq!(settings.audit_max_depth, 3);
         assert_eq!(settings.theme, "cyberpunk");
-        assert!(!settings.mouse_enabled);
+        assert!(settings.mouse_enabled);
 
         let json = serde_json::to_string(&settings).unwrap();
         let deserialized: KbSettings = serde_json::from_str(&json).unwrap();

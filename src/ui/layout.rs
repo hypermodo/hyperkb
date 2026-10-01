@@ -53,8 +53,8 @@ impl Header {
                     Span::styled("  Policy Taxonomy:  ", Style::default().fg(t.text_muted()).add_modifier(Modifier::BOLD)),
                     Span::styled(" [c] ", Style::default().fg(t.accent()).add_modifier(Modifier::BOLD)),
                 ];
-                for cat in App::DIRECTIVE_CATEGORIES {
-                    if *cat == app.directive_category {
+                for cat in app.directive_categories() {
+                    if cat == app.directive_category {
                         spans.push(Span::styled(
                             format!(" [{}] ", cat.to_uppercase()),
                             Style::default()
@@ -129,9 +129,23 @@ impl Header {
                 }
             }
             ActiveTab::Work => {
+                let risks_pill = if app.work_tab_mode == crate::ui::app::WorkTabMode::Risks {
+                    Span::styled(" [w: RISKS & WORK] ", Style::default().fg(t.bg()).bg(t.accent()).add_modifier(Modifier::BOLD))
+                } else {
+                    Span::styled(" [w: RISKS & WORK] ", Style::default().fg(t.accent()).bg(t.bg_panel()).add_modifier(Modifier::BOLD))
+                };
+                let console_pill = if app.work_tab_mode == crate::ui::app::WorkTabMode::Console {
+                    Span::styled(" [c: DIAGNOSTIC CONSOLE] ", Style::default().fg(t.bg()).bg(t.status_accepted()).add_modifier(Modifier::BOLD))
+                } else {
+                    Span::styled(" [c: DIAGNOSTIC CONSOLE] ", Style::default().fg(t.status_accepted()).bg(t.bg_panel()).add_modifier(Modifier::BOLD))
+                };
                 vec![
-                    Span::styled("  Work & Verification:  ", Style::default().fg(t.text_muted()).add_modifier(Modifier::BOLD)),
-                    Span::styled(format!("Branch: master  |  Active Directives: {}  |  Pre-Commit Gate: Enabled  ", app.directives.iter().filter(|d| d.status == "active").count()), Style::default().fg(t.text_primary())),
+                    Span::styled("  Mode: ", Style::default().fg(t.text_muted()).add_modifier(Modifier::BOLD)),
+                    risks_pill,
+                    Span::raw(" "),
+                    console_pill,
+                    Span::styled("  |  [w/c: Toggle Mode]  |  Directives: ", Style::default().fg(t.text_muted())),
+                    Span::styled(format!("{} active", app.directives.iter().filter(|d| d.status == "active").count()), Style::default().fg(t.text_primary()).add_modifier(Modifier::BOLD)),
                 ]
             }
             ActiveTab::Settings => {
@@ -187,6 +201,15 @@ impl Header {
             }
         } else if row == 3 {
             match app.active_tab {
+                ActiveTab::Work => {
+                    if col >= 8 && col <= 26 {
+                        app.work_tab_mode = crate::ui::app::WorkTabMode::Risks;
+                        return true;
+                    } else if col >= 27 && col <= 53 {
+                        app.work_tab_mode = crate::ui::app::WorkTabMode::Console;
+                        return true;
+                    }
+                }
                 ActiveTab::Directives => {
                     // "  Policy Taxonomy:  [c] " is 24 chars
                     if col >= 20 && col <= 23 {
@@ -194,10 +217,10 @@ impl Header {
                         return true;
                     }
                     let mut cur_x = 24u16;
-                    for cat in App::DIRECTIVE_CATEGORIES {
+                    for cat in app.directive_categories() {
                         let pill_w = (cat.len() + 4) as u16;
                         if col >= cur_x && col < cur_x + pill_w {
-                            app.set_directive_category(cat, db);
+                            app.set_directive_category(&cat, db);
                             return true;
                         }
                         cur_x += pill_w + 1;
@@ -260,27 +283,54 @@ impl Footer {
             let mouse_label = if app.mouse_capture { "Mouse: ON [m]" } else { "Mouse: OFF (copy) [m]" };
             let mouse_fg = if app.mouse_capture { t.accent() } else { t.status_proposed() };
             let keys = match app.active_tab {
-                ActiveTab::Work => vec![
-                    Span::styled("[Space] ", Style::default().fg(t.accent())),
-                    Span::raw("Actions  "),
-                    Span::styled("[1-5] ", Style::default().fg(t.accent())),
-                    Span::raw("Tabs  "),
-                    Span::styled("[Tab] ", Style::default().fg(t.accent())),
-                    Span::raw("Pane  "),
-                    Span::styled("[↑↓/jk] ", Style::default().fg(t.accent())),
-                    Span::raw("Nav  "),
-                    Span::styled("[o] ", Style::default().fg(t.accent())),
-                    Span::raw("Edit  "),
-                    Span::styled("[y] ", Style::default().fg(t.accent())),
-                    Span::raw("Copy  "),
-                    Span::styled("[T] ", Style::default().fg(t.accent())),
-                    Span::raw("Theme  "),
-                    Span::styled(format!("[{}] ", mouse_label), Style::default().fg(mouse_fg)),
-                    Span::styled("[?] ", Style::default().fg(t.accent())),
-                    Span::raw("Help  "),
-                    Span::styled("[q] ", Style::default().fg(t.accent())),
-                    Span::raw("Quit"),
-                ],
+                ActiveTab::Work => match app.work_tab_mode {
+                    crate::ui::app::WorkTabMode::Risks => vec![
+                        Span::styled("[Space] ", Style::default().fg(t.accent())),
+                        Span::raw("Actions  "),
+                        Span::styled("[c] ", Style::default().fg(t.accent())),
+                        Span::raw("Console  "),
+                        Span::styled("[a] ", Style::default().fg(t.accent())),
+                        Span::raw("Audit  "),
+                        Span::styled("[1-5] ", Style::default().fg(t.accent())),
+                        Span::raw("Tabs  "),
+                        Span::styled("[Tab] ", Style::default().fg(t.accent())),
+                        Span::raw("Pane  "),
+                        Span::styled("[↑↓/jk] ", Style::default().fg(t.accent())),
+                        Span::raw("Nav  "),
+                        Span::styled("[o] ", Style::default().fg(t.accent())),
+                        Span::raw("Edit  "),
+                        Span::styled("[y] ", Style::default().fg(t.accent())),
+                        Span::raw("Copy  "),
+                        Span::styled("[T] ", Style::default().fg(t.accent())),
+                        Span::raw("Theme  "),
+                        Span::styled(format!("[{}] ", mouse_label), Style::default().fg(mouse_fg)),
+                        Span::styled("[?] ", Style::default().fg(t.accent())),
+                        Span::raw("Help  "),
+                        Span::styled("[q] ", Style::default().fg(t.accent())),
+                        Span::raw("Quit"),
+                    ],
+                    crate::ui::app::WorkTabMode::Console => vec![
+                        Span::styled("[Space] ", Style::default().fg(t.accent())),
+                        Span::raw("Actions  "),
+                        Span::styled("[w] ", Style::default().fg(t.accent())),
+                        Span::raw("Risks  "),
+                        Span::styled("[:] ", Style::default().fg(t.accent())),
+                        Span::raw("Prompt  "),
+                        Span::styled("[o] ", Style::default().fg(t.accent())),
+                        Span::raw("Open Flagged  "),
+                        Span::styled("[c] ", Style::default().fg(t.accent())),
+                        Span::raw("Clear  "),
+                        Span::styled("[↑↓] ", Style::default().fg(t.accent())),
+                        Span::raw("Scroll  "),
+                        Span::styled("[T] ", Style::default().fg(t.accent())),
+                        Span::raw("Theme  "),
+                        Span::styled(format!("[{}] ", mouse_label), Style::default().fg(mouse_fg)),
+                        Span::styled("[?] ", Style::default().fg(t.accent())),
+                        Span::raw("Help  "),
+                        Span::styled("[q] ", Style::default().fg(t.accent())),
+                        Span::raw("Quit"),
+                    ],
+                },
                 ActiveTab::Explore => vec![
                     Span::styled("[Space] ", Style::default().fg(t.accent())),
                     Span::raw("Actions  "),

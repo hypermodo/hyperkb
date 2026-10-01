@@ -29,6 +29,12 @@ impl SettingsView {
             t.border()
         };
 
+        let active_harness_str = if let Some(h) = app.harnesses.get(app.selected_harness_idx) {
+            format!("{} [{}]", h.name, h.governance_status.as_str())
+        } else {
+            format!("{} detected / registered", app.harnesses.len())
+        };
+
         let settings = [
             ("Directives Ceiling (Rule of N)", format!("{} directives", app.manifest.settings.max_briefing_directives)),
             ("Stale Document Horizon", format!("{} days", app.manifest.settings.stale_days_threshold)),
@@ -36,6 +42,8 @@ impl SettingsView {
             ("Max Folder Nesting Depth", format!("{} levels", app.manifest.settings.audit_max_depth)),
             ("Active Visual Theme", app.theme.as_str().to_string()),
             ("Mouse Navigation Mode", if app.mouse_capture { "Enabled (Click Nav)".to_string() } else { "Disabled (Text Selection)".to_string() }),
+            ("Policy Taxonomy Categories", format!("{} domains defined", app.manifest.taxonomy.categories.len())),
+            ("AI Harness & LLM Registry", active_harness_str),
         ];
 
         let items: Vec<ListItem> = settings
@@ -126,10 +134,26 @@ impl SettingsView {
                 "Controls terminal mouse event capture. When enabled, mouse clicks switch tabs, select items, and expand tree folders. When disabled, standard click-and-drag terminal text selection and copying are enabled.",
                 "Press [m] at any time in any view to quickly toggle this without entering Settings."
             ),
+            6 => (
+                "Policy Taxonomy Domains (hyperkb.json)",
+                format!("{} domains configured", app.manifest.taxonomy.categories.len()),
+                "Defines the architectural and operational classification domains for repo invariants and directives. Custom taxonomy categories can be added directly to hyperkb.json or mandated through corporate HyperControl policies.",
+                "Directives in active taxonomy domains are enforced at git pre-commit gates and briefed to autonomous agent sessions."
+            ),
+            7 => (
+                "AI Harness & LLM Registry (Discovery & Governance)",
+                if let Some(h) = app.harnesses.get(app.selected_harness_idx) {
+                    format!("{} ({})", h.name, h.protocol.protocol_label())
+                } else {
+                    "None".to_string()
+                },
+                "Autonomous coding harnesses and LLM engines discovered locally in PATH or registered in hyperkb.json. Supports CLI subprocesses, MCP bridges, and HTTP API endpoints without hardcoded vendor lock-in.",
+                "Future HyperControl CISO policies can mandate whitelists, block unauthorized shadow AI, and enforce signed tokens."
+            ),
             _ => ("Setting", "".to_string(), "", ""),
         };
 
-        let text = vec![
+        let mut text = vec![
             Line::from(vec![
                 Span::styled("Setting: ", Style::default().fg(t.text_muted()).add_modifier(Modifier::BOLD)),
                 Span::styled(title, Style::default().fg(t.accent()).add_modifier(Modifier::BOLD)),
@@ -163,26 +187,85 @@ impl SettingsView {
             Line::from(""),
             Line::from(Span::styled(desc, Style::default().fg(t.text_primary()))),
             Line::from(""),
-            Line::from(Span::styled("────── Engineering Impact ───────────────────────────────────", Style::default().fg(t.border()))),
-            Line::from(""),
-            Line::from(Span::styled(impact, Style::default().fg(t.text_muted()))),
-            Line::from(""),
-            Line::from(Span::styled("────────────────────────────────────────────────────────────", Style::default().fg(t.border()))),
-            Line::from(vec![
-                Span::styled(
-                    if app.settings_dirty {
-                        "● Unsaved changes: press [Enter] to write to hyperkb.json"
-                    } else {
-                        "✔ All settings synced with hyperkb.json"
-                    },
-                    if app.settings_dirty {
-                        Style::default().fg(t.status_proposed()).add_modifier(Modifier::BOLD)
-                    } else {
-                        Style::default().fg(t.status_accepted())
-                    },
-                ),
-            ]),
         ];
+
+        // Specific rich item listings for Taxonomy and Harnesses
+        if app.settings_selected_idx == 6 {
+            text.push(Line::from(Span::styled("────── Configured Taxonomy Domains ──────────────────────────", Style::default().fg(t.border()))));
+            text.push(Line::from(""));
+            for cat in &app.manifest.taxonomy.categories {
+                text.push(Line::from(vec![
+                    Span::styled("  • ", Style::default().fg(t.accent())),
+                    Span::styled(format!("{}: ", cat.id), Style::default().fg(t.status_proposed()).add_modifier(Modifier::BOLD)),
+                    Span::styled(cat.label.clone(), Style::default().fg(t.text_primary()).add_modifier(Modifier::BOLD)),
+                ]));
+                text.push(Line::from(vec![
+                    Span::styled("    ", Style::default()),
+                    Span::styled(cat.description.clone(), Style::default().fg(t.text_muted())),
+                ]));
+                text.push(Line::from(""));
+            }
+        } else if app.settings_selected_idx == 7 {
+            text.push(Line::from(Span::styled("────── Local AI Harness Registry & Discovery ────────────────", Style::default().fg(t.border()))));
+            text.push(Line::from(""));
+            for (idx, h) in app.harnesses.iter().enumerate() {
+                let is_sel = idx == app.selected_harness_idx;
+                let status_style = match h.governance_status {
+                    crate::domain::HarnessGovernanceStatus::Allowed => t.badge_accepted(),
+                    crate::domain::HarnessGovernanceStatus::Discovered => t.badge_proposed(),
+                    crate::domain::HarnessGovernanceStatus::Blocked => t.badge_risk(),
+                    crate::domain::HarnessGovernanceStatus::Enforced => t.badge_accepted(),
+                };
+
+                let marker = if is_sel { "▶ " } else { "  " };
+                text.push(Line::from(vec![
+                    Span::styled(marker, Style::default().fg(t.accent())),
+                    Span::styled(format!("[{}] ", h.governance_status.as_str()), status_style),
+                    Span::styled(format!("{} ", h.name), if is_sel { t.selected_row() } else { Style::default().fg(t.text_primary()) }),
+                    Span::styled(format!("({})", h.protocol.protocol_label()), Style::default().fg(t.text_muted())),
+                ]));
+
+                if let Some(ref bp) = h.binary_path {
+                    text.push(Line::from(vec![
+                        Span::styled("    Binary: ", Style::default().fg(t.text_muted())),
+                        Span::styled(bp.clone(), Style::default().fg(t.accent())),
+                    ]));
+                }
+                if !h.detected_models.is_empty() {
+                    text.push(Line::from(vec![
+                        Span::styled("    Models: ", Style::default().fg(t.text_muted())),
+                        Span::styled(h.detected_models.join(", "), Style::default().fg(t.text_primary())),
+                    ]));
+                }
+                if let Some(ref reason) = h.governance_reason {
+                    text.push(Line::from(vec![
+                        Span::styled("    Policy: ", Style::default().fg(t.text_muted())),
+                        Span::styled(reason.clone(), Style::default().fg(t.text_muted())),
+                    ]));
+                }
+                text.push(Line::from(""));
+            }
+        }
+
+        text.push(Line::from(Span::styled("────── Engineering Impact ───────────────────────────────────", Style::default().fg(t.border()))));
+        text.push(Line::from(""));
+        text.push(Line::from(Span::styled(impact, Style::default().fg(t.text_muted()))));
+        text.push(Line::from(""));
+        text.push(Line::from(Span::styled("────────────────────────────────────────────────────────────", Style::default().fg(t.border()))));
+        text.push(Line::from(vec![
+            Span::styled(
+                if app.settings_dirty {
+                    "● Unsaved changes: press [Enter] to write to hyperkb.json"
+                } else {
+                    "✔ All settings synced with hyperkb.json"
+                },
+                if app.settings_dirty {
+                    Style::default().fg(t.status_proposed()).add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default().fg(t.status_accepted())
+                },
+            ),
+        ]));
 
         let p = Paragraph::new(text).block(block).wrap(Wrap { trim: false });
         frame.render_widget(p, area);

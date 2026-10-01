@@ -1,6 +1,7 @@
 pub mod actor;
 pub mod directive;
 pub mod document;
+pub mod harness;
 pub mod hlc;
 pub mod manifest;
 pub mod memory;
@@ -13,11 +14,15 @@ pub use document::{
     BrowseOptions, Document, DocumentKind, DocumentStatus, Hit, IndexReport, MoveSuggestion,
     RecordMeta,
 };
+pub use harness::{
+    HarnessConfig, HarnessDefinition, HarnessGovernanceStatus, HarnessProtocol, HyperControlPolicy,
+};
 pub use hlc::Hlc;
 pub use manifest::{KbSettings, RepoManifest, TaxonomyCategory, TaxonomyConfig};
 pub use memory::Memory;
 pub use risk::{RiskApplicability, RiskCheck, RiskMatch};
 pub use session::{AgentSession, SessionBriefing, SessionEventRecord, SessionScorecard};
+
 
 
 

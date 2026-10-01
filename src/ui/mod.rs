@@ -407,6 +407,44 @@ fn run_loop(
                             }
                             _ => {}
                         }
+                    } else if app.active_tab == ActiveTab::Work && app.repl_active {
+                        match key.code {
+                            KeyCode::Esc => {
+                                app.repl_active = false;
+                            }
+                            KeyCode::Enter => {
+                                let cmd = app.repl_input.clone();
+                                app.repl_input.clear();
+                                app.execute_repl_command(&cmd, db);
+                            }
+                            KeyCode::Backspace => {
+                                app.repl_input.pop();
+                            }
+                            KeyCode::Up => {
+                                if !app.repl_history.is_empty() {
+                                    if app.repl_history_idx == 0 {
+                                        app.repl_history_idx = app.repl_history.len().saturating_sub(1);
+                                    } else {
+                                        app.repl_history_idx = app.repl_history_idx.saturating_sub(1);
+                                    }
+                                    if let Some(hist) = app.repl_history.get(app.repl_history_idx) {
+                                        app.repl_input = hist.clone();
+                                    }
+                                }
+                            }
+                            KeyCode::Down => {
+                                if !app.repl_history.is_empty() {
+                                    app.repl_history_idx = (app.repl_history_idx + 1) % app.repl_history.len();
+                                    if let Some(hist) = app.repl_history.get(app.repl_history_idx) {
+                                        app.repl_input = hist.clone();
+                                    }
+                                }
+                            }
+                            KeyCode::Char(c) => {
+                                app.repl_input.push(c);
+                            }
+                            _ => {}
+                        }
                     } else {
                         match key.code {
                             KeyCode::Char('q') => app.should_quit = true,
@@ -522,11 +560,26 @@ fn run_loop(
                             KeyCode::Enter => {
                                 if app.active_tab == ActiveTab::Settings {
                                     let _ = app.save_settings(root);
+                                } else if app.active_tab == ActiveTab::Work && app.work_tab_mode == crate::ui::app::WorkTabMode::Console {
+                                    app.repl_active = true;
                                 } else {
                                     app.open_selected();
                                 }
                             }
                             KeyCode::Esc => app.go_back(),
+                            KeyCode::Char('w') | KeyCode::Char('W') if app.active_tab == ActiveTab::Work => {
+                                app.work_tab_mode = crate::ui::app::WorkTabMode::Risks;
+                            }
+                            KeyCode::Char(':') if app.active_tab == ActiveTab::Work => {
+                                app.work_tab_mode = crate::ui::app::WorkTabMode::Console;
+                                app.repl_active = true;
+                            }
+                            KeyCode::Left | KeyCode::Char('[') if app.active_tab == ActiveTab::Work && app.work_tab_mode == crate::ui::app::WorkTabMode::Console => {
+                                app.prev_diagnostic_entry();
+                            }
+                            KeyCode::Right | KeyCode::Char(']') if app.active_tab == ActiveTab::Work && app.work_tab_mode == crate::ui::app::WorkTabMode::Console => {
+                                app.next_diagnostic_entry();
+                            }
                             KeyCode::Char('t') if app.active_tab == ActiveTab::Explore => {
                                 app.toggle_explore_tree_mode();
                             }
@@ -536,6 +589,8 @@ fn run_loop(
                                     app.next_category(db);
                                 } else if app.active_tab == ActiveTab::Directives {
                                     app.next_directive_category(db);
+                                } else if app.active_tab == ActiveTab::Work {
+                                    app.work_tab_mode = crate::ui::app::WorkTabMode::Console;
                                 }
                             }
                             KeyCode::Char('n') | KeyCode::Char('N') if app.active_tab == ActiveTab::Directives => {
@@ -545,10 +600,22 @@ fn run_loop(
                                 app.new_directive_rule.clear();
                                 app.new_directive_scope = "*".to_string();
                             }
-                            KeyCode::Char('r') | KeyCode::Char('R') if app.active_tab == ActiveTab::Directives => {
-                                match app.toggle_selected_directive_status(db) {
-                                    Ok(msg) => app.status_message = Some(msg),
-                                    Err(err) => app.status_message = Some(err),
+                            KeyCode::Char('r') | KeyCode::Char('R') => {
+                                if app.active_tab == ActiveTab::Directives {
+                                    match app.toggle_selected_directive_status(db) {
+                                        Ok(msg) => app.status_message = Some(msg),
+                                        Err(err) => app.status_message = Some(err),
+                                    }
+                                } else if app.active_tab == ActiveTab::Sessions && app.governance_tab_mode == app::GovernanceTabMode::Grants {
+                                    match app.revoke_selected_grant() {
+                                        Ok(msg) => app.status_message = Some(msg),
+                                        Err(err) => app.status_message = Some(err),
+                                    }
+                                } else if app.active_tab == ActiveTab::Work {
+                                    match app.execute_action_palette_item("check_work", db) {
+                                        Ok(msg) => app.status_message = Some(msg),
+                                        Err(err) => app.status_message = Some(format!("Error: {}", err)),
+                                    }
                                 }
                             }
                             KeyCode::Char('n') | KeyCode::Char('N') if app.active_tab == ActiveTab::Sessions && app.governance_tab_mode == app::GovernanceTabMode::Grants => {
@@ -556,15 +623,16 @@ fn run_loop(
                                 app.new_grant_field = 0;
                                 app.new_grant_grantee.clear();
                             }
-                            KeyCode::Char('r') | KeyCode::Char('R') if app.active_tab == ActiveTab::Sessions && app.governance_tab_mode == app::GovernanceTabMode::Grants => {
-                                match app.revoke_selected_grant() {
-                                    Ok(msg) => app.status_message = Some(msg),
-                                    Err(err) => app.status_message = Some(err),
+                            KeyCode::Char('a') | KeyCode::Char('A') => {
+                                if app.active_tab == ActiveTab::Directives {
+                                    app.show_new_directive_modal = true;
+                                    app.new_directive_field = 0;
+                                } else if app.active_tab == ActiveTab::Work {
+                                    match app.execute_action_palette_item("audit_kb", db) {
+                                        Ok(msg) => app.status_message = Some(msg),
+                                        Err(err) => app.status_message = Some(format!("Error: {}", err)),
+                                    }
                                 }
-                            }
-                            KeyCode::Char('a') | KeyCode::Char('A') if app.active_tab == ActiveTab::Directives => {
-                                app.show_new_directive_modal = true;
-                                app.new_directive_field = 0;
                             }
                             KeyCode::Char('/') => {
                                 app.is_filtering = true;
@@ -784,68 +852,76 @@ fn run_loop(
                                 }
                                 // 2. Main content clicks
                                 else if row >= 5 && row < area.height.saturating_sub(2) {
-                                    let list_width = match app.active_tab {
-                                        ActiveTab::Work => area.width * 45 / 100,
-                                        ActiveTab::Reader => 0,
-                                        ActiveTab::Settings => (area.width * 40 / 100).clamp(38, 65),
-                                        _ => (area.width * 38 / 100).clamp(36, 68),
-                                    };
-
-                                    if col < list_width {
-                                        app.focused_pane = crate::ui::app::FocusedPane::List;
-                                        let rel_row = row.saturating_sub(5);
-                                        if rel_row >= 2 {
-                                            match app.active_tab {
-                                                ActiveTab::Work => {
-                                                    let item_idx = ((rel_row - 2) / 3) as usize;
-                                                    if item_idx < app.active_risks.len() {
-                                                        app.selected_risk_idx = item_idx;
-                                                    }
-                                                }
-                                                ActiveTab::Directives => {
-                                                    let item_idx = ((rel_row - 2) / 3) as usize;
-                                                    if item_idx < app.directives.len() {
-                                                        app.selected_directive_idx = item_idx;
-                                                    }
-                                                }
-                                                ActiveTab::Sessions => {
-                                                    let item_idx = ((rel_row - 2) / 3) as usize;
-                                                    if item_idx < app.sessions.len() {
-                                                        app.selected_session_idx = item_idx;
-                                                    }
-                                                }
-                                                ActiveTab::Settings => {
-                                                    let item_idx = ((rel_row - 2) / 3) as usize;
-                                                    if item_idx < 6 {
-                                                        app.settings_selected_idx = item_idx;
-                                                    }
-                                                }
-                                                ActiveTab::Explore => {
-                                                    if app.explore_tree_mode {
-                                                        let tree_idx = ((rel_row - 2) / 2) as usize;
-                                                        let tree = app.build_explore_tree();
-                                                        if tree_idx < tree.len() {
-                                                            if app.selected_tree_idx == tree_idx {
-                                                                app.open_selected();
-                                                            } else {
-                                                                app.selected_tree_idx = tree_idx;
-                                                                if let ExploreTreeItem::Doc { doc_idx, .. } = &tree[tree_idx] {
-                                                                    app.selected_doc_idx = *doc_idx;
-                                                                }
-                                                            }
-                                                        }
-                                                    } else {
-                                                        let item_idx = ((rel_row - 2) / 3) as usize;
-                                                        if item_idx < app.documents.len() {
-                                                            app.selected_doc_idx = item_idx;
-                                                        }
-                                                    }
-                                                }
-                                                _ => {}
-                                            }
+                                    if app.active_tab == ActiveTab::Work && app.work_tab_mode == crate::ui::app::WorkTabMode::Console {
+                                        if row >= area.height.saturating_sub(5) {
+                                            app.repl_active = true;
+                                        } else {
+                                            app.repl_active = false;
                                         }
                                     } else {
-                                        app.focused_pane = crate::ui::app::FocusedPane::Detail;
+                                        let list_width = match app.active_tab {
+                                            ActiveTab::Work => area.width * 45 / 100,
+                                            ActiveTab::Reader => 0,
+                                            ActiveTab::Settings => (area.width * 40 / 100).clamp(38, 65),
+                                            _ => (area.width * 38 / 100).clamp(36, 68),
+                                        };
+
+                                        if col < list_width {
+                                            app.focused_pane = crate::ui::app::FocusedPane::List;
+                                            let rel_row = row.saturating_sub(5);
+                                            if rel_row >= 2 {
+                                                match app.active_tab {
+                                                    ActiveTab::Work => {
+                                                        let item_idx = ((rel_row - 2) / 3) as usize;
+                                                        if item_idx < app.active_risks.len() {
+                                                            app.selected_risk_idx = item_idx;
+                                                        }
+                                                    }
+                                                    ActiveTab::Directives => {
+                                                        let item_idx = ((rel_row - 2) / 3) as usize;
+                                                        if item_idx < app.directives.len() {
+                                                            app.selected_directive_idx = item_idx;
+                                                        }
+                                                    }
+                                                    ActiveTab::Sessions => {
+                                                        let item_idx = ((rel_row - 2) / 3) as usize;
+                                                        if item_idx < app.sessions.len() {
+                                                            app.selected_session_idx = item_idx;
+                                                        }
+                                                    }
+                                                    ActiveTab::Settings => {
+                                                        let item_idx = ((rel_row - 2) / 3) as usize;
+                                                        if item_idx < 8 {
+                                                            app.settings_selected_idx = item_idx;
+                                                        }
+                                                    }
+                                                    ActiveTab::Explore => {
+                                                        if app.explore_tree_mode {
+                                                            let tree_idx = ((rel_row - 2) / 2) as usize;
+                                                            let tree = app.build_explore_tree();
+                                                            if tree_idx < tree.len() {
+                                                                if app.selected_tree_idx == tree_idx {
+                                                                    app.open_selected();
+                                                                } else {
+                                                                    app.selected_tree_idx = tree_idx;
+                                                                    if let ExploreTreeItem::Doc { doc_idx, .. } = &tree[tree_idx] {
+                                                                        app.selected_doc_idx = *doc_idx;
+                                                                    }
+                                                                }
+                                                            }
+                                                        } else {
+                                                            let item_idx = ((rel_row - 2) / 3) as usize;
+                                                            if item_idx < app.documents.len() {
+                                                                app.selected_doc_idx = item_idx;
+                                                            }
+                                                        }
+                                                    }
+                                                    _ => {}
+                                                }
+                                            }
+                                        } else {
+                                            app.focused_pane = crate::ui::app::FocusedPane::Detail;
+                                        }
                                     }
                                 }
                                 // 3. Footer clicks
@@ -857,6 +933,8 @@ fn run_loop(
                         MouseEventKind::ScrollDown => {
                             if app.show_help {
                                 app.help_scroll += 2;
+                            } else if app.active_tab == ActiveTab::Work && app.work_tab_mode == crate::ui::app::WorkTabMode::Console {
+                                app.diagnostic_scroll += 2;
                             } else {
                                 let list_width = (area.width * 38 / 100).clamp(36, 68);
                                 if col < list_width {
@@ -869,6 +947,8 @@ fn run_loop(
                         MouseEventKind::ScrollUp => {
                             if app.show_help {
                                 app.help_scroll = app.help_scroll.saturating_sub(2);
+                            } else if app.active_tab == ActiveTab::Work && app.work_tab_mode == crate::ui::app::WorkTabMode::Console {
+                                app.diagnostic_scroll = app.diagnostic_scroll.saturating_sub(2);
                             } else {
                                 let list_width = (area.width * 38 / 100).clamp(36, 68);
                                 if col < list_width {

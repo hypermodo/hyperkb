@@ -6,9 +6,28 @@ use crate::ui::theme::ThemeMode;
 use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WorkTabMode {
+    Risks,
+    Console,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GovernanceTabMode {
     Sessions,
     Grants,
+}
+
+#[derive(Debug, Clone)]
+pub struct DiagnosticEntry {
+    pub id: String,
+    pub timestamp: chrono::DateTime<chrono::Utc>,
+    pub command: String,
+    pub title: String,
+    pub success: bool,
+    pub summary: String,
+    pub lines: Vec<String>,
+    pub file_targets: Vec<String>,
+    pub selected_file_idx: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -216,6 +235,22 @@ pub struct App {
     pub show_action_palette: bool,
     pub action_palette_query: String,
     pub action_palette_selected_idx: usize,
+
+    // Work / Cockpit tab mode
+    pub work_tab_mode: WorkTabMode,
+
+    // Live Diagnostic Output Stream & REPL Cockpit
+    pub diagnostic_stream: Vec<DiagnosticEntry>,
+    pub selected_diagnostic_idx: usize,
+    pub diagnostic_scroll: usize,
+    pub repl_input: String,
+    pub repl_history: Vec<String>,
+    pub repl_history_idx: usize,
+    pub repl_active: bool,
+
+    // AI Harness & LLM Registry
+    pub harnesses: Vec<crate::domain::HarnessDefinition>,
+    pub selected_harness_idx: usize,
 }
 
 impl App {
@@ -224,6 +259,33 @@ impl App {
         let manifest = RepoManifest::load_or_default(&root);
         let theme = ThemeMode::from_id(&manifest.settings.theme);
         let mouse_capture = manifest.settings.mouse_enabled;
+
+        let harnesses = crate::core::HarnessDiscovery::discover(&manifest.harnesses);
+        let selected_harness_idx = if let Some(ref active_id) = manifest.harnesses.active_harness_id {
+            harnesses.iter().position(|h| &h.id == active_id).unwrap_or(0)
+        } else {
+            0
+        };
+
+        let init_entry = DiagnosticEntry {
+            id: "boot".to_string(),
+            timestamp: chrono::Utc::now(),
+            command: "hyperkb cockpit".to_string(),
+            title: "HyperKB Developer Cockpit Initialized".to_string(),
+            success: true,
+            summary: format!(
+                "Governance kernel ready. Collection: '{}'. Rule ceiling: {}.",
+                collection_id,
+                manifest.settings.max_briefing_directives
+            ),
+            lines: vec![
+                format!("Repo Manifest: loaded from {}", RepoManifest::FILE_NAME),
+                format!("Harness Discovery: {} AI tool(s) registered/detected locally", harnesses.len()),
+                "Type 'audit', 'check', 'reindex', 'directives', 'grants', 'harnesses', or 'help' below.".to_string(),
+            ],
+            file_targets: Vec::new(),
+            selected_file_idx: 0,
+        };
 
         Self {
             should_quit: false,
@@ -284,6 +346,16 @@ impl App {
             show_action_palette: false,
             action_palette_query: String::new(),
             action_palette_selected_idx: 0,
+            work_tab_mode: WorkTabMode::Risks,
+            diagnostic_stream: vec![init_entry],
+            selected_diagnostic_idx: 0,
+            diagnostic_scroll: 0,
+            repl_input: String::new(),
+            repl_history: Vec::new(),
+            repl_history_idx: 0,
+            repl_active: false,
+            harnesses,
+            selected_harness_idx,
         }
     }
 
@@ -452,13 +524,38 @@ impl App {
         "security",
     ];
 
+    pub fn directive_categories(&self) -> Vec<String> {
+        let mut cats = vec!["all".to_string()];
+        for cat in &self.manifest.taxonomy.categories {
+            if !cats.contains(&cat.id) {
+                cats.push(cat.id.clone());
+            }
+        }
+        cats
+    }
+
     pub fn next_directive_category(&mut self, db: &Database) {
-        let current_pos = Self::DIRECTIVE_CATEGORIES
+        let cats = self.directive_categories();
+        let current_pos = cats
             .iter()
-            .position(|&c| c == self.directive_category)
+            .position(|c| c == &self.directive_category)
             .unwrap_or(0);
-        let next_pos = (current_pos + 1) % Self::DIRECTIVE_CATEGORIES.len();
-        self.set_directive_category(Self::DIRECTIVE_CATEGORIES[next_pos], db);
+        let next_pos = (current_pos + 1) % cats.len();
+        self.set_directive_category(&cats[next_pos], db);
+    }
+
+    pub fn prev_directive_category(&mut self, db: &Database) {
+        let cats = self.directive_categories();
+        let current_pos = cats
+            .iter()
+            .position(|c| c == &self.directive_category)
+            .unwrap_or(0);
+        let prev_pos = if current_pos == 0 {
+            cats.len().saturating_sub(1)
+        } else {
+            current_pos - 1
+        };
+        self.set_directive_category(&cats[prev_pos], db);
     }
 
     pub fn set_directive_category(&mut self, category: &str, db: &Database) {
@@ -466,6 +563,13 @@ impl App {
         self.selected_directive_idx = 0;
         self.directive_preview_scroll = 0;
         self.refresh_data(db);
+    }
+
+    pub fn refresh_harnesses(&mut self) {
+        self.harnesses = crate::core::HarnessDiscovery::discover(&self.manifest.harnesses);
+        if self.selected_harness_idx >= self.harnesses.len() && !self.harnesses.is_empty() {
+            self.selected_harness_idx = 0;
+        }
     }
 
     pub fn retire_selected_directive<P: AsRef<Path>>(
@@ -500,7 +604,18 @@ impl App {
     pub fn next(&mut self) {
         match self.active_tab {
             ActiveTab::Work => {
-                if !self.active_risks.is_empty() {
+                if self.work_tab_mode == WorkTabMode::Console {
+                    if self.focused_pane == FocusedPane::Detail {
+                        self.diagnostic_scroll += 2;
+                    } else if let Some(entry) = self.diagnostic_stream.get_mut(self.selected_diagnostic_idx) {
+                        if entry.file_targets.len() > 1 {
+                            entry.selected_file_idx = (entry.selected_file_idx + 1) % entry.file_targets.len();
+                        } else if !self.diagnostic_stream.is_empty() {
+                            self.selected_diagnostic_idx = (self.selected_diagnostic_idx + 1) % self.diagnostic_stream.len();
+                            self.diagnostic_scroll = 0;
+                        }
+                    }
+                } else if !self.active_risks.is_empty() {
                     self.selected_risk_idx = (self.selected_risk_idx + 1) % self.active_risks.len();
                 }
             }
@@ -561,7 +676,26 @@ impl App {
     pub fn prev(&mut self) {
         match self.active_tab {
             ActiveTab::Work => {
-                if !self.active_risks.is_empty() {
+                if self.work_tab_mode == WorkTabMode::Console {
+                    if self.focused_pane == FocusedPane::Detail {
+                        self.diagnostic_scroll = self.diagnostic_scroll.saturating_sub(2);
+                    } else if let Some(entry) = self.diagnostic_stream.get_mut(self.selected_diagnostic_idx) {
+                        if entry.file_targets.len() > 1 {
+                            if entry.selected_file_idx == 0 {
+                                entry.selected_file_idx = entry.file_targets.len().saturating_sub(1);
+                            } else {
+                                entry.selected_file_idx -= 1;
+                            }
+                        } else if !self.diagnostic_stream.is_empty() {
+                            if self.selected_diagnostic_idx == 0 {
+                                self.selected_diagnostic_idx = self.diagnostic_stream.len().saturating_sub(1);
+                            } else {
+                                self.selected_diagnostic_idx -= 1;
+                            }
+                            self.diagnostic_scroll = 0;
+                        }
+                    }
+                } else if !self.active_risks.is_empty() {
                     if self.selected_risk_idx == 0 {
                         self.selected_risk_idx = self.active_risks.len() - 1;
                     } else {
@@ -649,7 +783,13 @@ impl App {
 
     pub fn page_down(&mut self) {
         match self.active_tab {
-            ActiveTab::Work => self.next(),
+            ActiveTab::Work => {
+                if self.work_tab_mode == WorkTabMode::Console {
+                    self.diagnostic_scroll += 10;
+                } else {
+                    self.next();
+                }
+            }
             ActiveTab::Explore => {
                 if self.focused_pane == FocusedPane::Detail {
                     self.preview_scroll_offset += 15;
@@ -706,7 +846,13 @@ impl App {
 
     pub fn page_up(&mut self) {
         match self.active_tab {
-            ActiveTab::Work => self.prev(),
+            ActiveTab::Work => {
+                if self.work_tab_mode == WorkTabMode::Console {
+                    self.diagnostic_scroll = self.diagnostic_scroll.saturating_sub(10);
+                } else {
+                    self.prev();
+                }
+            }
             ActiveTab::Explore => {
                 if self.focused_pane == FocusedPane::Detail {
                     self.preview_scroll_offset = self.preview_scroll_offset.saturating_sub(15);
@@ -755,6 +901,44 @@ impl App {
             }
             ActiveTab::Reader => {
                 self.reader_scroll_offset = self.reader_scroll_offset.saturating_sub(15);
+            }
+        }
+    }
+
+    pub fn next_diagnostic_entry(&mut self) {
+        if !self.diagnostic_stream.is_empty() {
+            self.selected_diagnostic_idx = (self.selected_diagnostic_idx + 1) % self.diagnostic_stream.len();
+            self.diagnostic_scroll = 0;
+        }
+    }
+
+    pub fn prev_diagnostic_entry(&mut self) {
+        if !self.diagnostic_stream.is_empty() {
+            if self.selected_diagnostic_idx == 0 {
+                self.selected_diagnostic_idx = self.diagnostic_stream.len().saturating_sub(1);
+            } else {
+                self.selected_diagnostic_idx -= 1;
+            }
+            self.diagnostic_scroll = 0;
+        }
+    }
+
+    pub fn next_diagnostic_file(&mut self) {
+        if let Some(entry) = self.diagnostic_stream.get_mut(self.selected_diagnostic_idx) {
+            if !entry.file_targets.is_empty() {
+                entry.selected_file_idx = (entry.selected_file_idx + 1) % entry.file_targets.len();
+            }
+        }
+    }
+
+    pub fn prev_diagnostic_file(&mut self) {
+        if let Some(entry) = self.diagnostic_stream.get_mut(self.selected_diagnostic_idx) {
+            if !entry.file_targets.is_empty() {
+                if entry.selected_file_idx == 0 {
+                    entry.selected_file_idx = entry.file_targets.len().saturating_sub(1);
+                } else {
+                    entry.selected_file_idx -= 1;
+                }
             }
         }
     }
@@ -821,18 +1005,22 @@ impl App {
         } else if self.is_filtering {
             self.is_filtering = false;
             self.filter_query.clear();
+        } else if self.repl_active {
+            self.repl_active = false;
+        } else if self.active_tab == ActiveTab::Work && self.work_tab_mode == WorkTabMode::Console {
+            self.work_tab_mode = WorkTabMode::Risks;
         } else if self.active_tab == ActiveTab::Reader {
             self.active_tab = ActiveTab::Explore;
         }
     }
 
     pub fn next_setting(&mut self) {
-        self.settings_selected_idx = (self.settings_selected_idx + 1) % 6;
+        self.settings_selected_idx = (self.settings_selected_idx + 1) % 8;
     }
 
     pub fn prev_setting(&mut self) {
         if self.settings_selected_idx == 0 {
-            self.settings_selected_idx = 5;
+            self.settings_selected_idx = 7;
         } else {
             self.settings_selected_idx -= 1;
         }
@@ -875,6 +1063,30 @@ impl App {
                 self.mouse_capture = !self.mouse_capture;
                 self.manifest.settings.mouse_enabled = self.mouse_capture;
                 self.settings_dirty = true;
+            }
+            6 => {
+                self.status_message = Some(format!(
+                    "Policy Taxonomy Domains: {} configured in hyperkb.json",
+                    self.manifest.taxonomy.categories.len()
+                ));
+            }
+            7 => {
+                if !self.harnesses.is_empty() {
+                    if delta > 0 {
+                        self.selected_harness_idx = (self.selected_harness_idx + 1) % self.harnesses.len();
+                    } else if self.selected_harness_idx == 0 {
+                        self.selected_harness_idx = self.harnesses.len() - 1;
+                    } else {
+                        self.selected_harness_idx -= 1;
+                    }
+                    let sel_id = self.harnesses[self.selected_harness_idx].id.clone();
+                    self.manifest.harnesses.active_harness_id = Some(sel_id);
+                    self.settings_dirty = true;
+                    self.status_message = Some(format!(
+                        "Active AI Harness: {}",
+                        self.harnesses[self.selected_harness_idx].name
+                    ));
+                }
             }
             _ => {}
         }
@@ -1078,8 +1290,13 @@ impl App {
         if title.is_empty() {
             return Err("Directive title cannot be empty".to_string());
         }
-        let categories = ["architecture", "behavior", "deployment", "security"];
-        let category = categories.get(self.new_directive_category_idx).unwrap_or(&"behavior");
+        let category = self
+            .manifest
+            .taxonomy
+            .categories
+            .get(self.new_directive_category_idx)
+            .map(|c| c.id.as_str())
+            .unwrap_or("behavior");
         let enforcements = ["check_work", "briefing", "pre_commit"];
         let enforcement = enforcements.get(self.new_directive_enforcement_idx).unwrap_or(&"check_work");
         let scope_str = self.new_directive_scope.trim();
@@ -1221,7 +1438,16 @@ impl App {
         match self.active_tab {
             ActiveTab::Reader => self.current_document.as_ref().map(|d| self.root.join(&d.path)),
             ActiveTab::Explore => self.selected_document().map(|d| self.root.join(&d.path)),
-            ActiveTab::Work => self.selected_risk().map(|r| self.root.join(&r.document.path)),
+            ActiveTab::Work => {
+                if self.work_tab_mode == WorkTabMode::Console {
+                    if let Some(entry) = self.diagnostic_stream.get(self.selected_diagnostic_idx) {
+                        if let Some(target) = entry.file_targets.get(entry.selected_file_idx) {
+                            return Some(self.root.join(target));
+                        }
+                    }
+                }
+                self.selected_risk().map(|r| self.root.join(&r.document.path))
+            }
             ActiveTab::Directives => {
                 if let Some(d) = self.selected_directive() {
                     let dir_path = self.root.join(&self.manifest.directives_path);
@@ -1307,26 +1533,107 @@ impl App {
                         all_files.push(f);
                     }
                 }
+
                 if all_files.is_empty() {
                     self.active_risks.clear();
+                    self.work_tab_mode = WorkTabMode::Console;
                     self.switch_tab(ActiveTab::Work);
+
+                    let entry = DiagnosticEntry {
+                        id: uuid::Uuid::now_v7().to_string(),
+                        timestamp: chrono::Utc::now(),
+                        command: "hyperkb check-work --staged --changed".to_string(),
+                        title: "Git Check-Work Verification Report".to_string(),
+                        success: true,
+                        summary: "Working tree and git index are clean. Zero pending changes.".to_string(),
+                        lines: vec![
+                            "Git status: No staged or unstaged modifications detected.".to_string(),
+                            "Active Directives: All pre-commit governance invariants in effect.".to_string(),
+                            "Pre-commit gate: PASS".to_string(),
+                        ],
+                        file_targets: Vec::new(),
+                        selected_file_idx: 0,
+                    };
+                    self.diagnostic_stream.push(entry);
+                    self.selected_diagnostic_idx = self.diagnostic_stream.len().saturating_sub(1);
+
                     Ok("Git Check-Work: Clean. Working tree and index have no pending changes.".to_string())
                 } else {
                     match Queries::check_work(db.conn(), &self.collection_id, &all_files, None, None) {
                         Ok(report) => {
                             self.active_risks = report.matches.clone();
                             self.selected_risk_idx = 0;
+                            self.work_tab_mode = WorkTabMode::Console;
                             self.switch_tab(ActiveTab::Work);
-                            if report.matches.is_empty() && report.hygiene_warnings.is_empty() {
-                                Ok(format!("Git Check-Work: Clean across {} changed file(s). No risks cited.", all_files.len()))
+
+                            let mut file_targets = Vec::new();
+                            let mut lines = Vec::new();
+
+                            lines.push(format!("Checked {} changed / staged file(s):", all_files.len()));
+                            for f in &all_files {
+                                lines.push(format!("  • {}", f));
+                            }
+
+                            if !report.matches.is_empty() {
+                                lines.push("".to_string());
+                                lines.push(format!("  ▲ Cited Known Risks ({} match(es)):", report.matches.len()));
+                                for m in &report.matches {
+                                    lines.push(format!("    • {} -> {}", m.document.title, m.applicability.as_str()));
+                                    if !file_targets.contains(&m.document.path) {
+                                        file_targets.push(m.document.path.clone());
+                                    }
+                                }
+                            }
+
+                            if !report.hygiene_warnings.is_empty() {
+                                lines.push("".to_string());
+                                lines.push(format!("  ! Hygiene Warnings ({} issue(s)):", report.hygiene_warnings.len()));
+                                for w in &report.hygiene_warnings {
+                                    lines.push(format!("    • {}", w));
+                                    if let Some(p) = w.split(':').next() {
+                                        let clean_p = p.trim().to_string();
+                                        if !file_targets.contains(&clean_p) {
+                                            file_targets.push(clean_p);
+                                        }
+                                    }
+                                }
+                            }
+
+                            if file_targets.is_empty() {
+                                lines.push("".to_string());
+                                lines.push("  ● Status: Clean across changed files. No risks cited.".to_string());
                             } else {
-                                Ok(format!(
+                                lines.push("".to_string());
+                                lines.push(format!("  Actionable: {} file(s) cited. Press [o] to open in external IDE.", file_targets.len()));
+                            }
+
+                            let is_clean = report.matches.is_empty() && report.hygiene_warnings.is_empty();
+                            let summary_msg = if is_clean {
+                                format!("Git Check-Work: Clean across {} changed file(s). No risks cited.", all_files.len())
+                            } else {
+                                format!(
                                     "Git Check-Work: {} file(s) checked. Warnings: {} hygiene, {} risks cited.",
                                     all_files.len(),
                                     report.hygiene_warnings.len(),
                                     report.matches.len()
-                                ))
-                            }
+                                )
+                            };
+
+                            let entry = DiagnosticEntry {
+                                id: uuid::Uuid::now_v7().to_string(),
+                                timestamp: chrono::Utc::now(),
+                                command: "hyperkb check-work --staged --changed".to_string(),
+                                title: "Git Check-Work Verification Report".to_string(),
+                                success: is_clean,
+                                summary: summary_msg.clone(),
+                                lines,
+                                file_targets,
+                                selected_file_idx: 0,
+                            };
+                            self.diagnostic_stream.push(entry);
+                            self.selected_diagnostic_idx = self.diagnostic_stream.len().saturating_sub(1);
+
+                            Ok(summary_msg)
                         }
                         Err(e) => Err(format!("Check-work error: {}", e)),
                     }
@@ -1356,14 +1663,112 @@ impl App {
             }
             "audit_kb" => {
                 let docs_dir = self.root.join(&self.manifest.docs_root);
-                let report = crate::core::KbLinter::audit_directory(&docs_dir).unwrap_or_default();
+                let report = crate::core::KbLinter::audit_directory_with_settings(
+                    &docs_dir,
+                    self.manifest.settings.audit_max_lines,
+                    self.manifest.settings.audit_max_depth,
+                    self.manifest.settings.stale_days_threshold,
+                ).unwrap_or_default();
                 let dir_report = crate::core::DirectiveWorkflow::audit_directives(&self.root, db.conn(), &self.collection_id);
-                let dir_count = dir_report.map(|r| r.active_directives).unwrap_or(0);
+                let dir_count = dir_report.as_ref().map(|r| r.active_directives).unwrap_or(0);
+                let total_dirs = dir_report.as_ref().map(|r| r.total_directives).unwrap_or(0);
+                let dormant_dirs = dir_report.as_ref().map(|r| r.dormant_directives.len()).unwrap_or(0);
+
+                let mut file_targets = Vec::new();
+                let mut lines = Vec::new();
+                let total_issues = report.schema_errors.len() + report.bloat_warnings.len() + report.depth_warnings.len() + report.stale_warnings.len();
+
+                lines.push(format!("Knowledge Base Root: '{}' ({} total documents)", self.manifest.docs_root, report.total_documents));
+                lines.push(format!("  ✓ Schema & Metadata: {} valid frontmatter files", report.valid_documents));
+
+                if !report.bloat_warnings.is_empty() {
+                    lines.push("".to_string());
+                    lines.push(format!("  ! Document Bloat Warnings (> {} lines ceiling):", self.manifest.settings.audit_max_lines));
+                    for w in &report.bloat_warnings {
+                        lines.push(format!("    • {}", w));
+                        if let Some(p) = w.split(':').next() {
+                            let clean_p = p.trim().to_string();
+                            if !file_targets.contains(&clean_p) {
+                                file_targets.push(clean_p);
+                            }
+                        }
+                    }
+                }
+
+                if !report.stale_warnings.is_empty() {
+                    lines.push("".to_string());
+                    lines.push(format!("  ! Stale Knowledge Base Documents (> {} days unverified):", self.manifest.settings.stale_days_threshold));
+                    for w in &report.stale_warnings {
+                        lines.push(format!("    • {}", w));
+                        if let Some(p) = w.split(':').next() {
+                            let clean_p = p.trim().to_string();
+                            if !file_targets.contains(&clean_p) {
+                                file_targets.push(clean_p);
+                            }
+                        }
+                    }
+                }
+
+                if !report.schema_errors.is_empty() {
+                    lines.push("".to_string());
+                    lines.push("  ✗ Schema / Frontmatter Parsing Errors:".to_string());
+                    for e in &report.schema_errors {
+                        lines.push(format!("    • {}", e));
+                        if let Some(p) = e.split(':').next() {
+                            let clean_p = p.trim().to_string();
+                            if !file_targets.contains(&clean_p) {
+                                file_targets.push(clean_p);
+                            }
+                        }
+                    }
+                }
+
+                if !report.depth_warnings.is_empty() {
+                    lines.push("".to_string());
+                    lines.push(format!("  ! Folder Depth Violations (> {} levels):", self.manifest.settings.audit_max_depth));
+                    for w in &report.depth_warnings {
+                        lines.push(format!("    • {}", w));
+                    }
+                }
+
+                lines.push("".to_string());
+                lines.push(format!("  ✓ Directives Gate: {} active out of {} total ({} dormant)", dir_count, total_dirs, dormant_dirs));
+                if let Ok(ref d_rep) = dir_report {
+                    if !d_rep.bloat_warnings.is_empty() {
+                        lines.push("  ! Directive Bloat Warnings:".to_string());
+                        for m in &d_rep.bloat_warnings {
+                            lines.push(format!("    • {}", m));
+                        }
+                    }
+                }
+
+                lines.push("".to_string());
+                if file_targets.is_empty() {
+                    lines.push("  ● Health: Knowledge base is in optimal hygiene. Zero anti-bloat issues.".to_string());
+                } else {
+                    lines.push(format!("  Actionable: {} flagged file(s). Press [o] to open in external IDE.", file_targets.len()));
+                }
+
+                let entry = DiagnosticEntry {
+                    id: uuid::Uuid::now_v7().to_string(),
+                    timestamp: chrono::Utc::now(),
+                    command: "hyperkb audit-kb".to_string(),
+                    title: "Knowledge Base & Directive Audit Report".to_string(),
+                    success: total_issues == 0,
+                    summary: format!("Audit Complete: {} docs checked, {} issues flagged across {} directives.", report.total_documents, total_issues, dir_count),
+                    lines,
+                    file_targets,
+                    selected_file_idx: 0,
+                };
+                self.diagnostic_stream.push(entry);
+                self.selected_diagnostic_idx = self.diagnostic_stream.len().saturating_sub(1);
+                self.work_tab_mode = WorkTabMode::Console;
+                self.switch_tab(ActiveTab::Work);
+
                 Ok(format!(
-                    "KB Audit Complete: {} docs checked, {} issues flagged. Active Directives: {}.",
+                    "KB Audit Complete: {} docs checked, {} issues flagged. Published to Diagnostic Console [o to open].",
                     report.total_documents,
-                    report.schema_errors.len() + report.bloat_warnings.len(),
-                    dir_count
+                    total_issues,
                 ))
             }
             "reindex_kb" => {
@@ -1371,10 +1776,32 @@ impl App {
                 match crate::core::Scanner::index_directory(db.conn(), &docs_dir, &self.collection_id) {
                     Ok(rep) => {
                         self.refresh_data(db);
-                        Ok(format!(
+                        let summary_msg = format!(
                             "KB Re-index Complete: {} scanned, {} added, {} updated, {} unchanged.",
                             rep.scanned, rep.added, rep.updated, rep.unchanged
-                        ))
+                        );
+
+                        let entry = DiagnosticEntry {
+                            id: uuid::Uuid::now_v7().to_string(),
+                            timestamp: chrono::Utc::now(),
+                            command: "hyperkb index".to_string(),
+                            title: "Incremental Full-Text Index Report".to_string(),
+                            success: true,
+                            summary: summary_msg.clone(),
+                            lines: vec![
+                                format!("Documents scanned in '{}': {}", self.manifest.docs_root, rep.scanned),
+                                format!("FTS5 Index Updates: {} added, {} updated, {} unchanged, {} removed", rep.added, rep.updated, rep.unchanged, rep.removed),
+                                "SQLite full-text index is in sync with on-disk markdown files.".to_string(),
+                            ],
+                            file_targets: Vec::new(),
+                            selected_file_idx: 0,
+                        };
+                        self.diagnostic_stream.push(entry);
+                        self.selected_diagnostic_idx = self.diagnostic_stream.len().saturating_sub(1);
+                        self.work_tab_mode = WorkTabMode::Console;
+                        self.switch_tab(ActiveTab::Work);
+
+                        Ok(summary_msg)
                     }
                     Err(e) => Err(format!("Re-index error: {}", e)),
                 }
@@ -1391,11 +1818,35 @@ impl App {
                 ) {
                     Ok(rep) => {
                         self.refresh_data(db);
-                        self.switch_tab(ActiveTab::Work);
-                        Ok(format!(
+                        let summary_msg = format!(
                             "Git Archeology: Analyzed {} commits, drafted {} candidate risk(s).",
                             rep.analyzed_commits, rep.candidates.len()
-                        ))
+                        );
+
+                        let mut lines = Vec::new();
+                        lines.push(format!("Analyzed {} recent git commits for regression hotspots.", rep.analyzed_commits));
+                        lines.push(format!("Drafted candidate risk cards: {}", rep.candidates.len()));
+                        for c in &rep.candidates {
+                            lines.push(format!("  • {} (incidents: {})", c.title, c.incident_count));
+                        }
+
+                        let entry = DiagnosticEntry {
+                            id: uuid::Uuid::now_v7().to_string(),
+                            timestamp: chrono::Utc::now(),
+                            command: "hyperkb bootstrap".to_string(),
+                            title: "Git Archeology Hotspot Report".to_string(),
+                            success: true,
+                            summary: summary_msg.clone(),
+                            lines,
+                            file_targets: Vec::new(),
+                            selected_file_idx: 0,
+                        };
+                        self.diagnostic_stream.push(entry);
+                        self.selected_diagnostic_idx = self.diagnostic_stream.len().saturating_sub(1);
+                        self.work_tab_mode = WorkTabMode::Console;
+                        self.switch_tab(ActiveTab::Work);
+
+                        Ok(summary_msg)
                     }
                     Err(e) => Err(format!("Archeology bootstrap error: {}", e)),
                 }
@@ -1420,6 +1871,175 @@ impl App {
                 Ok("Database VACUUM & WAL journal truncation complete".to_string())
             }
             _ => Err(format!("Unknown action '{}'", action_id)),
+        }
+    }
+
+    pub fn add_diagnostic_entry(
+        &mut self,
+        command: impl Into<String>,
+        title: impl Into<String>,
+        summary: impl Into<String>,
+        lines: Vec<String>,
+        file_targets: Vec<String>,
+        success: bool,
+    ) {
+        let entry = DiagnosticEntry {
+            id: format!("diag_{}", chrono::Utc::now().timestamp_millis()),
+            timestamp: chrono::Utc::now(),
+            command: command.into(),
+            title: title.into(),
+            summary: summary.into(),
+            lines,
+            file_targets,
+            selected_file_idx: 0,
+            success,
+        };
+        self.diagnostic_stream.push(entry);
+        self.selected_diagnostic_idx = self.diagnostic_stream.len().saturating_sub(1);
+        self.diagnostic_scroll = 0;
+        self.work_tab_mode = WorkTabMode::Console;
+    }
+
+    pub fn execute_repl_command(&mut self, cmd: &str, db: &Database) {
+        let trimmed = cmd.trim();
+        if trimmed.is_empty() {
+            return;
+        }
+        self.repl_history.push(trimmed.to_string());
+        self.repl_history_idx = self.repl_history.len();
+        self.repl_input.clear();
+
+        let parts: Vec<&str> = trimmed.split_whitespace().collect();
+        let op = parts[0].to_lowercase();
+        match op.as_str() {
+            "audit" | "audit-kb" => {
+                let _ = self.execute_action_palette_item("audit_kb", db);
+            }
+            "check" | "check-work" => {
+                let _ = self.execute_action_palette_item("check_work", db);
+            }
+            "reindex" | "index" => {
+                let _ = self.execute_action_palette_item("reindex_kb", db);
+            }
+            "bootstrap" => {
+                let _ = self.execute_action_palette_item("bootstrap_risks", db);
+            }
+            "backup" => {
+                let _ = self.execute_action_palette_item("backup", db);
+            }
+            "compact" => {
+                let _ = self.execute_action_palette_item("compact", db);
+            }
+            "directives" => {
+                self.switch_tab(ActiveTab::Directives);
+            }
+            "grants" => {
+                self.switch_tab(ActiveTab::Sessions);
+                self.governance_tab_mode = GovernanceTabMode::Grants;
+            }
+            "sessions" => {
+                self.switch_tab(ActiveTab::Sessions);
+                self.governance_tab_mode = GovernanceTabMode::Sessions;
+            }
+            "settings" => {
+                self.switch_tab(ActiveTab::Settings);
+            }
+            "harnesses" => {
+                self.refresh_harnesses();
+                let mut lines = Vec::new();
+                lines.push(format!("Discovered AI Harnesses & Local LLMs: (Total: {})", self.harnesses.len()));
+                lines.push("─────────────────────────────────────────────────────────────────".to_string());
+                for h in &self.harnesses {
+                    let status_icon = match h.governance_status {
+                        crate::domain::HarnessGovernanceStatus::Allowed => "● [ALLOWED]",
+                        crate::domain::HarnessGovernanceStatus::Discovered => "○ [DISCOVERED]",
+                        crate::domain::HarnessGovernanceStatus::Blocked => "✗ [BLOCKED]",
+                        crate::domain::HarnessGovernanceStatus::Enforced => "★ [ENFORCED]",
+                    };
+                    lines.push(format!("{} {} (Protocol: {})", status_icon, h.name, h.protocol.protocol_label()));
+                    if let Some(ref bp) = h.binary_path {
+                        lines.push(format!("    Binary: {}", bp));
+                    }
+                    if !h.detected_models.is_empty() {
+                        lines.push(format!("    Models: {}", h.detected_models.join(", ")));
+                    }
+                    if let Some(ref reason) = h.governance_reason {
+                        lines.push(format!("    Governance: {}", reason));
+                    }
+                    lines.push("".to_string());
+                }
+                let entry = DiagnosticEntry {
+                    id: uuid::Uuid::now_v7().to_string(),
+                    timestamp: chrono::Utc::now(),
+                    command: "hyperkb harnesses".to_string(),
+                    title: "AI Harness & LLM Registry".to_string(),
+                    success: true,
+                    summary: format!("{} AI harness(es) registered or discovered.", self.harnesses.len()),
+                    lines,
+                    file_targets: Vec::new(),
+                    selected_file_idx: 0,
+                };
+                self.diagnostic_stream.push(entry);
+                self.selected_diagnostic_idx = self.diagnostic_stream.len().saturating_sub(1);
+                self.work_tab_mode = WorkTabMode::Console;
+                self.switch_tab(ActiveTab::Work);
+                self.status_message = Some(format!("Discovered {} AI Harnesses", self.harnesses.len()));
+            }
+            "clear" => {
+                self.diagnostic_stream.clear();
+                self.selected_diagnostic_idx = 0;
+                self.status_message = Some("Diagnostic stream cleared".to_string());
+            }
+            "help" => {
+                let lines = vec![
+                    "Supported Cockpit Commands:".to_string(),
+                    "  • audit      - Run comprehensive KB anti-bloat, schema & directive audit".to_string(),
+                    "  • check      - Audit staged/changed files against risks and directives".to_string(),
+                    "  • reindex    - Re-index documents into SQLite full-text search index".to_string(),
+                    "  • bootstrap  - Mine git log history to bootstrap candidate risks".to_string(),
+                    "  • harnesses  - Inspect discovered AI harnesses and CISO governance status".to_string(),
+                    "  • directives - Navigate to Directives & Policy Rules tab".to_string(),
+                    "  • grants     - Navigate to Agent Authority Grants tab".to_string(),
+                    "  • backup     - Create atomic verified database backup snapshot".to_string(),
+                    "  • compact    - Run SQLite VACUUM and truncate WAL journal".to_string(),
+                    "  • clear      - Clear diagnostic output stream".to_string(),
+                    "  • help       - Show this command reference".to_string(),
+                ];
+                let entry = DiagnosticEntry {
+                    id: uuid::Uuid::now_v7().to_string(),
+                    timestamp: chrono::Utc::now(),
+                    command: "hyperkb help".to_string(),
+                    title: "Cockpit Command Help & Reference".to_string(),
+                    success: true,
+                    summary: "Reference guide for interactive cockpit REPL".to_string(),
+                    lines,
+                    file_targets: Vec::new(),
+                    selected_file_idx: 0,
+                };
+                self.diagnostic_stream.push(entry);
+                self.selected_diagnostic_idx = self.diagnostic_stream.len().saturating_sub(1);
+                self.work_tab_mode = WorkTabMode::Console;
+                self.switch_tab(ActiveTab::Work);
+            }
+            unknown => {
+                let entry = DiagnosticEntry {
+                    id: uuid::Uuid::now_v7().to_string(),
+                    timestamp: chrono::Utc::now(),
+                    command: trimmed.to_string(),
+                    title: format!("Unknown Command: '{}'", unknown),
+                    success: false,
+                    summary: format!("Command '{}' not recognized. Type 'help' for available commands.", unknown),
+                    lines: vec![
+                        "Type 'help' to see available cockpit commands, or press [Space] for Action Palette.".to_string(),
+                    ],
+                    file_targets: Vec::new(),
+                    selected_file_idx: 0,
+                };
+                self.diagnostic_stream.push(entry);
+                self.selected_diagnostic_idx = self.diagnostic_stream.len().saturating_sub(1);
+                self.work_tab_mode = WorkTabMode::Console;
+                self.status_message = Some(format!("Unknown command: '{}'", unknown));
+            }
         }
     }
 }
@@ -1654,5 +2274,115 @@ mod tests {
 
         app.toggle_governance_tab_mode();
         assert_eq!(app.governance_tab_mode, GovernanceTabMode::Sessions);
+    }
+
+    #[test]
+    fn test_work_tab_dual_mode_and_diagnostic_stream() {
+        let mut app = App::new("test", "test");
+        assert_eq!(app.work_tab_mode, WorkTabMode::Risks);
+        assert_eq!(app.diagnostic_stream.len(), 1);
+        assert!(!app.repl_active);
+
+        // Switch to console mode
+        app.work_tab_mode = WorkTabMode::Console;
+        assert_eq!(app.work_tab_mode, WorkTabMode::Console);
+
+        // Add a diagnostic entry with flagged files
+        app.add_diagnostic_entry(
+            "audit",
+            "Knowledge Base Audit",
+            "1 warning detected",
+            vec![
+                "✓ Total Directives: 5 (5 active)".to_string(),
+                "! Bloat Warning: spec/bloated.md exceeds 250 lines".to_string(),
+            ],
+            vec!["docs/spec/bloated.md".to_string()],
+            false,
+        );
+
+        assert_eq!(app.diagnostic_stream.len(), 2);
+        assert_eq!(app.selected_diagnostic_idx, 1);
+
+        // Active document path should point to the flagged file
+        let path = app.get_active_document_path();
+        assert!(path.is_some());
+        assert!(path.unwrap().to_string_lossy().contains("docs/spec/bloated.md"));
+
+        // Add another diagnostic entry
+        app.add_diagnostic_entry(
+            "check",
+            "Work Hygiene Check",
+            "All clear",
+            vec!["✓ No stale directives violated".to_string()],
+            vec![],
+            true,
+        );
+        assert_eq!(app.diagnostic_stream.len(), 3);
+        assert_eq!(app.selected_diagnostic_idx, 2);
+
+        // Navigate between diagnostic entries
+        app.prev_diagnostic_entry();
+        assert_eq!(app.selected_diagnostic_idx, 1);
+        app.next_diagnostic_entry();
+        assert_eq!(app.selected_diagnostic_idx, 2);
+
+        // Esc should switch back to Risks
+        app.go_back();
+        assert_eq!(app.work_tab_mode, WorkTabMode::Risks);
+    }
+
+    #[test]
+    fn test_repl_command_execution() {
+        let db = Database::open_in_memory("test", "test").unwrap();
+        let mut app = App::new("test", "test");
+        assert_eq!(app.diagnostic_stream.len(), 1);
+
+        // Execute help
+        app.execute_repl_command("help", &db);
+        assert_eq!(app.diagnostic_stream.len(), 2);
+        assert_eq!(app.diagnostic_stream.last().unwrap().command, "hyperkb help");
+        assert_eq!(app.work_tab_mode, WorkTabMode::Console);
+
+        // Execute audit
+        app.execute_repl_command("audit", &db);
+        assert_eq!(app.diagnostic_stream.len(), 3);
+        assert_eq!(app.diagnostic_stream.last().unwrap().command, "hyperkb audit-kb");
+
+        // Execute check
+        app.execute_repl_command("check", &db);
+        assert_eq!(app.diagnostic_stream.len(), 4);
+        assert_eq!(app.diagnostic_stream.last().unwrap().command, "hyperkb check-work --staged --changed");
+
+        // Execute harnesses
+        app.execute_repl_command("harnesses", &db);
+        assert_eq!(app.diagnostic_stream.len(), 5);
+        assert_eq!(app.diagnostic_stream.last().unwrap().command, "hyperkb harnesses");
+
+        // Execute clear
+        app.execute_repl_command("clear", &db);
+        assert!(app.diagnostic_stream.is_empty());
+    }
+
+    #[test]
+    fn test_settings_taxonomies_and_harness_knobs() {
+        let mut app = App::new("test", "test");
+        // Test knob 6: Taxonomies
+        app.settings_selected_idx = 6;
+        assert_eq!(app.settings_selected_idx, 6);
+        app.adjust_setting(1);
+        assert_eq!(app.settings_selected_idx, 6);
+
+        // Test knob 7: AI Harnesses
+        app.settings_selected_idx = 7;
+        assert_eq!(app.settings_selected_idx, 7);
+        app.adjust_setting(1);
+        assert_eq!(app.settings_selected_idx, 7);
+
+        // Full cycle of 8 settings
+        app.settings_selected_idx = 0;
+        for _ in 0..8 {
+            app.next_setting();
+        }
+        assert_eq!(app.settings_selected_idx, 0);
     }
 }
