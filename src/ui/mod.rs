@@ -31,7 +31,7 @@ pub fn run(root: &Path, db: &Database, collection_id: &str, profile_id: &str) ->
     panic::set_hook(Box::new(move |panic_info| {
         let _ = disable_raw_mode();
         let _ = execute!(io::stdout(), LeaveAlternateScreen, DisableMouseCapture, PopKeyboardEnhancementFlags);
-        let _ = io::stdout().write_all(b"\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1005l\x1b[?1006l\x1b[?1015l");
+        let _ = io::stdout().write_all(b"\x1b[>4;0m\x1b[>4m\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1005l\x1b[?1006l\x1b[?1015l");
         let _ = io::stdout().flush();
         original_hook(panic_info);
     }));
@@ -47,6 +47,10 @@ pub fn run(root: &Path, db: &Database, collection_id: &str, profile_id: &str) ->
         stdout,
         PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES)
     );
+    // Also enable xterm modifyOtherKeys=2 for maximum Shift+Enter compatibility
+    let _ = stdout.write_all(b"\x1b[>4;2m");
+    let _ = stdout.flush();
+
     if app.mouse_capture {
         execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
         let _ = stdout.flush();
@@ -64,6 +68,7 @@ pub fn run(root: &Path, db: &Database, collection_id: &str, profile_id: &str) ->
     // 5. Restore terminal state
     disable_raw_mode()?;
     let _ = execute!(terminal.backend_mut(), PopKeyboardEnhancementFlags);
+    let _ = terminal.backend_mut().write_all(b"\x1b[>4;0m\x1b[>4m");
     execute!(terminal.backend_mut(), LeaveAlternateScreen, DisableMouseCapture)?;
     let _ = terminal.backend_mut().write_all(b"\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1005l\x1b[?1006l\x1b[?1015l");
     let _ = terminal.backend_mut().flush();
@@ -427,8 +432,9 @@ fn run_loop(
                                 if key.modifiers.contains(KeyModifiers::SHIFT)
                                     || key.modifiers.contains(KeyModifiers::ALT)
                                     || key.modifiers.contains(KeyModifiers::CONTROL)
+                                    || key.modifiers.contains(KeyModifiers::SUPER)
                                 {
-                                    // Multi-line support: Shift+Enter, Option+Enter, or Ctrl+Enter adds newline
+                                    // Multi-line support: Shift+Enter, Option+Enter, Ctrl+Enter, or Cmd+Enter adds newline
                                     app.repl_input.push('\n');
                                 } else if app.repl_input.ends_with('\\') {
                                     // Trailing backslash continuation (shell standard)
@@ -448,6 +454,10 @@ fn run_loop(
                             }
                             KeyCode::Char('j') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                                 // Ctrl+J standard line feed
+                                app.repl_input.push('\n');
+                            }
+                            KeyCode::Char('\n') | KeyCode::Char('\r') => {
+                                // Direct newline / carriage return character
                                 app.repl_input.push('\n');
                             }
                             KeyCode::Tab => {
@@ -923,7 +933,11 @@ fn run_loop(
                                 else if row >= 5 && row < area.height.saturating_sub(2) {
                                     if app.active_tab == ActiveTab::Work && app.work_tab_mode == crate::ui::app::WorkTabMode::Console {
                                         let input_lines = app.repl_input.lines().count().max(1);
-                                        let prompt_h = (input_lines as u16 + 8).clamp(10, 16);
+                                        let prompt_h = if app.repl_active {
+                                            (input_lines as u16 + 8).clamp(10, 18)
+                                        } else {
+                                            6
+                                        };
                                         let filtered_slash = app.filtered_slash_commands();
                                         let prompt_y = area.height.saturating_sub(2).saturating_sub(prompt_h);
 
@@ -1047,6 +1061,25 @@ fn run_loop(
                             }
                         }
                         _ => {}
+                    }
+                }
+                Event::Paste(text) => {
+                    if app.show_new_directive_modal {
+                        if app.new_directive_field == 0 {
+                            app.new_directive_title.push_str(&text);
+                        } else if app.new_directive_field == 2 {
+                            app.new_directive_scope.push_str(&text);
+                        } else if app.new_directive_field == 4 {
+                            app.new_directive_rule.push_str(&text);
+                        }
+                    } else if app.active_tab == ActiveTab::Work && app.repl_active {
+                        app.repl_input.push_str(&text);
+                        app.slash_menu_selected_idx = 0;
+                    } else if app.show_action_palette {
+                        app.action_palette_query.push_str(&text);
+                        app.action_palette_selected_idx = 0;
+                    } else if app.is_filtering {
+                        app.filter_query.push_str(&text);
                     }
                 }
                 _ => {}

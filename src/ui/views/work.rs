@@ -193,7 +193,11 @@ impl WorkView {
 
     fn render_console_view(frame: &mut Frame, app: &App, area: Rect) {
         let input_lines = app.repl_input.lines().count().max(1);
-        let prompt_h = (input_lines as u16 + 8).clamp(10, 16);
+        let prompt_h = if app.repl_active {
+            (input_lines as u16 + 8).clamp(10, 18)
+        } else {
+            6
+        };
         let filtered_slash = app.filtered_slash_commands();
 
         if app.repl_active && !filtered_slash.is_empty() {
@@ -419,37 +423,46 @@ impl WorkView {
             .style(Style::default().bg(t.bg_panel()).fg(t.text_primary()))
             .padding(Padding::new(2, 2, 1, 1))
             .title(Span::styled(
-                " Command Input ",
+                " Command & Operations ",
                 if app.repl_active { t.title() } else { Style::default().fg(t.text_muted()) },
             ))
-            .title_bottom(Line::from(vec![
-                Span::styled(" [Enter] ", if app.repl_active { t.key_badge() } else { Style::default().fg(t.text_muted()) }),
-                Span::styled("Run  ", Style::default().fg(t.text_muted())),
-                Span::styled("[Shift+Enter / Option+Enter] ", if app.repl_active { t.key_badge() } else { Style::default().fg(t.text_muted()) }),
-                Span::styled("Newline  ", Style::default().fg(t.text_muted())),
-                Span::styled("[/] ", if app.repl_active { Span::styled("/", t.badge_accepted()).style } else { Style::default().fg(t.text_muted()) }),
-                Span::styled("Palette  ", Style::default().fg(t.text_muted())),
-                Span::styled("[Esc] ", if app.repl_active { t.key_badge() } else { Style::default().fg(t.text_muted()) }),
-                Span::styled("Unfocus ", Style::default().fg(t.text_muted())),
-            ]));
+            .title_bottom(if app.repl_active {
+                Line::from(vec![
+                    Span::styled(" [Enter] ", t.key_badge()),
+                    Span::styled("Run ", Style::default().fg(t.text_muted())),
+                    Span::styled("• ", Style::default().fg(t.border())),
+                    Span::styled("[Shift+Enter / ⌥Enter] ", t.key_badge()),
+                    Span::styled("Newline ", Style::default().fg(t.text_muted())),
+                    Span::styled("• ", Style::default().fg(t.border())),
+                    Span::styled("[/] ", t.badge_accepted()),
+                    Span::styled("Palette ", Style::default().fg(t.text_muted())),
+                    Span::styled("• ", Style::default().fg(t.border())),
+                    Span::styled("[Esc] ", t.key_badge()),
+                    Span::styled("Unfocus ", Style::default().fg(t.text_muted())),
+                ])
+            } else {
+                Line::from(vec![
+                    Span::styled(" [Click or press '/' or Enter to type] ", Style::default().fg(t.text_muted())),
+                ])
+            });
 
         let mut lines = Vec::new();
 
         if app.repl_input.is_empty() {
             if app.repl_active {
                 lines.push(Line::from(vec![
-                    Span::styled("> ", Style::default().fg(t.status_proposed()).add_modifier(Modifier::BOLD)),
+                    Span::styled("❯ ", Style::default().fg(t.accent()).add_modifier(Modifier::BOLD)),
                     Span::styled("▌", Style::default().fg(t.accent())),
                     Span::styled(
-                        " Type a command or '/' for palette (e.g. /audit, /check, /reindex, /help)...",
+                        " Type a command, or '/' for palette (e.g. /audit, /check, /reindex, /help)...",
                         Style::default().fg(t.text_muted()),
                     ),
                 ]));
             } else {
                 lines.push(Line::from(vec![
-                    Span::styled("> ", Style::default().fg(t.accent()).add_modifier(Modifier::BOLD)),
+                    Span::styled("❯ ", Style::default().fg(t.text_muted())),
                     Span::styled(
-                        "Click or press '/' to enter commands (audit, check, reindex, help)...",
+                        "Click here or press '/' to write commands (e.g. /audit, /check, /help)...",
                         Style::default().fg(t.text_muted()),
                     ),
                 ]));
@@ -462,7 +475,7 @@ impl WorkView {
                 let prefix = if show_line_numbers {
                     format!("{:>2} │ ", idx + 1)
                 } else {
-                    "> ".to_string()
+                    "❯ ".to_string()
                 };
                 let mut spans = vec![
                     Span::styled(
