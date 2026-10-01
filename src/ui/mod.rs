@@ -238,12 +238,18 @@ fn run_loop(
                             KeyCode::Esc => {
                                 app.show_new_directive_modal = false;
                             }
+                            KeyCode::Char('s') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                                match app.draft_new_directive(db) {
+                                    Ok(msg) => app.status_message = Some(msg),
+                                    Err(err) => app.status_message = Some(format!("Error: {}", err)),
+                                }
+                            }
                             KeyCode::Tab => {
-                                app.new_directive_field = (app.new_directive_field + 1) % 5;
+                                app.new_directive_field = (app.new_directive_field + 1) % 6;
                             }
                             KeyCode::BackTab => {
                                 if app.new_directive_field == 0 {
-                                    app.new_directive_field = 4;
+                                    app.new_directive_field = 5;
                                 } else {
                                     app.new_directive_field -= 1;
                                 }
@@ -259,6 +265,11 @@ fn run_loop(
                                     app.new_directive_scope.push(' ');
                                 } else if app.new_directive_field == 4 {
                                     app.new_directive_rule.push(' ');
+                                } else if app.new_directive_field == 5 {
+                                    match app.draft_new_directive(db) {
+                                        Ok(msg) => app.status_message = Some(msg),
+                                        Err(err) => app.status_message = Some(format!("Error: {}", err)),
+                                    }
                                 }
                             }
                             KeyCode::Backspace => {
@@ -271,9 +282,15 @@ fn run_loop(
                                 }
                             }
                             KeyCode::Enter => {
-                                match app.draft_new_directive(db) {
-                                    Ok(msg) => app.status_message = Some(msg),
-                                    Err(err) => app.status_message = Some(format!("Error: {}", err)),
+                                if app.new_directive_field == 4 {
+                                    app.new_directive_rule.push('\n');
+                                } else if app.new_directive_field == 0 {
+                                    app.new_directive_field = 1;
+                                } else {
+                                    match app.draft_new_directive(db) {
+                                        Ok(msg) => app.status_message = Some(msg),
+                                        Err(err) => app.status_message = Some(format!("Error: {}", err)),
+                                    }
                                 }
                             }
                             KeyCode::Char(c) => {

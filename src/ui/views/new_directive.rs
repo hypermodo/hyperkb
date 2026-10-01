@@ -41,10 +41,10 @@ impl NewDirectiveModal {
             .title(Span::styled(" [n] Draft New Directive (Governance Cockpit) ", t.title()))
             .title_bottom(Line::from(vec![
                 Span::styled(" [Tab] ", t.key_badge()),
-                Span::styled("Next • ", Style::default().fg(t.text_muted())),
-                Span::styled("[Space] ", t.key_badge()),
-                Span::styled("Cycle options • ", Style::default().fg(t.text_muted())),
+                Span::styled("Next Field • ", Style::default().fg(t.text_muted())),
                 Span::styled("[Enter] ", t.key_badge()),
+                Span::styled("Newline (in Rule) • ", Style::default().fg(t.text_muted())),
+                Span::styled("[Ctrl+S] ", t.key_badge()),
                 Span::styled("Save & Enforce • ", Style::default().fg(t.text_muted())),
                 Span::styled("[Esc] ", t.key_badge()),
                 Span::styled("Cancel", Style::default().fg(t.text_muted())),
@@ -61,7 +61,8 @@ impl NewDirectiveModal {
                 Constraint::Length(3), // Field 0: Title
                 Constraint::Length(3), // Field 1: Category & Field 3: Enforcement (side-by-side or stacked)
                 Constraint::Length(3), // Field 2: Scope
-                Constraint::Min(4),    // Field 4: Policy rule statement
+                Constraint::Min(5),    // Field 4: Policy rule statement (multi-line)
+                Constraint::Length(2), // Field 5: Save & Enforce action button
             ])
             .split(inner_area);
 
@@ -202,7 +203,7 @@ impl NewDirectiveModal {
         ])];
         frame.render_widget(Paragraph::new(scope_content).block(f2_block), chunks[3]);
 
-        // Field 4: Policy rule text
+        // Field 4: Policy rule text (multi-line)
         let is_f4 = app.new_directive_field == 4;
         let f4_block = Block::default()
             .borders(Borders::ALL)
@@ -212,35 +213,59 @@ impl NewDirectiveModal {
                 Style::default().fg(t.border())
             })
             .title(Span::styled(
-                if is_f4 { " Invariant Rule Statement (Briefing requirement for agents) ▶ " } else { " Invariant Rule Statement " },
+                if is_f4 { " Invariant Rule Statement ([Enter] for newline, [Tab] to Save) ▶ " } else { " Invariant Rule Statement " },
                 if is_f4 { t.title() } else { Style::default().fg(t.text_muted()) },
             ));
-        let rule_content = vec![
-            Line::from(vec![
-                Span::styled(
-                    if app.new_directive_rule.is_empty() && !is_f4 {
-                        "e.g. All SQLite access must go through the Queries struct. Never write raw SQL strings in handlers.".to_string()
-                    } else {
-                        app.new_directive_rule.clone()
-                    },
-                    if app.new_directive_rule.is_empty() {
-                        Style::default().fg(t.text_muted())
-                    } else {
-                        Style::default().fg(t.text_primary())
-                    },
-                ),
-                if is_f4 {
-                    Span::styled("▌", Style::default().fg(t.accent()))
+
+        let rule_content = if app.new_directive_rule.is_empty() && !is_f4 {
+            vec![Line::from(Span::styled(
+                "e.g. All SQLite access must go through the Queries struct.\nNever write raw SQL strings in handlers.",
+                Style::default().fg(t.text_muted()),
+            ))]
+        } else {
+            let mut lines = Vec::new();
+            let text = if app.new_directive_rule.is_empty() { "" } else { &app.new_directive_rule };
+            let split_lines: Vec<&str> = text.split('\n').collect();
+            let num_lines = split_lines.len();
+
+            for (idx, line_str) in split_lines.iter().enumerate() {
+                let is_last = idx == num_lines - 1;
+                if is_last && is_f4 {
+                    lines.push(Line::from(vec![
+                        Span::styled(line_str.to_string(), Style::default().fg(t.text_primary())),
+                        Span::styled("▌", Style::default().fg(t.accent())),
+                    ]));
                 } else {
-                    Span::raw("")
-                },
-            ]),
-        ];
+                    lines.push(Line::from(Span::styled(
+                        line_str.to_string(),
+                        Style::default().fg(t.text_primary()),
+                    )));
+                }
+            }
+            lines
+        };
+
         frame.render_widget(
             Paragraph::new(rule_content)
                 .block(f4_block)
                 .wrap(Wrap { trim: false }),
             chunks[4],
         );
+
+        // Field 5: Action Button
+        let is_f5 = app.new_directive_field == 5;
+        let btn_style = if is_f5 {
+            t.selected_row().add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(t.accent()).add_modifier(Modifier::BOLD)
+        };
+        let btn_line = Line::from(vec![
+            Span::styled(
+                if is_f5 { " ▶ [ Save & Enforce Directive (Press Enter) ] " } else { "   [ Save & Enforce Directive ] " },
+                btn_style,
+            ),
+            Span::styled("  •  Tip: Press [Ctrl+S] anytime to save & enforce immediately", Style::default().fg(t.text_muted())),
+        ]);
+        frame.render_widget(Paragraph::new(btn_line), chunks[5]);
     }
 }
