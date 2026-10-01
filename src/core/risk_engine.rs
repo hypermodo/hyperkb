@@ -100,6 +100,8 @@ impl RiskEngine {
                     acknowledged: is_acknowledged,
                     acknowledgement: None,
                     external_issue_freshness: None,
+                    suppressed: false,
+                    suppression_reason: None,
                 });
             }
         }

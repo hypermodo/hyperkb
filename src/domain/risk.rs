@@ -30,6 +30,10 @@ pub struct RiskMatch {
     pub acknowledgement: Option<String>,
     #[serde(default)]
     pub external_issue_freshness: Option<String>,
+    #[serde(default)]
+    pub suppressed: bool,
+    #[serde(default)]
+    pub suppression_reason: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -47,7 +51,7 @@ impl RiskCheck {
     pub fn has_open_risks(&self) -> bool {
         self.matches
             .iter()
-            .any(|m| m.applicability == RiskApplicability::Applies && !m.acknowledged)
+            .any(|m| m.applicability == RiskApplicability::Applies && !m.acknowledged && !m.suppressed)
     }
 }
 

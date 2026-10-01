@@ -256,13 +256,30 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 return Ok(());
             }
 
-            let check = Queries::check_work(
+            let mut check = Queries::check_work(
                 db.conn(),
                 "local_collection",
                 &files,
                 version.as_deref(),
                 env.as_deref(),
             )?;
+
+            // Diff-Aware Risk Suppression: If changes are purely comments or whitespace, suppress to avoid alert fatigue
+            if staged || changed {
+                for m in &mut check.matches {
+                    if !m.acknowledged {
+                        let all_trivial = m.matched_paths.iter().all(|path| {
+                            Git::file_diff_is_trivial(&cli.root, path, staged).unwrap_or(false)
+                        });
+                        if all_trivial && !m.matched_paths.is_empty() {
+                            m.suppressed = true;
+                            m.suppression_reason = Some(
+                                "Diff contains only comments or whitespace (suppressed to prevent alert fatigue)".to_string(),
+                            );
+                        }
+                    }
+                }
+            }
 
             if json {
                 println!("{}", serde_json::to_string_pretty(&check)?);
@@ -278,10 +295,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 } else {
                     println!("⚠️  Found {} cited risk(s):", check.matches.len());
                     for m in &check.matches {
-                        let status_tag = match m.applicability {
-                            hyperkb_rs::domain::RiskApplicability::Applies => "[APPLIES]",
-                            hyperkb_rs::domain::RiskApplicability::Unknown => "[UNKNOWN]",
-                            hyperkb_rs::domain::RiskApplicability::NotApplicable => "[N/A]",
+                        let status_tag = if m.suppressed {
+                            "[SUPPRESSED]"
+                        } else {
+                            match m.applicability {
+                                hyperkb_rs::domain::RiskApplicability::Applies => "[APPLIES]",
+                                hyperkb_rs::domain::RiskApplicability::Unknown => "[UNKNOWN]",
+                                hyperkb_rs::domain::RiskApplicability::NotApplicable => "[N/A]",
+                            }
                         };
                         println!(
                             "  {} {} ({})",
@@ -289,7 +310,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         );
                         println!("     Matched: {}", m.matched_paths.join(", "));
                         println!("     Reason:  {}", m.reason);
-                        if let Some(ref ack) = m.acknowledgement {
+                        if let Some(ref sup) = m.suppression_reason {
+                            println!("     Notice:  {}", sup);
+                        } else if let Some(ref ack) = m.acknowledgement {
                             println!("     Acknowledged: {}", ack);
                         } else if m.acknowledged {
                             println!("     Acknowledged: yes");

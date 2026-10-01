@@ -57,6 +57,88 @@ impl Git {
         Ok(files)
     }
 
+    /// Checks whether the diff for a target file consists exclusively of comments, docstrings, and whitespace.
+    pub fn file_diff_is_trivial<P: AsRef<Path>>(
+        root: P,
+        rel_path: &str,
+        staged: bool,
+    ) -> Result<bool, String> {
+        let root = root.as_ref();
+        let mut cmd = Command::new("git");
+        cmd.arg("diff");
+        if staged {
+            cmd.arg("--cached");
+        }
+        cmd.arg("-U0");
+        cmd.arg("--");
+        cmd.arg(rel_path);
+        cmd.current_dir(root);
+
+        let output = cmd.output().map_err(|e| format!("failed to run git diff: {}", e))?;
+        if !output.status.success() {
+            return Ok(false);
+        }
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        Ok(Self::is_diff_text_trivial(&stdout))
+    }
+
+    /// Analyzes raw diff text to verify if all additions/deletions are comments or whitespace.
+    pub fn is_diff_text_trivial(diff_text: &str) -> bool {
+        let mut has_changes = false;
+        for line in diff_text.lines() {
+            // Skip diff control and file header lines
+            if line.starts_with("---")
+                || line.starts_with("+++")
+                || line.starts_with("@@")
+                || line.starts_with("diff ")
+                || line.starts_with("index ")
+            {
+                continue;
+            }
+
+            if let Some(added) = line.strip_prefix('+') {
+                has_changes = true;
+                let trimmed = added.trim();
+                if trimmed.is_empty() {
+                    continue;
+                }
+                if Self::is_comment_or_doc(trimmed) {
+                    continue;
+                }
+                return false;
+            }
+
+            if let Some(removed) = line.strip_prefix('-') {
+                has_changes = true;
+                let trimmed = removed.trim();
+                if trimmed.is_empty() {
+                    continue;
+                }
+                if Self::is_comment_or_doc(trimmed) {
+                    continue;
+                }
+                return false;
+            }
+        }
+
+        has_changes
+    }
+
+    fn is_comment_or_doc(trimmed: &str) -> bool {
+        trimmed.starts_with("//")
+            || trimmed.starts_with("/*")
+            || trimmed.starts_with('*')
+            || trimmed.ends_with("*/")
+            || trimmed.starts_with('#')
+            || trimmed.starts_with("--")
+            || trimmed.starts_with("<!--")
+            || trimmed.starts_with("///")
+            || trimmed.starts_with("//!")
+            || trimmed.starts_with("\"\"\"")
+            || trimmed.starts_with("'''")
+    }
+
     /// Installs a pre-commit risk interception hook into `.git/hooks/pre-commit`.
     pub fn install_pre_commit_hook<P: AsRef<Path>>(root: P) -> Result<PathBuf, String> {
         let root = root.as_ref();
@@ -111,5 +193,31 @@ mod tests {
         let data = b"src/main.rs\0docs/decisions/test.md\0";
         let parsed = Git::parse_null_terminated(data).unwrap();
         assert_eq!(parsed, vec!["src/main.rs", "docs/decisions/test.md"]);
+    }
+
+    #[test]
+    fn test_is_diff_text_trivial() {
+        let comment_diff = r#"
+diff --git a/src/storage/db.rs b/src/storage/db.rs
+index e69de29..b6238b6 100644
+--- a/src/storage/db.rs
++++ b/src/storage/db.rs
+@@ -10,0 +11,3 @@
++// Note: WAL mode avoids reader-writer blocking.
++/// This is a doc comment
++   
+"#;
+        assert!(Git::is_diff_text_trivial(comment_diff));
+
+        let code_diff = r#"
+diff --git a/src/storage/db.rs b/src/storage/db.rs
+index e69de29..b6238b6 100644
+--- a/src/storage/db.rs
++++ b/src/storage/db.rs
+@@ -10,0 +11,2 @@
++let timeout = 5000;
++conn.execute("PRAGMA busy_timeout = 5000;", [])?;
+"#;
+        assert!(!Git::is_diff_text_trivial(code_diff));
     }
 }
