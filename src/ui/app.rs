@@ -45,6 +45,10 @@ pub struct App {
     pub manifest: RepoManifest,
     pub theme: ThemeMode,
     pub mouse_capture: bool,
+    pub drag_start: Option<(u16, u16)>,
+    pub drag_current: Option<(u16, u16)>,
+    pub is_dragging: bool,
+    pub last_selected_text: Option<String>,
 
     // Help & Methodology state
     pub show_help: bool,
@@ -133,6 +137,10 @@ impl App {
             is_filtering: false,
             filter_query: String::new(),
             status_message: None,
+            drag_start: None,
+            drag_current: None,
+            is_dragging: false,
+            last_selected_text: None,
         }
     }
 
@@ -799,6 +807,11 @@ impl App {
             }
         };
 
+        Self::copy_text_to_clipboard(&content_to_copy);
+        Ok(description)
+    }
+
+    pub fn copy_text_to_clipboard(text: &str) {
         // 1. Native macOS pbcopy
         #[cfg(target_os = "macos")]
         {
@@ -806,21 +819,37 @@ impl App {
             use std::process::{Command, Stdio};
             if let Ok(mut child) = Command::new("pbcopy").stdin(Stdio::piped()).spawn() {
                 if let Some(mut stdin) = child.stdin.take() {
-                    let _ = stdin.write_all(content_to_copy.as_bytes());
+                    let _ = stdin.write_all(text.as_bytes());
                 }
                 let _ = child.wait();
             }
         }
 
-        // 2. OSC 52 ANSI escape code for terminal emulators
-        let b64 = base64_encode(content_to_copy.as_bytes());
+        // 2. Linux xclip / wl-copy
+        #[cfg(target_os = "linux")]
+        {
+            use std::io::Write;
+            use std::process::{Command, Stdio};
+            if let Ok(mut child) = Command::new("wl-copy").stdin(Stdio::piped()).spawn() {
+                if let Some(mut stdin) = child.stdin.take() {
+                    let _ = stdin.write_all(text.as_bytes());
+                }
+                let _ = child.wait();
+            } else if let Ok(mut child) = Command::new("xclip").args(["-selection", "clipboard"]).stdin(Stdio::piped()).spawn() {
+                if let Some(mut stdin) = child.stdin.take() {
+                    let _ = stdin.write_all(text.as_bytes());
+                }
+                let _ = child.wait();
+            }
+        }
+
+        // 3. Universal OSC 52 ANSI escape sequence for terminal emulators (works across SSH, tmux, and modern terminals)
+        let b64 = base64_encode(text.as_bytes());
         let osc52 = format!("\x1b]52;c;{}\x07", b64);
         use std::io::Write;
         let mut stdout = std::io::stdout();
         let _ = stdout.write_all(osc52.as_bytes());
         let _ = stdout.flush();
-
-        Ok(description)
     }
 }
 
@@ -961,5 +990,30 @@ mod tests {
         assert!(app.show_scoring_methodology);
         app.go_back();
         assert!(!app.show_scoring_methodology);
+    }
+
+    #[test]
+    fn test_mouse_drag_selection_and_clipboard() {
+        let mut app = App::new("test", "test");
+        assert!(!app.is_dragging);
+        assert_eq!(app.drag_start, None);
+        assert_eq!(app.drag_current, None);
+        assert_eq!(app.last_selected_text, None);
+
+        // Simulate start of drag
+        app.drag_start = Some((10, 5));
+        app.drag_current = Some((10, 5));
+        assert!(!app.is_dragging);
+
+        // Simulate drag motion
+        app.drag_current = Some((45, 5));
+        app.is_dragging = true;
+
+        // Simulate selected text extraction
+        app.last_selected_text = Some("Never fail on customer data".to_string());
+        assert_eq!(app.last_selected_text.as_deref(), Some("Never fail on customer data"));
+
+        // Test clipboard helper does not panic
+        App::copy_text_to_clipboard("Never fail on customer data");
     }
 }

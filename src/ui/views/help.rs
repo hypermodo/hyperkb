@@ -123,60 +123,60 @@ impl HelpModal {
                 Style::default().fg(t.border()),
             )),
             Line::from(""),
-            Line::from(Span::styled("3. ZERO-FRICTION TEXT SELECTION & CLIPBOARD COPYING", t.section_header())),
+            Line::from(Span::styled("3. UNIVERSAL TEXT SELECTION & CLIPBOARD COPYING", t.section_header())),
             Line::from(""),
             Line::from(Span::styled(
-                "  HyperKB offers three effortless ways to copy text without friction:",
+                "  HyperKB is a standalone, terminal-agnostic tool designed to work effortlessly across",
+                Style::default().fg(t.text_muted()),
+            )),
+            Line::from(Span::styled(
+                "  all terminal emulators (macOS Terminal, iTerm2, Alacritty, Kitty, Windows Terminal, SSH, tmux, etc.).",
                 Style::default().fg(t.text_muted()),
             )),
             Line::from(""),
             Line::from(vec![
-                Span::styled("  • Method 1 (Instant 1-Key Clipboard Copy): ", Style::default().fg(t.status_accepted()).add_modifier(Modifier::BOLD)),
+                Span::styled("  • Method 1 (Native Drag Selection - Default): ", Style::default().fg(t.status_accepted()).add_modifier(Modifier::BOLD)),
+                Span::styled("Simply click and drag your mouse", Style::default().fg(t.text_primary())),
+            ]),
+            Line::from(Span::styled(
+                "    By default, terminal mouse capture is OFF. You can highlight any text anywhere on",
+                Style::default().fg(t.text_primary()),
+            )),
+            Line::from(Span::styled(
+                "    screen with your mouse and copy it (Cmd+C / Ctrl+Shift+C) without requiring Shift or Option keys.",
+                Style::default().fg(t.text_primary()),
+            )),
+            Line::from(""),
+            Line::from(vec![
+                Span::styled("  • Method 2 (In-TUI Visual Drag & Auto-Copy): ", Style::default().fg(t.status_accepted()).add_modifier(Modifier::BOLD)),
+                Span::styled("Press ", Style::default().fg(t.text_primary())),
+                Span::styled("[ m ]", t.key_badge()),
+                Span::styled(" to enable Mouse Mode", Style::default().fg(t.text_primary())),
+            ]),
+            Line::from(Span::styled(
+                "    When Mouse Mode is toggled ON, clicking navigates lists/tabs, and dragging your mouse",
+                Style::default().fg(t.text_primary()),
+            )),
+            Line::from(Span::styled(
+                "    over any text displays an instant visual highlight. Releasing the mouse automatically",
+                Style::default().fg(t.text_primary()),
+            )),
+            Line::from(Span::styled(
+                "    copies the selected snippet to your clipboard via native clipboard and universal OSC 52.",
+                Style::default().fg(t.text_primary()),
+            )),
+            Line::from(""),
+            Line::from(vec![
+                Span::styled("  • Method 3 (Instant 1-Key Yank): ", Style::default().fg(t.status_accepted()).add_modifier(Modifier::BOLD)),
                 Span::styled("Press ", Style::default().fg(t.text_primary())),
                 Span::styled("[ y ]", t.key_badge()),
             ]),
             Line::from(Span::styled(
-                "    Pressing 'y' instantly copies the open document, selected directive, active risk,",
+                "    Pressing 'y' instantly copies the entire active document, directive, risk, or session",
                 Style::default().fg(t.text_primary()),
             )),
             Line::from(Span::styled(
-                "    or session scorecard directly into your system clipboard (macOS pbcopy + OSC 52).",
-                Style::default().fg(t.text_primary()),
-            )),
-            Line::from(Span::styled(
-                "    No mouse dragging required — simply press 'y' and Cmd+V to paste anywhere!",
-                Style::default().fg(t.text_primary()),
-            )),
-            Line::from(""),
-            Line::from(vec![
-                Span::styled("  • Method 2 (Antigravity IDE / VS Code Terminal Selection): ", Style::default().fg(t.status_accepted()).add_modifier(Modifier::BOLD)),
-                Span::styled("Hold ", Style::default().fg(t.text_primary())),
-                Span::styled("[ Shift ]", t.key_badge()),
-            ]),
-            Line::from(Span::styled(
-                "    In VS Code and Antigravity IDE (xterm.js), holding the Shift key while dragging",
-                Style::default().fg(t.text_primary()),
-            )),
-            Line::from(Span::styled(
-                "    immediately bypasses terminal mouse capture, letting you highlight any text on screen.",
-                Style::default().fg(t.text_primary()),
-            )),
-            Line::from(Span::styled(
-                "    (Tip: In Apple Terminal or iTerm2, hold Option (⌥) while dragging).",
-                Style::default().fg(t.text_muted()),
-            )),
-            Line::from(""),
-            Line::from(vec![
-                Span::styled("  • Method 3 (Mouse Mode Toggle): ", Style::default().fg(t.status_accepted()).add_modifier(Modifier::BOLD)),
-                Span::styled("Press ", Style::default().fg(t.text_primary())),
-                Span::styled("[ m ]", t.key_badge()),
-            ]),
-            Line::from(Span::styled(
-                "    Pressing 'm' disables terminal mouse reporting entirely. You can then click and drag",
-                Style::default().fg(t.text_primary()),
-            )),
-            Line::from(Span::styled(
-                "    to select text with standard terminal selection. Press 'm' again to restore click navigation.",
+                "    scorecard directly into your system clipboard without requiring any manual dragging.",
                 Style::default().fg(t.text_primary()),
             )),
             Line::from(""),

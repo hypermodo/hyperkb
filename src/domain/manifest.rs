@@ -126,7 +126,7 @@ fn default_theme() -> String {
 }
 
 fn default_mouse_enabled() -> bool {
-    true
+    false
 }
 
 impl Default for KbSettings {
@@ -348,7 +348,7 @@ mod tests {
         assert_eq!(settings.audit_max_lines, 250);
         assert_eq!(settings.audit_max_depth, 3);
         assert_eq!(settings.theme, "cyberpunk");
-        assert!(settings.mouse_enabled);
+        assert!(!settings.mouse_enabled);
 
         let json = serde_json::to_string(&settings).unwrap();
         let deserialized: KbSettings = serde_json::from_str(&json).unwrap();

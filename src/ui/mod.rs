@@ -73,6 +73,7 @@ fn run_loop(
     db: &Database,
 ) -> io::Result<()> {
     while !app.should_quit {
+        let mut highlighted_text: Option<String> = None;
         terminal.draw(|frame| {
             let area = frame.area();
             let t = &app.theme;
@@ -107,7 +108,53 @@ fn run_loop(
             if app.show_help {
                 HelpModal::render(frame, app, area);
             }
+
+            // Visual in-TUI mouse drag selection highlight
+            if app.is_dragging {
+                if let (Some((start_col, start_row)), Some((curr_col, curr_row))) = (app.drag_start, app.drag_current) {
+                    let (from, to) = if (start_row, start_col) <= (curr_row, curr_col) {
+                        ((start_row, start_col), (curr_row, curr_col))
+                    } else {
+                        ((curr_row, curr_col), (start_row, start_col))
+                    };
+
+                    let buffer = frame.buffer_mut();
+                    let buf_area = buffer.area;
+                    let mut selected_text = String::new();
+
+                    for r in from.0..=to.0 {
+                        if r >= buf_area.height {
+                            continue;
+                        }
+                        let c_start = if r == from.0 { from.1 } else { 0 };
+                        let c_end = if r == to.0 { to.1 } else { buf_area.width.saturating_sub(1) };
+
+                        let mut line_str = String::new();
+                        for c in c_start..=c_end {
+                            if c >= buf_area.width {
+                                continue;
+                            }
+                            let cell = &mut buffer[(c, r)];
+                            line_str.push_str(cell.symbol());
+                            cell.set_style(
+                                Style::default()
+                                    .bg(t.accent())
+                                    .fg(t.bg())
+                            );
+                        }
+                        if !selected_text.is_empty() {
+                            selected_text.push('\n');
+                        }
+                        selected_text.push_str(line_str.trim_end());
+                    }
+                    highlighted_text = Some(selected_text);
+                }
+            }
         })?;
+
+        if let Some(txt) = highlighted_text {
+            app.last_selected_text = Some(txt);
+        }
 
         // Non-blocking poll with 16ms timeout (~60 FPS response time, 0% CPU when idle)
         if event::poll(Duration::from_millis(16))? {
@@ -179,12 +226,12 @@ fn run_loop(
                                 if enabled {
                                     let _ = execute!(terminal.backend_mut(), EnableMouseCapture);
                                     let _ = terminal.backend_mut().flush();
-                                    app.status_message = Some("Mouse Capture: ON (Click to Navigate)".to_string());
+                                    app.status_message = Some("Mouse Mode: ON (Click to navigate, drag to highlight & copy)".to_string());
                                 } else {
                                     let _ = execute!(terminal.backend_mut(), DisableMouseCapture);
                                     let _ = terminal.backend_mut().write_all(b"\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1005l\x1b[?1006l\x1b[?1015l");
                                     let _ = terminal.backend_mut().flush();
-                                    app.status_message = Some("Mouse Capture: OFF (Terminal drag-selection enabled. Or hold Shift for instant bypass)".to_string());
+                                    app.status_message = Some("Mouse Mode: OFF (Native terminal drag-selection enabled without modifier keys)".to_string());
                                 }
                             }
                             KeyCode::Char('T') => {
@@ -338,83 +385,117 @@ fn run_loop(
 
                     match mouse.kind {
                         MouseEventKind::Down(MouseButton::Left) => {
-                            if app.status_message.is_some() {
-                                app.status_message = None;
-                            }
-
-                            // 1. Header clicks (row 1: tabs, row 3: taxonomy/category filter pills)
-                            if row <= 4 {
-                                Header::handle_click(app, db, col, row);
-                            }
-                            // 2. Main content clicks
-                            else if row >= 5 && row < area.height.saturating_sub(2) {
-                                let list_width = match app.active_tab {
-                                    ActiveTab::Work => area.width * 45 / 100,
-                                    ActiveTab::Reader => 0,
-                                    ActiveTab::Settings => (area.width * 40 / 100).clamp(38, 65),
-                                    _ => (area.width * 38 / 100).clamp(36, 68),
-                                };
-
-                                if col < list_width {
-                                    app.focused_pane = crate::ui::app::FocusedPane::List;
-                                    let rel_row = row.saturating_sub(5);
-                                    if rel_row >= 2 {
-                                        match app.active_tab {
-                                            ActiveTab::Work => {
-                                                let item_idx = ((rel_row - 2) / 3) as usize;
-                                                if item_idx < app.active_risks.len() {
-                                                    app.selected_risk_idx = item_idx;
-                                                }
-                                            }
-                                            ActiveTab::Directives => {
-                                                let item_idx = ((rel_row - 2) / 3) as usize;
-                                                if item_idx < app.directives.len() {
-                                                    app.selected_directive_idx = item_idx;
-                                                }
-                                            }
-                                            ActiveTab::Sessions => {
-                                                let item_idx = ((rel_row - 2) / 3) as usize;
-                                                if item_idx < app.sessions.len() {
-                                                    app.selected_session_idx = item_idx;
-                                                }
-                                            }
-                                            ActiveTab::Settings => {
-                                                let item_idx = ((rel_row - 2) / 3) as usize;
-                                                if item_idx < 6 {
-                                                    app.settings_selected_idx = item_idx;
-                                                }
-                                            }
-                                            ActiveTab::Explore => {
-                                                if app.explore_tree_mode {
-                                                    let tree_idx = ((rel_row - 2) / 2) as usize;
-                                                    let tree = app.build_explore_tree();
-                                                    if tree_idx < tree.len() {
-                                                        if app.selected_tree_idx == tree_idx {
-                                                            app.open_selected();
-                                                        } else {
-                                                            app.selected_tree_idx = tree_idx;
-                                                            if let ExploreTreeItem::Doc { doc_idx, .. } = &tree[tree_idx] {
-                                                                app.selected_doc_idx = *doc_idx;
-                                                            }
-                                                        }
-                                                    }
-                                                } else {
-                                                    let item_idx = ((rel_row - 2) / 3) as usize;
-                                                    if item_idx < app.documents.len() {
-                                                        app.selected_doc_idx = item_idx;
-                                                    }
-                                                }
-                                            }
-                                            _ => {}
-                                        }
-                                    }
-                                } else {
-                                    app.focused_pane = crate::ui::app::FocusedPane::Detail;
+                            app.drag_start = Some((col, row));
+                            app.drag_current = Some((col, row));
+                            app.is_dragging = false;
+                        }
+                        MouseEventKind::Drag(MouseButton::Left) => {
+                            if let Some((sc, sr)) = app.drag_start {
+                                if col != sc || row != sr {
+                                    app.is_dragging = true;
+                                    app.drag_current = Some((col, row));
                                 }
                             }
-                            // 3. Footer clicks
-                            else if row >= area.height.saturating_sub(2) && col >= area.width.saturating_sub(12) {
-                                app.should_quit = true;
+                        }
+                        MouseEventKind::Up(MouseButton::Left) => {
+                            if app.is_dragging {
+                                if let Some(text) = app.last_selected_text.take() {
+                                    let trimmed = text.trim();
+                                    if !trimmed.is_empty() {
+                                        App::copy_text_to_clipboard(trimmed);
+                                        let preview = if trimmed.len() > 32 {
+                                            format!("{}...", &trimmed[..32])
+                                        } else {
+                                            trimmed.to_string()
+                                        };
+                                        app.status_message = Some(format!("✔ Copied '{}' to clipboard (Cmd+V to paste)", preview));
+                                    }
+                                }
+                                app.is_dragging = false;
+                                app.drag_start = None;
+                                app.drag_current = None;
+                            } else {
+                                app.drag_start = None;
+                                app.drag_current = None;
+
+                                if app.status_message.is_some() {
+                                    app.status_message = None;
+                                }
+
+                                // 1. Header clicks (row 1: tabs, row 3: taxonomy/category filter pills)
+                                if row <= 4 {
+                                    Header::handle_click(app, db, col, row);
+                                }
+                                // 2. Main content clicks
+                                else if row >= 5 && row < area.height.saturating_sub(2) {
+                                    let list_width = match app.active_tab {
+                                        ActiveTab::Work => area.width * 45 / 100,
+                                        ActiveTab::Reader => 0,
+                                        ActiveTab::Settings => (area.width * 40 / 100).clamp(38, 65),
+                                        _ => (area.width * 38 / 100).clamp(36, 68),
+                                    };
+
+                                    if col < list_width {
+                                        app.focused_pane = crate::ui::app::FocusedPane::List;
+                                        let rel_row = row.saturating_sub(5);
+                                        if rel_row >= 2 {
+                                            match app.active_tab {
+                                                ActiveTab::Work => {
+                                                    let item_idx = ((rel_row - 2) / 3) as usize;
+                                                    if item_idx < app.active_risks.len() {
+                                                        app.selected_risk_idx = item_idx;
+                                                    }
+                                                }
+                                                ActiveTab::Directives => {
+                                                    let item_idx = ((rel_row - 2) / 3) as usize;
+                                                    if item_idx < app.directives.len() {
+                                                        app.selected_directive_idx = item_idx;
+                                                    }
+                                                }
+                                                ActiveTab::Sessions => {
+                                                    let item_idx = ((rel_row - 2) / 3) as usize;
+                                                    if item_idx < app.sessions.len() {
+                                                        app.selected_session_idx = item_idx;
+                                                    }
+                                                }
+                                                ActiveTab::Settings => {
+                                                    let item_idx = ((rel_row - 2) / 3) as usize;
+                                                    if item_idx < 6 {
+                                                        app.settings_selected_idx = item_idx;
+                                                    }
+                                                }
+                                                ActiveTab::Explore => {
+                                                    if app.explore_tree_mode {
+                                                        let tree_idx = ((rel_row - 2) / 2) as usize;
+                                                        let tree = app.build_explore_tree();
+                                                        if tree_idx < tree.len() {
+                                                            if app.selected_tree_idx == tree_idx {
+                                                                app.open_selected();
+                                                            } else {
+                                                                app.selected_tree_idx = tree_idx;
+                                                                if let ExploreTreeItem::Doc { doc_idx, .. } = &tree[tree_idx] {
+                                                                    app.selected_doc_idx = *doc_idx;
+                                                                }
+                                                            }
+                                                        }
+                                                    } else {
+                                                        let item_idx = ((rel_row - 2) / 3) as usize;
+                                                        if item_idx < app.documents.len() {
+                                                            app.selected_doc_idx = item_idx;
+                                                        }
+                                                    }
+                                                }
+                                                _ => {}
+                                            }
+                                        }
+                                    } else {
+                                        app.focused_pane = crate::ui::app::FocusedPane::Detail;
+                                    }
+                                }
+                                // 3. Footer clicks
+                                else if row >= area.height.saturating_sub(2) && col >= area.width.saturating_sub(12) {
+                                    app.should_quit = true;
+                                }
                             }
                         }
                         MouseEventKind::ScrollDown => {
