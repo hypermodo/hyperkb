@@ -295,17 +295,51 @@ fn run_loop(
 
                     let col = mouse.column;
                     let row = mouse.row;
-                    let area = terminal.size()?;
+                    let size = terminal.size()?;
+                    let area = ratatui::layout::Rect::new(0, 0, size.width, size.height);
+
+                    // If Help modal is currently open, isolate all mouse actions to the modal overlay.
+                    if app.show_help {
+                        match mouse.kind {
+                            MouseEventKind::Down(MouseButton::Left) => {
+                                let modal = HelpModal::modal_area(area);
+                                let inside = col >= modal.x
+                                    && col < modal.x + modal.width
+                                    && row >= modal.y
+                                    && row < modal.y + modal.height;
+
+                                if !inside {
+                                    // Clicking outside the help modal dismisses it safely!
+                                    // Under no circumstances should this click trigger footer [q] quit or underlying view clicks!
+                                    app.show_help = false;
+                                } else {
+                                    // If clicked on the top title bar or bottom bar of modal:
+                                    let is_top_bar = row == modal.y;
+                                    let is_bottom_bar = row == modal.y + modal.height.saturating_sub(1);
+                                    if is_top_bar || is_bottom_bar {
+                                        app.show_help = false;
+                                    }
+                                }
+                                continue;
+                            }
+                            MouseEventKind::ScrollDown => {
+                                app.help_scroll += 2;
+                                continue;
+                            }
+                            MouseEventKind::ScrollUp => {
+                                app.help_scroll = app.help_scroll.saturating_sub(2);
+                                continue;
+                            }
+                            _ => {
+                                continue;
+                            }
+                        }
+                    }
 
                     match mouse.kind {
                         MouseEventKind::Down(MouseButton::Left) => {
                             if app.status_message.is_some() {
                                 app.status_message = None;
-                            }
-
-                            if app.show_help {
-                                app.show_help = false;
-                                continue;
                             }
 
                             // 1. Header clicks (row 1: tabs, row 3: taxonomy/category filter pills)

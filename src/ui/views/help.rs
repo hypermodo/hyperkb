@@ -10,22 +10,24 @@ use ratatui::{
 pub struct HelpModal;
 
 impl HelpModal {
-    pub fn render(frame: &mut Frame, app: &App, area: Rect) {
-        let t = &app.theme;
-
-        // Center modal: 86% width (min 65, max 115), 90% height (min 20, max 46)
+    pub fn modal_area(area: Rect) -> Rect {
         let modal_width = (area.width * 86 / 100).clamp(65, 115);
         let modal_height = (area.height * 90 / 100).clamp(20, 46);
 
         let horiz_pad = (area.width.saturating_sub(modal_width)) / 2;
         let vert_pad = (area.height.saturating_sub(modal_height)) / 2;
 
-        let modal_area = Rect::new(
+        Rect::new(
             area.x + horiz_pad,
             area.y + vert_pad,
             modal_width,
             modal_height,
-        );
+        )
+    }
+
+    pub fn render(frame: &mut Frame, app: &App, area: Rect) {
+        let t = &app.theme;
+        let modal_area = Self::modal_area(area);
 
         let text = vec![
             Line::from(vec![
