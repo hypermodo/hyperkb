@@ -161,11 +161,14 @@ impl DirectiveWorkflow {
         let mut bloat_warnings = Vec::new();
         let mut taxonomies_used = Vec::new();
 
+        let manifest = crate::domain::RepoManifest::load_or_default(root_path);
+        let max_rules = manifest.settings.max_briefing_directives;
+
         // 1. Check for Rule Bloat
-        if global_count > 5 {
+        if global_count > max_rules {
             bloat_warnings.push(format!(
-                "Found {} active global directives. Recommended threshold is ≤ 5 to prevent LLM prompt degradation. Consider scoping rules to specific path patterns.",
-                global_count
+                "Found {} active global directives. Configured threshold is ≤ {} to prevent LLM prompt degradation. Consider scoping rules to specific path patterns.",
+                global_count, max_rules
             ));
         }
 

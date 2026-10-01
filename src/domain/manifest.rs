@@ -79,6 +79,67 @@ pub struct RepoManifest {
 
     #[serde(default)]
     pub taxonomy: TaxonomyConfig,
+
+    #[serde(default)]
+    pub settings: KbSettings,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct KbSettings {
+    #[serde(default = "default_max_briefing_directives")]
+    pub max_briefing_directives: usize,
+
+    #[serde(default = "default_stale_days_threshold")]
+    pub stale_days_threshold: i64,
+
+    #[serde(default = "default_audit_max_lines")]
+    pub audit_max_lines: usize,
+
+    #[serde(default = "default_audit_max_depth")]
+    pub audit_max_depth: usize,
+
+    #[serde(default = "default_theme")]
+    pub theme: String,
+
+    #[serde(default = "default_mouse_enabled")]
+    pub mouse_enabled: bool,
+}
+
+fn default_max_briefing_directives() -> usize {
+    5
+}
+
+fn default_stale_days_threshold() -> i64 {
+    90
+}
+
+fn default_audit_max_lines() -> usize {
+    250
+}
+
+fn default_audit_max_depth() -> usize {
+    3
+}
+
+fn default_theme() -> String {
+    "cyberpunk".to_string()
+}
+
+fn default_mouse_enabled() -> bool {
+    true
+}
+
+impl Default for KbSettings {
+    fn default() -> Self {
+        Self {
+            max_briefing_directives: default_max_briefing_directives(),
+            stale_days_threshold: default_stale_days_threshold(),
+            audit_max_lines: default_audit_max_lines(),
+            audit_max_depth: default_audit_max_depth(),
+            theme: default_theme(),
+            mouse_enabled: default_mouse_enabled(),
+        }
+    }
 }
 
 fn default_collection_id() -> String {
@@ -130,6 +191,7 @@ impl Default for RepoManifest {
             directives_path: default_directives_path(),
             memory_path: default_memory_path(),
             taxonomy: TaxonomyConfig::default(),
+            settings: KbSettings::default(),
         }
     }
 }
@@ -276,5 +338,25 @@ mod tests {
 
         let duplicate_err = m.add_category("database", "Dup", "Dup");
         assert!(duplicate_err.is_err());
+    }
+
+    #[test]
+    fn test_kb_settings_defaults_and_roundtrip() {
+        let settings = KbSettings::default();
+        assert_eq!(settings.max_briefing_directives, 5);
+        assert_eq!(settings.stale_days_threshold, 90);
+        assert_eq!(settings.audit_max_lines, 250);
+        assert_eq!(settings.audit_max_depth, 3);
+        assert_eq!(settings.theme, "cyberpunk");
+        assert!(settings.mouse_enabled);
+
+        let json = serde_json::to_string(&settings).unwrap();
+        let deserialized: KbSettings = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized, settings);
+
+        // Test backward compatibility: empty json should deserialize with defaults
+        let empty_json = "{}";
+        let from_empty: KbSettings = serde_json::from_str(empty_json).unwrap();
+        assert_eq!(from_empty, settings);
     }
 }

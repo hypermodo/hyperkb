@@ -1,5 +1,6 @@
-use crate::domain::{AgentSession, BrowseOptions, Directive, Document, RiskMatch};
+use crate::domain::{AgentSession, BrowseOptions, Directive, Document, RepoManifest, RiskMatch};
 use crate::storage::{Database, Queries};
+use crate::ui::theme::ThemeMode;
 use std::path::Path;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -8,7 +9,8 @@ pub enum ActiveTab {
     Explore = 1,
     Directives = 2,
     Sessions = 3,
-    Reader = 4,
+    Settings = 4,
+    Reader = 5,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -40,6 +42,18 @@ pub struct App {
     pub focused_pane: FocusedPane,
     pub collection_id: String,
     pub profile_id: String,
+    pub manifest: RepoManifest,
+    pub theme: ThemeMode,
+    pub mouse_capture: bool,
+
+    // Help & Methodology state
+    pub show_help: bool,
+    pub help_scroll: usize,
+    pub show_scoring_methodology: bool,
+
+    // Settings state
+    pub settings_selected_idx: usize,
+    pub settings_dirty: bool,
 
     // Explore / Document state
     pub documents: Vec<Document>,
@@ -78,12 +92,25 @@ pub struct App {
 
 impl App {
     pub fn new(collection_id: &str, profile_id: &str) -> Self {
+        let root = std::env::current_dir().unwrap_or_else(|_| Path::new(".").to_path_buf());
+        let manifest = RepoManifest::load_or_default(&root);
+        let theme = ThemeMode::from_id(&manifest.settings.theme);
+        let mouse_capture = manifest.settings.mouse_enabled;
+
         Self {
             should_quit: false,
             active_tab: ActiveTab::Work,
             focused_pane: FocusedPane::List,
             collection_id: collection_id.to_string(),
             profile_id: profile_id.to_string(),
+            manifest,
+            theme,
+            mouse_capture,
+            show_help: false,
+            help_scroll: 0,
+            show_scoring_methodology: false,
+            settings_selected_idx: 0,
+            settings_dirty: false,
             documents: Vec::new(),
             selected_doc_idx: 0,
             selected_category: "all".into(),
@@ -352,6 +379,9 @@ impl App {
                     self.session_preview_scroll = 0;
                 }
             }
+            ActiveTab::Settings => {
+                self.next_setting();
+            }
             ActiveTab::Reader => {
                 self.reader_scroll_offset += 2;
             }
@@ -418,6 +448,9 @@ impl App {
                     self.session_preview_scroll = 0;
                 }
             }
+            ActiveTab::Settings => {
+                self.prev_setting();
+            }
             ActiveTab::Reader => {
                 if self.reader_scroll_offset > 2 {
                     self.reader_scroll_offset -= 2;
@@ -464,6 +497,9 @@ impl App {
                     self.session_preview_scroll = 0;
                 }
             }
+            ActiveTab::Settings => {
+                self.next_setting();
+            }
             ActiveTab::Reader => {
                 self.reader_scroll_offset += 15;
             }
@@ -503,6 +539,9 @@ impl App {
                     self.selected_session_idx = self.selected_session_idx.saturating_sub(8);
                     self.session_preview_scroll = 0;
                 }
+            }
+            ActiveTab::Settings => {
+                self.prev_setting();
             }
             ActiveTab::Reader => {
                 self.reader_scroll_offset = self.reader_scroll_offset.saturating_sub(15);
@@ -558,16 +597,114 @@ impl App {
                 self.active_tab = ActiveTab::Reader;
                 self.reader_scroll_offset = 0;
             }
+        } else if self.active_tab == ActiveTab::Settings {
+            let root = std::env::current_dir().unwrap_or_else(|_| Path::new(".").to_path_buf());
+            let _ = self.save_settings(root);
         }
     }
 
     pub fn go_back(&mut self) {
-        if self.is_filtering {
+        if self.show_help {
+            self.show_help = false;
+        } else if self.show_scoring_methodology {
+            self.show_scoring_methodology = false;
+        } else if self.is_filtering {
             self.is_filtering = false;
             self.filter_query.clear();
         } else if self.active_tab == ActiveTab::Reader {
             self.active_tab = ActiveTab::Explore;
         }
+    }
+
+    pub fn next_setting(&mut self) {
+        self.settings_selected_idx = (self.settings_selected_idx + 1) % 6;
+    }
+
+    pub fn prev_setting(&mut self) {
+        if self.settings_selected_idx == 0 {
+            self.settings_selected_idx = 5;
+        } else {
+            self.settings_selected_idx -= 1;
+        }
+    }
+
+    pub fn adjust_setting(&mut self, delta: i32) {
+        match self.settings_selected_idx {
+            0 => {
+                let curr = self.manifest.settings.max_briefing_directives as i32;
+                self.manifest.settings.max_briefing_directives = (curr + delta).clamp(1, 20) as usize;
+                self.settings_dirty = true;
+            }
+            1 => {
+                let curr = self.manifest.settings.stale_days_threshold;
+                let step = if delta > 0 { 15 } else { -15 };
+                self.manifest.settings.stale_days_threshold = (curr + step).clamp(7, 365);
+                self.settings_dirty = true;
+            }
+            2 => {
+                let curr = self.manifest.settings.audit_max_lines as i32;
+                let step = if delta > 0 { 25 } else { -25 };
+                self.manifest.settings.audit_max_lines = (curr + step).clamp(50, 1000) as usize;
+                self.settings_dirty = true;
+            }
+            3 => {
+                let curr = self.manifest.settings.audit_max_depth as i32;
+                self.manifest.settings.audit_max_depth = (curr + delta).clamp(1, 8) as usize;
+                self.settings_dirty = true;
+            }
+            4 => {
+                if delta > 0 {
+                    self.theme = self.theme.next();
+                } else {
+                    self.theme = self.theme.prev();
+                }
+                self.manifest.settings.theme = self.theme.id_str().to_string();
+                self.settings_dirty = true;
+            }
+            5 => {
+                self.mouse_capture = !self.mouse_capture;
+                self.manifest.settings.mouse_enabled = self.mouse_capture;
+                self.settings_dirty = true;
+            }
+            _ => {}
+        }
+    }
+
+    pub fn next_theme(&mut self) {
+        self.theme = self.theme.next();
+        self.manifest.settings.theme = self.theme.id_str().to_string();
+        self.settings_dirty = true;
+        self.status_message = Some(format!("Theme: {}", self.theme.as_str()));
+    }
+
+    pub fn prev_theme(&mut self) {
+        self.theme = self.theme.prev();
+        self.manifest.settings.theme = self.theme.id_str().to_string();
+        self.settings_dirty = true;
+        self.status_message = Some(format!("Theme: {}", self.theme.as_str()));
+    }
+
+    pub fn toggle_mouse(&mut self) -> bool {
+        self.mouse_capture = !self.mouse_capture;
+        self.manifest.settings.mouse_enabled = self.mouse_capture;
+        self.settings_dirty = true;
+        self.mouse_capture
+    }
+
+    pub fn toggle_help(&mut self) {
+        self.show_help = !self.show_help;
+        self.help_scroll = 0;
+    }
+
+    pub fn toggle_scoring_methodology(&mut self) {
+        self.show_scoring_methodology = !self.show_scoring_methodology;
+    }
+
+    pub fn save_settings<P: AsRef<Path>>(&mut self, root: P) -> Result<(), String> {
+        self.manifest.save(root)?;
+        self.settings_dirty = false;
+        self.status_message = Some("Settings saved to hyperkb.json".to_string());
+        Ok(())
     }
 
     pub fn selected_document(&self) -> Option<&Document> {
@@ -658,5 +795,45 @@ mod tests {
         // Next item navigation in tree mode
         app.next();
         assert_eq!(app.selected_tree_idx, 1);
+    }
+
+    #[test]
+    fn test_settings_adjustments_and_toggles() {
+        let mut app = App::new("test", "test");
+        assert_eq!(app.manifest.settings.max_briefing_directives, 5);
+        assert!(!app.settings_dirty);
+
+        // Adjust knob 0 (max_briefing_directives) +1
+        app.settings_selected_idx = 0;
+        app.adjust_setting(1);
+        assert_eq!(app.manifest.settings.max_briefing_directives, 6);
+        assert!(app.settings_dirty);
+
+        // Adjust knob 4 (theme)
+        app.settings_selected_idx = 4;
+        assert_eq!(app.theme, ThemeMode::Cyberpunk);
+        app.adjust_setting(1);
+        assert_eq!(app.theme, ThemeMode::Modern);
+        assert_eq!(app.manifest.settings.theme, "modern");
+
+        // Adjust knob 5 (mouse)
+        app.settings_selected_idx = 5;
+        let initial_mouse = app.mouse_capture;
+        app.adjust_setting(1);
+        assert_eq!(app.mouse_capture, !initial_mouse);
+        assert_eq!(app.manifest.settings.mouse_enabled, !initial_mouse);
+
+        // Test help and methodology toggles
+        assert!(!app.show_help);
+        app.toggle_help();
+        assert!(app.show_help);
+        app.go_back();
+        assert!(!app.show_help);
+
+        assert!(!app.show_scoring_methodology);
+        app.toggle_scoring_methodology();
+        assert!(app.show_scoring_methodology);
+        app.go_back();
+        assert!(!app.show_scoring_methodology);
     }
 }

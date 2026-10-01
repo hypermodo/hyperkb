@@ -206,6 +206,23 @@ enum Commands {
         #[arg(long)]
         json: bool,
     },
+    /// View or update repository configuration and policy knobs (hyperkb.json)
+    Config {
+        /// Show current configuration or specific key
+        #[arg(short, long)]
+        get: Option<String>,
+        /// Set a configuration key=value (e.g. -s max_briefing_directives=8, -s theme=nord, -s mouse_enabled=false)
+        #[arg(short, long)]
+        set: Option<String>,
+        /// Output configuration as JSON
+        #[arg(long)]
+        json: bool,
+    },
+    /// Print comprehensive HyperKB architecture, methodology, shortcuts, and telemetry documentation
+    Docs {
+        /// Optional section to display (overview, shortcuts, math, settings, themes, mcp)
+        section: Option<String>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -809,8 +826,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         },
         Some(Commands::Brief { scope }) => {
-            let briefing = SessionManager::generate_briefing(db.conn(), collection_id, scope.as_deref())
-                .map_err(|e| format!("Failed to generate briefing: {}", e))?;
+            let briefing = SessionManager::generate_briefing_with_limit(
+                db.conn(),
+                collection_id,
+                scope.as_deref(),
+                manifest.settings.max_briefing_directives,
+            )
+            .map_err(|e| format!("Failed to generate briefing: {}", e))?;
             println!("{}", briefing.formatted_markdown);
         }
         Some(Commands::Metrics { session_id, json }) => {
@@ -1026,7 +1048,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             if audit_kb_flag {
                 let docs_dir = cli.root.join(&manifest.docs_root);
-                let report = KbLinter::audit_directory(&docs_dir)?;
+                let report = KbLinter::audit_directory_with_settings(
+                    &docs_dir,
+                    manifest.settings.audit_max_lines,
+                    manifest.settings.audit_max_depth,
+                    manifest.settings.stale_days_threshold,
+                )?;
                 kb_report = Some(report);
             }
 
@@ -1054,7 +1081,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     println!();
 
                     if !report.bloat_warnings.is_empty() {
-                        println!("Document Bloat Warnings (>250 lines / >2000 words):");
+                        println!("Document Bloat Warnings (Target: ≤ {} lines / ≤ 2000 words):", manifest.settings.audit_max_lines);
                         for w in &report.bloat_warnings {
                             println!("  - {}", w);
                         }
@@ -1062,7 +1089,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
 
                     if !report.depth_warnings.is_empty() {
-                        println!("Folder Depth Warnings (>3 levels):");
+                        println!("Folder Depth Warnings (Target: ≤ {} levels):", manifest.settings.audit_max_depth);
                         for w in &report.depth_warnings {
                             println!("  - {}", w);
                         }
@@ -1078,7 +1105,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
 
                     if !report.stale_warnings.is_empty() {
-                        println!("Stale Proposals (>90 days in proposed status):");
+                        println!("Stale Proposals (> {} days in proposed status):", manifest.settings.stale_days_threshold);
                         for w in &report.stale_warnings {
                             println!("  - {}", w);
                         }
@@ -1086,7 +1113,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
 
                     if report.is_clean() {
-                        println!("Clean: All documents comply with line count (<250), word count (<2000), nesting depth (≤3), and frontmatter schema.");
+                        println!(
+                            "Clean: All documents comply with line count (≤ {}), word count (≤ 2000), nesting depth (≤ {}), and frontmatter schema.",
+                            manifest.settings.audit_max_lines, manifest.settings.audit_max_depth
+                        );
                         println!();
                     }
                 }
@@ -1095,7 +1125,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     println!("=== HyperKB Policy Directives Audit ===");
                     println!("  Total Directives:  {}", report.total_directives);
                     println!("  Active Directives: {}", report.active_directives);
-                    println!("  Global Rules:      {} (Threshold: ≤ 5)", report.global_count);
+                    println!("  Global Rules:      {} (Configured Threshold: ≤ {})", report.global_count, manifest.settings.max_briefing_directives);
                     println!("  Taxonomies Used:   {}", report.taxonomies_used.join(", "));
                     println!();
 
@@ -1116,10 +1146,89 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
 
                     if report.bloat_warnings.is_empty() && report.stale_directives.is_empty() {
-                        println!("Clean: All active directives are scoped, fresh, and within the Rule of 5 threshold.");
+                        println!("Clean: All active directives are scoped, fresh, and within the Rule of {} threshold.", manifest.settings.max_briefing_directives);
                     }
                 }
             }
+        }
+        Some(Commands::Config { get, set, json }) => {
+            let mut manifest = RepoManifest::load_or_default(&cli.root);
+            if let Some(set_str) = set {
+                if let Some((key, val)) = set_str.split_once('=') {
+                    let key = key.trim();
+                    let val = val.trim();
+                    match key {
+                        "max_briefing_directives" | "directives_ceiling" => {
+                            let n: usize = val.parse().map_err(|_| format!("Invalid integer value '{}'", val))?;
+                            manifest.settings.max_briefing_directives = n.clamp(1, 20);
+                            println!("✓ Updated max_briefing_directives to {}", manifest.settings.max_briefing_directives);
+                        }
+                        "stale_days_threshold" | "stale_days" => {
+                            let n: i64 = val.parse().map_err(|_| format!("Invalid integer value '{}'", val))?;
+                            manifest.settings.stale_days_threshold = n.clamp(7, 365);
+                            println!("✓ Updated stale_days_threshold to {} days", manifest.settings.stale_days_threshold);
+                        }
+                        "audit_max_lines" | "max_lines" => {
+                            let n: usize = val.parse().map_err(|_| format!("Invalid integer value '{}'", val))?;
+                            manifest.settings.audit_max_lines = n.clamp(50, 1000);
+                            println!("✓ Updated audit_max_lines to {} lines", manifest.settings.audit_max_lines);
+                        }
+                        "audit_max_depth" | "max_depth" => {
+                            let n: usize = val.parse().map_err(|_| format!("Invalid integer value '{}'", val))?;
+                            manifest.settings.audit_max_depth = n.clamp(1, 8);
+                            println!("✓ Updated audit_max_depth to {} levels", manifest.settings.audit_max_depth);
+                        }
+                        "theme" => {
+                            let normalized = val.to_lowercase();
+                            if !["cyberpunk", "modern", "nord", "tokyonight", "light"].contains(&normalized.as_str()) {
+                                return Err(format!("Invalid theme '{}'. Available themes: cyberpunk, modern, nord, tokyonight, light", val).into());
+                            }
+                            manifest.settings.theme = normalized;
+                            println!("✓ Updated theme to '{}'", manifest.settings.theme);
+                        }
+                        "mouse_enabled" | "mouse" => {
+                            let b: bool = match val.to_lowercase().as_str() {
+                                "true" | "1" | "yes" | "on" => true,
+                                "false" | "0" | "no" | "off" => false,
+                                _ => return Err(format!("Invalid boolean '{}'. Use true/false or on/off", val).into()),
+                            };
+                            manifest.settings.mouse_enabled = b;
+                            println!("✓ Updated mouse_enabled to {}", manifest.settings.mouse_enabled);
+                        }
+                        _ => {
+                            return Err(format!("Unknown configuration key '{}'. Available keys:\n  - max_briefing_directives\n  - stale_days_threshold\n  - audit_max_lines\n  - audit_max_depth\n  - theme\n  - mouse_enabled", key).into());
+                        }
+                    }
+                    manifest.save(&cli.root)?;
+                } else {
+                    return Err("Expected format: key=value (e.g. -s max_briefing_directives=8)".to_string().into());
+                }
+            } else if json {
+                println!("{}", serde_json::to_string_pretty(&manifest.settings)?);
+            } else if let Some(key) = get {
+                match key.as_str() {
+                    "max_briefing_directives" => println!("{}", manifest.settings.max_briefing_directives),
+                    "stale_days_threshold" => println!("{}", manifest.settings.stale_days_threshold),
+                    "audit_max_lines" => println!("{}", manifest.settings.audit_max_lines),
+                    "audit_max_depth" => println!("{}", manifest.settings.audit_max_depth),
+                    "theme" => println!("{}", manifest.settings.theme),
+                    "mouse_enabled" => println!("{}", manifest.settings.mouse_enabled),
+                    _ => return Err(format!("Unknown configuration key '{}'", key).into()),
+                }
+            } else {
+                println!("=== HyperKB Policy Configuration (hyperkb.json) ===");
+                println!("  max_briefing_directives : {} (Rule of N directive ceiling)", manifest.settings.max_briefing_directives);
+                println!("  stale_days_threshold    : {} days (KB freshness horizon)", manifest.settings.stale_days_threshold);
+                println!("  audit_max_lines         : {} lines (Doc length limit)", manifest.settings.audit_max_lines);
+                println!("  audit_max_depth         : {} levels (Folder nesting depth)", manifest.settings.audit_max_depth);
+                println!("  theme                   : {} (TUI color theme)", manifest.settings.theme);
+                println!("  mouse_enabled           : {} (Terminal mouse capture)", manifest.settings.mouse_enabled);
+                println!();
+                println!("To modify a setting: hyperkb config -s key=value");
+            }
+        }
+        Some(Commands::Docs { section }) => {
+            print_docs(section.as_deref());
         }
         None => {
             // Index existing docs in workspace so the TUI opens with real knowledge ready to browse
@@ -1136,4 +1245,150 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     Ok(())
+}
+
+fn print_docs(section: Option<&str>) {
+    let s = section.unwrap_or("all").to_lowercase();
+
+    if s == "all" || s == "overview" {
+        println!("================================================================================");
+        println!("  HyperKB: Deterministic Knowledge Architecture for Autonomous AI Coding Agents ");
+        println!("================================================================================");
+        println!();
+        println!("HyperKB eliminates context bloat, hallucinated conventions, and PR rejection loops");
+        println!("by establishing an active, local knowledge graph backed by SQLite and Ratatui.");
+        println!();
+        println!("CORE PHILOSOPHY & PILLARS:");
+        println!("  1. Zero-Ceremony Context Injection");
+        println!("     Instead of querying bloated multi-thousand line prompt rules, AI agents call");
+        println!("     'get_session_briefing' to receive active architectural invariants, high-priority");
+        println!("     risks, recent churn hotspots, and friction warnings in 1 deterministic roundtrip.");
+        println!();
+        println!("  2. Pre-Commit Enforcement Gate");
+        println!("     'hyperkb check' runs during git pre-commit to evaluate modified files against");
+        println!("     active architectural invariants and unacknowledged risks. Violations block git commit.");
+        println!();
+        println!("  3. Defensible Scientific Telemetry");
+        println!("     Every agent coding session records tool calls, edits, diff volume, and review oscillations.");
+        println!("     Effectiveness is grounded in an exact mathematical formula decomposed into quantifiable");
+        println!("     penalties and bonuses rather than arbitrary sentiment.");
+        println!();
+    }
+
+    if s == "all" || s == "shortcuts" {
+        println!("================================================================================");
+        println!("  HyperKB TUI Navigation & Shortcuts Reference                                 ");
+        println!("================================================================================");
+        println!("GLOBAL SHORTCUTS:");
+        println!("  [1] - [5]         Switch between tabs (Work, Explore, Directives, Sessions, Settings)");
+        println!("  [Tab]             Toggle focus between Left (List/Tree) and Right (Detail/Scorecard) pane");
+        println!("  [↑] / [↓] / [j/k] Navigate through items, trees, or settings");
+        println!("  [PgDn] / [PgUp]   Page through documents or long lists (Space also advances Reader)");
+        println!("  [Ctrl+d/Ctrl+u]   Half-page scroll down / up");
+        println!("  [m]               Toggle Mouse Mode: ON (TUI clicks) vs OFF (Terminal text selection)");
+        println!("  [T]               Cycle Color Theme (Cyberpunk, Modern, Nord, TokyoNight, Light)");
+        println!("  [?] / [h] / [F1]  Open interactive in-app help modal (Esc / q to close)");
+        println!("  [/]               Open instant real-time search filter (Esc to clear)");
+        println!("  [q] / [Ctrl+c]    Quit HyperKB cleanly, restoring terminal state");
+        println!();
+        println!("TERMINAL COPY / PASTE SELECTION:");
+        println!("  • Mouse Mode ON:  Left-click navigates tabs, categories, tree nodes, and setting knobs.");
+        println!("  • Mouse Mode OFF: Terminal mouse capture is released. Drag with your mouse to natively");
+        println!("                    highlight and copy text (Cmd+C / Ctrl+Shift+C) directly to your OS clipboard.");
+        println!("  • macOS Shortcut: Hold Option (⌥) while dragging to select text EVEN WHEN mouse mode is ON!");
+        println!("  • Linux / iTerm:  Hold Shift while dragging to bypass terminal mouse capture.");
+        println!();
+        println!("VIEW-SPECIFIC CONTROLS:");
+        println!("  [Explore]         [t] Toggle Tree / List view | [c] Cycle category filter | [Enter] Open reader");
+        println!("  [Directives]      [c] Cycle policy taxonomy   | [r] Retire selected directive | [Enter] Read rule");
+        println!("  [Sessions]        [e] Toggle Mathematical Scoring Specification & Proof modal");
+        println!("  [Settings]        [←] / [→] / [h/l] / [-/+] Adjust knob value | [Enter] Save to hyperkb.json");
+        println!("  [Reader]          [v] Toggle Raw Markdown / Formatted view | [Esc] Return to Explore list");
+        println!();
+    }
+
+    if s == "all" || s == "math" || s == "validation" {
+        println!("================================================================================");
+        println!("  Coding Effectiveness Scoring: Mathematical Specification & Proof              ");
+        println!("================================================================================");
+        println!("HyperKB does not rely on opaque LLM ratings or subjective scores. Every session");
+        println!("effectiveness rating is derived from a deterministic formulation:");
+        println!();
+        println!("FORMULA:");
+        println!("  S = clamp(100% - P_loops - P_friction - P_thrash + B_hazard, 5%, 100%)");
+        println!();
+        println!("PARAMETER DEFINITIONS & PENALTY MATRICES:");
+        println!("  • P_loops    = min(review_loops × 15%, 45%)");
+        println!("                 Cyclic review oscillations where an agent repeatedly edits and fails review.");
+        println!("  • P_friction = 15% if first_pass_clean == false");
+        println!("                 Deducted when initial generated code requires test/compile fix iterations.");
+        println!("  • P_thrash   = 20% if (tool_calls / edits) > 10.0");
+        println!("                 10% if (tool_calls / edits) > 6.0");
+        println!("                 Penalizes aimless file reading and exploratory thrashing before making edits.");
+        println!("  • B_hazard   = +10% if risks_prevented > 0");
+        println!("                 Rewarded when the agent proactively honors active architectural invariants.");
+        println!();
+        println!("ADVANCED EFFICIENCY TELEMETRY:");
+        println!("  • Hazard Interception Rate: (risks_prevented / total_risks_cited) × 100%");
+        println!("  • Code Churn Density:       total_diff_lines / total_edits (measures surgical precision)");
+        println!("  • Action Velocity:          (total_edits / total_tool_calls) × 100% (measures directness)");
+        println!("  • Throughput Velocity:      (total_diff_lines / duration_seconds) × 60 lines/min");
+        println!();
+    }
+
+    if s == "all" || s == "settings" || s == "config" {
+        println!("================================================================================");
+        println!("  Configurable Policy Knobs (hyperkb.json)                                      ");
+        println!("================================================================================");
+        println!("All policy settings are persisted in repository root 'hyperkb.json' and configurable");
+        println!("via the TUI [5] Settings tab or the CLI ('hyperkb config -s key=value'):");
+        println!();
+        println!("  1. max_briefing_directives (Default: 5 | Range: 1 - 20)");
+        println!("     Controls the maximum number of active directives injected into AI session briefings.");
+        println!("     Prevents LLM prompt context degradation (the 'Rule of 5').");
+        println!();
+        println!("  2. stale_days_threshold (Default: 90 days | Range: 7 - 365 days)");
+        println!("     Threshold before unverified proposals/ADRs trigger stale warnings during 'hyperkb audit'.");
+        println!();
+        println!("  3. audit_max_lines (Default: 250 lines | Range: 50 - 1000 lines)");
+        println!("     Hard length ceiling for knowledge base markdown files to prevent bloated documentation.");
+        println!();
+        println!("  4. audit_max_depth (Default: 3 levels | Range: 1 - 8 levels)");
+        println!("     Maximum directory nesting depth allowed for knowledge documents.");
+        println!();
+        println!("  5. theme (Default: cyberpunk | Options: cyberpunk, modern, nord, tokyonight, light)");
+        println!("     Sets the active visual color scheme for the Ratatui TUI.");
+        println!();
+        println!("  6. mouse_enabled (Default: true | Options: true, false)");
+        println!("     Enables terminal mouse capture on launch. Set to false for native terminal text copying.");
+        println!();
+    }
+
+    if s == "all" || s == "mcp" {
+        println!("================================================================================");
+        println!("  Model Context Protocol (MCP) Integration                                      ");
+        println!("================================================================================");
+        println!("HyperKB provides a full-featured native MCP stdio server for Claude, Gemini, and Cursor:");
+        println!();
+        println!("CONFIGURATION (claude_desktop_config.json):");
+        println!("  {{");
+        println!("    \"mcpServers\": {{");
+        println!("      \"hyperkb\": {{");
+        println!("        \"command\": \"/path/to/hyperkb\",");
+        println!("        \"args\": [\"mcp\"],");
+        println!("        \"cwd\": \"/path/to/your/project\"");
+        println!("      }}");
+        println!("    }}");
+        println!("  }}");
+        println!();
+        println!("EXPOSED MCP TOOLS:");
+        println!("  • get_session_briefing  : Zero-ceremony warm-start context briefing.");
+        println!("  • check_work            : Validate modified files against invariants and risks.");
+        println!("  • draft_directive       : Create new scoped policy directive.");
+        println!("  • retire_directive      : Retire an obsolete policy directive.");
+        println!("  • audit_directives      : Check directives for bloat and stale file patterns.");
+        println!("  • record_session_event  : Log tool execution, file edits, and review loops.");
+        println!("  • get_scorecard         : Retrieve session effectiveness and telemetry scorecard.");
+        println!("================================================================================");
+    }
 }

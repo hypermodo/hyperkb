@@ -14,7 +14,7 @@ pub use document::{
     RecordMeta,
 };
 pub use hlc::Hlc;
-pub use manifest::{RepoManifest, TaxonomyCategory, TaxonomyConfig};
+pub use manifest::{KbSettings, RepoManifest, TaxonomyCategory, TaxonomyConfig};
 pub use memory::Memory;
 pub use risk::{RiskApplicability, RiskCheck, RiskMatch};
 pub use session::{AgentSession, SessionBriefing, SessionEventRecord, SessionScorecard};

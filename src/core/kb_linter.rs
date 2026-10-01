@@ -32,6 +32,15 @@ impl KbLinter {
     pub const MAX_FOLDER_DEPTH: usize = 3;
 
     pub fn audit_directory<P: AsRef<Path>>(docs_dir: P) -> Result<KbAuditReport, String> {
+        Self::audit_directory_with_settings(docs_dir, Self::MAX_LINE_COUNT, Self::MAX_FOLDER_DEPTH, 90)
+    }
+
+    pub fn audit_directory_with_settings<P: AsRef<Path>>(
+        docs_dir: P,
+        max_lines: usize,
+        max_depth: usize,
+        stale_days: i64,
+    ) -> Result<KbAuditReport, String> {
         let docs_path = docs_dir.as_ref();
         if !docs_path.exists() {
             return Ok(KbAuditReport {
@@ -69,10 +78,10 @@ impl KbLinter {
 
             // 1. Nesting Depth Check
             let depth = rel_path.components().count().saturating_sub(1); // exclude filename
-            if depth > Self::MAX_FOLDER_DEPTH {
+            if depth > max_depth {
                 depth_warnings.push(format!(
                     "{} is nested {} directories deep (threshold: ≤ {}). Avoid deep folder hierarchies.",
-                    rel_str, depth, Self::MAX_FOLDER_DEPTH
+                    rel_str, depth, max_depth
                 ));
             }
 
@@ -96,10 +105,10 @@ impl KbLinter {
                     rel_str, line_count, Self::HARD_MAX_LINE_COUNT
                 ));
                 has_issue = true;
-            } else if line_count > Self::MAX_LINE_COUNT {
+            } else if line_count > max_lines {
                 bloat_warnings.push(format!(
-                    "{} is {} lines long (recommended target: ≤ {} lines). Consider breaking into focused documents.",
-                    rel_str, line_count, Self::MAX_LINE_COUNT
+                    "{} is {} lines long (configured target: ≤ {} lines). Consider breaking into focused documents.",
+                    rel_str, line_count, max_lines
                 ));
             }
 
@@ -114,16 +123,16 @@ impl KbLinter {
             match MetadataParser::parse(&content) {
                 Ok(parsed) => {
                     if let Some(ref meta) = parsed.meta {
-                        // Check for stale proposed status (> 90 days)
+                        // Check for stale proposed status
                         if meta.status == "proposed" || meta.status == "draft" {
                             if let Ok(metadata) = fs::metadata(file) {
                                 if let Ok(modified) = metadata.modified() {
                                     if let Ok(elapsed) = modified.elapsed() {
-                                        let days = elapsed.as_secs() / 86400;
-                                        if days > 90 {
+                                        let days = (elapsed.as_secs() / 86400) as i64;
+                                        if days > stale_days {
                                             stale_warnings.push(format!(
-                                                "{} ('{}') has remained in '{}' status for {} days without review or acceptance.",
-                                                rel_str, parsed.title, meta.status, days
+                                                "{} ('{}') has remained in '{}' status for {} days (configured threshold: {} days) without review or acceptance.",
+                                                rel_str, parsed.title, meta.status, days, stale_days
                                             ));
                                         }
                                     }

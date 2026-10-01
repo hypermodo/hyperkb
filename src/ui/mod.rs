@@ -20,7 +20,7 @@ use std::io;
 use std::panic;
 use std::path::Path;
 use std::time::Duration;
-use views::{DirectivesView, ExploreView, ReaderView, SessionsView, WorkView};
+use views::{DirectivesView, ExploreView, HelpModal, ReaderView, SessionsView, SettingsView, WorkView};
 use crate::storage::Database;
 
 pub fn run(root: &Path, db: &Database, collection_id: &str, profile_id: &str) -> io::Result<()> {
@@ -32,16 +32,20 @@ pub fn run(root: &Path, db: &Database, collection_id: &str, profile_id: &str) ->
         original_hook(panic_info);
     }));
 
-    // 2. Setup terminal in raw mode & alternate screen buffer with mouse capture enabled
-    enable_raw_mode()?;
-    let mut stdout = io::stdout();
-    execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
-    let backend = CrosstermBackend::new(stdout);
-    let mut terminal = Terminal::new(backend)?;
-
-    // 3. Initialize App and load initial data
+    // 2. Initialize App and load initial data
     let mut app = App::new(collection_id, profile_id);
     app.refresh_data(db);
+
+    // 3. Setup terminal in raw mode & alternate screen buffer with mouse capture conditional on settings
+    enable_raw_mode()?;
+    let mut stdout = io::stdout();
+    if app.mouse_capture {
+        execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
+    } else {
+        execute!(stdout, EnterAlternateScreen)?;
+    }
+    let backend = CrosstermBackend::new(stdout);
+    let mut terminal = Terminal::new(backend)?;
 
     // 4. Main Event Loop (Smooth 60 FPS non-blocking polling)
     let res = run_loop(root, &mut terminal, &mut app, db);
@@ -81,10 +85,15 @@ fn run_loop<B: ratatui::backend::Backend>(
                 ActiveTab::Explore => ExploreView::render(frame, app, chunks[1]),
                 ActiveTab::Directives => DirectivesView::render(frame, app, chunks[1]),
                 ActiveTab::Sessions => SessionsView::render(frame, app, chunks[1]),
+                ActiveTab::Settings => SettingsView::render(frame, app, chunks[1]),
                 ActiveTab::Reader => ReaderView::render(frame, app, chunks[1]),
             }
 
             Footer::render(frame, app, chunks[2]);
+
+            if app.show_help {
+                HelpModal::render(frame, app.help_scroll, area);
+            }
         })?;
 
         // Non-blocking poll with 16ms timeout (~60 FPS response time, 0% CPU when idle)
@@ -101,7 +110,26 @@ fn run_loop<B: ratatui::backend::Backend>(
                         app.status_message = None;
                     }
 
-                    if app.is_filtering {
+                    if app.show_help {
+                        match key.code {
+                            KeyCode::Esc | KeyCode::Char('?') | KeyCode::Char('q') => {
+                                app.show_help = false;
+                            }
+                            KeyCode::Down | KeyCode::Char('j') => {
+                                app.help_scroll += 1;
+                            }
+                            KeyCode::Up | KeyCode::Char('k') => {
+                                app.help_scroll = app.help_scroll.saturating_sub(1);
+                            }
+                            KeyCode::PageDown => {
+                                app.help_scroll += 8;
+                            }
+                            KeyCode::PageUp => {
+                                app.help_scroll = app.help_scroll.saturating_sub(8);
+                            }
+                            _ => {}
+                        }
+                    } else if app.is_filtering {
                         match key.code {
                             KeyCode::Esc => {
                                 app.is_filtering = false;
@@ -121,13 +149,38 @@ fn run_loop<B: ratatui::backend::Backend>(
                     } else {
                         match key.code {
                             KeyCode::Char('q') => app.should_quit = true,
+                            KeyCode::Char('?') | KeyCode::F(1) => app.toggle_help(),
+                            KeyCode::Char('h') if app.active_tab != ActiveTab::Settings => app.toggle_help(),
+                            KeyCode::Char('m') | KeyCode::Char('M') => {
+                                let enabled = app.toggle_mouse();
+                                if enabled {
+                                    let _ = execute!(io::stdout(), EnableMouseCapture);
+                                    app.status_message = Some("Mouse Capture: ON (TUI navigation active)".to_string());
+                                } else {
+                                    let _ = execute!(io::stdout(), DisableMouseCapture);
+                                    app.status_message = Some("Mouse Capture: OFF (Terminal drag-to-select copy/paste active)".to_string());
+                                }
+                            }
+                            KeyCode::Char('T') => {
+                                app.next_theme();
+                            }
+                            KeyCode::Char('e') | KeyCode::Char('E') if app.active_tab == ActiveTab::Sessions => {
+                                app.toggle_scoring_methodology();
+                            }
                             KeyCode::Char('1') => app.switch_tab(ActiveTab::Work),
                             KeyCode::Char('2') => app.switch_tab(ActiveTab::Explore),
                             KeyCode::Char('3') => app.switch_tab(ActiveTab::Directives),
                             KeyCode::Char('4') => app.switch_tab(ActiveTab::Sessions),
+                            KeyCode::Char('5') => app.switch_tab(ActiveTab::Settings),
                             KeyCode::Tab => app.toggle_pane(),
                             KeyCode::Down | KeyCode::Char('j') => app.next(),
                             KeyCode::Up | KeyCode::Char('k') => app.prev(),
+                            KeyCode::Left | KeyCode::Char('h') | KeyCode::Char('-') if app.active_tab == ActiveTab::Settings => {
+                                app.adjust_setting(-1);
+                            }
+                            KeyCode::Right | KeyCode::Char('l') | KeyCode::Char('+') | KeyCode::Char('=') if app.active_tab == ActiveTab::Settings => {
+                                app.adjust_setting(1);
+                            }
                             KeyCode::PageDown => app.page_down(),
                             KeyCode::PageUp => app.page_up(),
                             KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => app.page_down(),
@@ -137,14 +190,20 @@ fn run_loop<B: ratatui::backend::Backend>(
                                     app.page_down();
                                 } else if app.active_tab == ActiveTab::Explore && app.explore_tree_mode {
                                     app.open_selected();
+                                } else if app.active_tab == ActiveTab::Settings {
+                                    app.adjust_setting(1);
                                 }
                             }
-                            KeyCode::Enter => app.open_selected(),
-                            KeyCode::Esc => app.go_back(),
-                            KeyCode::Char('t') | KeyCode::Char('T') => {
-                                if app.active_tab == ActiveTab::Explore {
-                                    app.toggle_explore_tree_mode();
+                            KeyCode::Enter => {
+                                if app.active_tab == ActiveTab::Settings {
+                                    let _ = app.save_settings(root);
+                                } else {
+                                    app.open_selected();
                                 }
+                            }
+                            KeyCode::Esc => app.go_back(),
+                            KeyCode::Char('t') if app.active_tab == ActiveTab::Explore => {
+                                app.toggle_explore_tree_mode();
                             }
                             KeyCode::Char('v') => app.toggle_raw_view(),
                             KeyCode::Char('c') | KeyCode::Char('C') => {
@@ -179,6 +238,11 @@ fn run_loop<B: ratatui::backend::Backend>(
                                 app.status_message = None;
                             }
 
+                            if app.show_help {
+                                app.show_help = false;
+                                return Ok(());
+                            }
+
                             // 1. Header clicks (row 1: tabs, row 3: taxonomy/category filter pills)
                             if row <= 4 {
                                 Header::handle_click(app, db, col, row);
@@ -188,6 +252,7 @@ fn run_loop<B: ratatui::backend::Backend>(
                                 let list_width = match app.active_tab {
                                     ActiveTab::Work => area.width * 45 / 100,
                                     ActiveTab::Reader => 0,
+                                    ActiveTab::Settings => (area.width * 40 / 100).clamp(38, 65),
                                     _ => (area.width * 38 / 100).clamp(36, 68),
                                 };
 
@@ -212,6 +277,12 @@ fn run_loop<B: ratatui::backend::Backend>(
                                                 let item_idx = ((rel_row - 2) / 3) as usize;
                                                 if item_idx < app.sessions.len() {
                                                     app.selected_session_idx = item_idx;
+                                                }
+                                            }
+                                            ActiveTab::Settings => {
+                                                let item_idx = ((rel_row - 2) / 3) as usize;
+                                                if item_idx < 6 {
+                                                    app.settings_selected_idx = item_idx;
                                                 }
                                             }
                                             ActiveTab::Explore => {
@@ -243,26 +314,32 @@ fn run_loop<B: ratatui::backend::Backend>(
                                 }
                             }
                             // 3. Footer clicks
-                            else if row >= area.height.saturating_sub(2) {
-                                if col >= area.width.saturating_sub(12) {
-                                    app.should_quit = true;
-                                }
+                            else if row >= area.height.saturating_sub(2) && col >= area.width.saturating_sub(12) {
+                                app.should_quit = true;
                             }
                         }
                         MouseEventKind::ScrollDown => {
-                            let list_width = (area.width * 38 / 100).clamp(36, 68);
-                            if col < list_width {
-                                app.next();
+                            if app.show_help {
+                                app.help_scroll += 2;
                             } else {
-                                app.page_down();
+                                let list_width = (area.width * 38 / 100).clamp(36, 68);
+                                if col < list_width {
+                                    app.next();
+                                } else {
+                                    app.page_down();
+                                }
                             }
                         }
                         MouseEventKind::ScrollUp => {
-                            let list_width = (area.width * 38 / 100).clamp(36, 68);
-                            if col < list_width {
-                                app.prev();
+                            if app.show_help {
+                                app.help_scroll = app.help_scroll.saturating_sub(2);
                             } else {
-                                app.page_up();
+                                let list_width = (area.width * 38 / 100).clamp(36, 68);
+                                if col < list_width {
+                                    app.prev();
+                                } else {
+                                    app.page_up();
+                                }
                             }
                         }
                         _ => {}

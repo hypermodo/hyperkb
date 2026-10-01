@@ -17,6 +17,7 @@ impl Header {
             (ActiveTab::Explore, "[2] Explore"),
             (ActiveTab::Directives, "[3] Directives"),
             (ActiveTab::Sessions, "[4] Sessions"),
+            (ActiveTab::Settings, "[5] Settings"),
         ];
 
         if app.active_tab == ActiveTab::Reader {
@@ -107,14 +108,20 @@ impl Header {
             ActiveTab::Sessions => {
                 let active_count = app.sessions.iter().filter(|s| s.status == "active").count();
                 vec![
-                    Span::styled("  Sessions Overview:  ", Style::default().fg(Theme::TEXT_MUTED).add_modifier(Modifier::BOLD)),
-                    Span::styled(format!("Total: {}  |  Active: {}  |  Average Effectiveness: 85%  ", app.sessions.len(), active_count), Style::default().fg(Color::White)),
+                    Span::styled("  Sessions Telemetry:  ", Style::default().fg(Theme::TEXT_MUTED).add_modifier(Modifier::BOLD)),
+                    Span::styled(format!("Total: {}  |  Active: {}  |  Scoring Proof: [e]  ", app.sessions.len(), active_count), Style::default().fg(Color::White)),
                 ]
             }
             ActiveTab::Work => {
                 vec![
                     Span::styled("  Work & Verification:  ", Style::default().fg(Theme::TEXT_MUTED).add_modifier(Modifier::BOLD)),
                     Span::styled(format!("Branch: master  |  Active Directives: {}  |  Pre-Commit Gate: Enabled  ", app.directives.iter().filter(|d| d.status == "active").count()), Style::default().fg(Color::White)),
+                ]
+            }
+            ActiveTab::Settings => {
+                vec![
+                    Span::styled("  Configuration & Policy Knobs:  ", Style::default().fg(Theme::TEXT_MUTED).add_modifier(Modifier::BOLD)),
+                    Span::styled("Select knob [↑↓/jk]  |  Adjust [←→/hl/+-]  |  Commit [Enter]  |  Cycle Theme [T]  |  Mouse [m]  ", Style::default().fg(Color::White)),
                 ]
             }
             ActiveTab::Reader => {
@@ -144,6 +151,7 @@ impl Header {
                 (ActiveTab::Explore, "[2] Explore"),
                 (ActiveTab::Directives, "[3] Directives"),
                 (ActiveTab::Sessions, "[4] Sessions"),
+                (ActiveTab::Settings, "[5] Settings"),
             ];
             let mut cur_x = prefix_len;
             for (tab, label) in tabs {
@@ -225,14 +233,20 @@ impl Footer {
                 Span::styled("  (Press Enter to confirm, Esc to cancel)", Style::default().fg(Theme::TEXT_MUTED)),
             ])
         } else {
+            let mouse_label = if app.mouse_capture { "Mouse: ON [m]" } else { "Mouse: OFF (copy) [m]" };
             let keys = match app.active_tab {
                 ActiveTab::Work => vec![
-                    Span::styled("[1-4] ", Style::default().fg(Theme::ACCENT)),
+                    Span::styled("[1-5] ", Style::default().fg(Theme::ACCENT)),
                     Span::raw("Tabs  "),
                     Span::styled("[Tab] ", Style::default().fg(Theme::ACCENT)),
-                    Span::raw("Switch Pane  "),
+                    Span::raw("Pane  "),
                     Span::styled("[↑↓/jk] ", Style::default().fg(Theme::ACCENT)),
-                    Span::raw("Navigate  "),
+                    Span::raw("Nav  "),
+                    Span::styled("[T] ", Style::default().fg(Theme::ACCENT)),
+                    Span::raw("Theme  "),
+                    Span::styled(format!("[{}] ", mouse_label), Style::default().fg(if app.mouse_capture { Theme::ACCENT } else { Color::Yellow })),
+                    Span::styled("[?] ", Style::default().fg(Theme::ACCENT)),
+                    Span::raw("Help  "),
                     Span::styled("[q] ", Style::default().fg(Theme::ACCENT)),
                     Span::raw("Quit"),
                 ],
@@ -242,13 +256,14 @@ impl Footer {
                     Span::styled("[c] ", Style::default().fg(Theme::ACCENT)),
                     Span::raw("Category  "),
                     Span::styled("[Enter] ", Style::default().fg(Theme::ACCENT)),
-                    Span::raw("Read/Expand  "),
+                    Span::raw("Read  "),
                     Span::styled("[Tab] ", Style::default().fg(Theme::ACCENT)),
-                    Span::raw("Switch Pane  "),
-                    Span::styled("[↑↓/jk] ", Style::default().fg(Theme::ACCENT)),
-                    Span::raw("Navigate  "),
-                    Span::styled("[1-4] ", Style::default().fg(Theme::ACCENT)),
-                    Span::raw("Tabs  "),
+                    Span::raw("Pane  "),
+                    Span::styled("[T] ", Style::default().fg(Theme::ACCENT)),
+                    Span::raw("Theme  "),
+                    Span::styled(format!("[{}] ", mouse_label), Style::default().fg(if app.mouse_capture { Theme::ACCENT } else { Color::Yellow })),
+                    Span::styled("[?] ", Style::default().fg(Theme::ACCENT)),
+                    Span::raw("Help  "),
                     Span::styled("[q] ", Style::default().fg(Theme::ACCENT)),
                     Span::raw("Quit"),
                 ],
@@ -259,22 +274,41 @@ impl Footer {
                     Span::raw("Retire  "),
                     Span::styled("[Enter] ", Style::default().fg(Theme::ACCENT)),
                     Span::raw("Reader  "),
-                    Span::styled("[Tab] ", Style::default().fg(Theme::ACCENT)),
-                    Span::raw("Switch Pane  "),
-                    Span::styled("[↑↓/jk] ", Style::default().fg(Theme::ACCENT)),
-                    Span::raw("Navigate  "),
-                    Span::styled("[1-4] ", Style::default().fg(Theme::ACCENT)),
-                    Span::raw("Tabs  "),
+                    Span::styled("[T] ", Style::default().fg(Theme::ACCENT)),
+                    Span::raw("Theme  "),
+                    Span::styled(format!("[{}] ", mouse_label), Style::default().fg(if app.mouse_capture { Theme::ACCENT } else { Color::Yellow })),
+                    Span::styled("[?] ", Style::default().fg(Theme::ACCENT)),
+                    Span::raw("Help  "),
                     Span::styled("[q] ", Style::default().fg(Theme::ACCENT)),
                     Span::raw("Quit"),
                 ],
                 ActiveTab::Sessions => vec![
+                    Span::styled("[e] ", Style::default().fg(Theme::ACCENT)),
+                    Span::raw("Scoring Proof  "),
                     Span::styled("[Tab] ", Style::default().fg(Theme::ACCENT)),
-                    Span::raw("Switch Pane  "),
+                    Span::raw("Pane  "),
                     Span::styled("[↑↓/jk] ", Style::default().fg(Theme::ACCENT)),
-                    Span::raw("Navigate  "),
-                    Span::styled("[1-4] ", Style::default().fg(Theme::ACCENT)),
-                    Span::raw("Tabs  "),
+                    Span::raw("Nav  "),
+                    Span::styled("[T] ", Style::default().fg(Theme::ACCENT)),
+                    Span::raw("Theme  "),
+                    Span::styled(format!("[{}] ", mouse_label), Style::default().fg(if app.mouse_capture { Theme::ACCENT } else { Color::Yellow })),
+                    Span::styled("[?] ", Style::default().fg(Theme::ACCENT)),
+                    Span::raw("Help  "),
+                    Span::styled("[q] ", Style::default().fg(Theme::ACCENT)),
+                    Span::raw("Quit"),
+                ],
+                ActiveTab::Settings => vec![
+                    Span::styled("[↑↓/jk] ", Style::default().fg(Theme::ACCENT)),
+                    Span::raw("Select  "),
+                    Span::styled("[←→/hl/+-] ", Style::default().fg(Theme::ACCENT)),
+                    Span::raw("Adjust  "),
+                    Span::styled("[Enter] ", Style::default().fg(Theme::ACCENT)),
+                    Span::raw("Save  "),
+                    Span::styled("[T] ", Style::default().fg(Theme::ACCENT)),
+                    Span::raw("Theme  "),
+                    Span::styled(format!("[{}] ", mouse_label), Style::default().fg(if app.mouse_capture { Theme::ACCENT } else { Color::Yellow })),
+                    Span::styled("[?] ", Style::default().fg(Theme::ACCENT)),
+                    Span::raw("Help  "),
                     Span::styled("[q] ", Style::default().fg(Theme::ACCENT)),
                     Span::raw("Quit"),
                 ],
@@ -286,7 +320,12 @@ impl Footer {
                     Span::styled("[PgDn/PgUp/Space] ", Style::default().fg(Theme::ACCENT)),
                     Span::raw("Page  "),
                     Span::styled("[v] ", Style::default().fg(Theme::ACCENT)),
-                    Span::raw("Toggle Raw  "),
+                    Span::raw("Raw  "),
+                    Span::styled("[T] ", Style::default().fg(Theme::ACCENT)),
+                    Span::raw("Theme  "),
+                    Span::styled(format!("[{}] ", mouse_label), Style::default().fg(if app.mouse_capture { Theme::ACCENT } else { Color::Yellow })),
+                    Span::styled("[?] ", Style::default().fg(Theme::ACCENT)),
+                    Span::raw("Help  "),
                     Span::styled("[q] ", Style::default().fg(Theme::ACCENT)),
                     Span::raw("Quit"),
                 ],

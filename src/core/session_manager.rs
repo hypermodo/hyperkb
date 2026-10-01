@@ -218,6 +218,15 @@ impl SessionManager {
         collection_id: &str,
         grant_scope: Option<&str>,
     ) -> Result<SessionBriefing, String> {
+        Self::generate_briefing_with_limit(conn, collection_id, grant_scope, 5)
+    }
+
+    pub fn generate_briefing_with_limit(
+        conn: &Connection,
+        collection_id: &str,
+        grant_scope: Option<&str>,
+        max_directives: usize,
+    ) -> Result<SessionBriefing, String> {
         let active_invariants =
             Queries::get_active_invariants(conn, collection_id, 5).unwrap_or_default();
 
@@ -238,7 +247,7 @@ impl SessionManager {
             Queries::get_recent_hotspots(conn, collection_id, 5).unwrap_or_default();
 
         let active_dirs =
-            Queries::get_active_directives_for_paths(conn, collection_id, &recent_hotspots, 5)
+            Queries::get_active_directives_for_paths(conn, collection_id, &recent_hotspots, max_directives)
                 .unwrap_or_default();
         let active_directives: Vec<String> = active_dirs
             .iter()

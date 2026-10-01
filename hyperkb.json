@@ -6,5 +6,38 @@
   "docs_root": "docs",
   "decisions_path": "docs/decisions",
   "risks_path": "docs/risks",
-  "memory_path": "docs/memory"
+  "directives_path": "docs/directives",
+  "memory_path": "docs/memory",
+  "taxonomy": {
+    "categories": [
+      {
+        "id": "architecture",
+        "label": "Architecture & Contracts",
+        "description": "System boundaries, protocols, database schemas, and parity guarantees"
+      },
+      {
+        "id": "behavior",
+        "label": "Code & Agent Behavior",
+        "description": "Comment hygiene, naming conventions, and testing requirements"
+      },
+      {
+        "id": "deployment",
+        "label": "Deployment & Safety",
+        "description": "Environment configs, migrations, rollback safety, and runtime constraints"
+      },
+      {
+        "id": "security",
+        "label": "Security & Authority",
+        "description": "Authentication, secrets, external API calls, and autonomy bounds"
+      }
+    ]
+  },
+  "settings": {
+    "max_briefing_directives": 5,
+    "stale_days_threshold": 90,
+    "audit_max_lines": 250,
+    "audit_max_depth": 3,
+    "theme": "cyberpunk",
+    "mouse_enabled": true
+  }
 }
