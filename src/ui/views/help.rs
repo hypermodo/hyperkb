@@ -146,7 +146,7 @@ impl HelpModal {
             Line::from(Span::styled("3. PRODUCT RESPONSIBILITY BOUNDARIES", t.section_header())),
             Line::from(""),
             Line::from(vec![
-                Span::styled("  • HyperKB (Developer Cockpit): ", Style::default().fg(t.status_accepted()).add_modifier(Modifier::BOLD)),
+                Span::styled("  • HyperKB (Interactive Terminal & TUI): ", Style::default().fg(t.status_accepted()).add_modifier(Modifier::BOLD)),
                 Span::styled("Zero-latency governance for devs and co-collaborating agents.", Style::default().fg(t.text_primary())),
             ]),
             Line::from(Span::styled(
@@ -367,7 +367,7 @@ impl HelpModal {
             "",
             "3. PRODUCT RESPONSIBILITY BOUNDARIES",
             "------------------------------------",
-            "  • HyperKB (Developer Cockpit):",
+            "  • HyperKB (Interactive Terminal & TUI):",
             "    Zero-latency governance for devs and co-collaborating agents.",
             "    Manages standing directives, invariant guardrails, agent authority grants, verification",
             "    risk gates (check-work), and empirical telemetry without context switching.",

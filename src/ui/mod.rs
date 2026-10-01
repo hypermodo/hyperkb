@@ -45,6 +45,7 @@ pub fn run(root: &Path, db: &Database, collection_id: &str, profile_id: &str) ->
     let mut stdout = io::stdout();
     if app.mouse_capture {
         execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
+        let _ = stdout.flush();
     } else {
         execute!(stdout, EnterAlternateScreen)?;
         let _ = stdout.write_all(b"\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1005l\x1b[?1006l\x1b[?1015l");
@@ -410,18 +411,63 @@ fn run_loop(
                     } else if app.active_tab == ActiveTab::Work && app.repl_active {
                         match key.code {
                             KeyCode::Esc => {
-                                app.repl_active = false;
+                                if app.repl_input.starts_with('/') && !app.repl_input.is_empty() {
+                                    app.repl_input.clear();
+                                    app.slash_menu_selected_idx = 0;
+                                } else {
+                                    app.repl_active = false;
+                                }
                             }
                             KeyCode::Enter => {
-                                let cmd = app.repl_input.clone();
-                                app.repl_input.clear();
-                                app.execute_repl_command(&cmd, db);
+                                if key.modifiers.contains(KeyModifiers::SHIFT) || key.modifiers.contains(KeyModifiers::ALT) {
+                                    // Multi-line support: Shift+Enter or Option+Enter adds newline
+                                    app.repl_input.push('\n');
+                                } else {
+                                    let filtered = app.filtered_slash_commands();
+                                    if app.repl_input.starts_with('/') && !filtered.is_empty() {
+                                        let sel = app.slash_menu_selected_idx.min(filtered.len().saturating_sub(1));
+                                        let cmd = filtered[sel].name;
+                                        app.execute_repl_command(cmd, db);
+                                    } else {
+                                        let cmd = app.repl_input.clone();
+                                        app.execute_repl_command(&cmd, db);
+                                    }
+                                }
+                            }
+                            KeyCode::Char('j') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                                // Ctrl+J standard line feed
+                                app.repl_input.push('\n');
+                            }
+                            KeyCode::Tab => {
+                                let filtered = app.filtered_slash_commands();
+                                if app.repl_input.starts_with('/') && !filtered.is_empty() {
+                                    let sel = app.slash_menu_selected_idx.min(filtered.len().saturating_sub(1));
+                                    app.repl_input = format!("/{}", filtered[sel].name);
+                                }
+                            }
+                            KeyCode::BackTab => {
+                                let filtered = app.filtered_slash_commands();
+                                if app.repl_input.starts_with('/') && !filtered.is_empty() {
+                                    if app.slash_menu_selected_idx == 0 {
+                                        app.slash_menu_selected_idx = filtered.len().saturating_sub(1);
+                                    } else {
+                                        app.slash_menu_selected_idx -= 1;
+                                    }
+                                }
                             }
                             KeyCode::Backspace => {
                                 app.repl_input.pop();
+                                app.slash_menu_selected_idx = 0;
                             }
                             KeyCode::Up => {
-                                if !app.repl_history.is_empty() {
+                                let filtered = app.filtered_slash_commands();
+                                if app.repl_input.starts_with('/') && !filtered.is_empty() {
+                                    if app.slash_menu_selected_idx == 0 {
+                                        app.slash_menu_selected_idx = filtered.len().saturating_sub(1);
+                                    } else {
+                                        app.slash_menu_selected_idx -= 1;
+                                    }
+                                } else if !app.repl_history.is_empty() {
                                     if app.repl_history_idx == 0 {
                                         app.repl_history_idx = app.repl_history.len().saturating_sub(1);
                                     } else {
@@ -433,7 +479,10 @@ fn run_loop(
                                 }
                             }
                             KeyCode::Down => {
-                                if !app.repl_history.is_empty() {
+                                let filtered = app.filtered_slash_commands();
+                                if app.repl_input.starts_with('/') && !filtered.is_empty() {
+                                    app.slash_menu_selected_idx = (app.slash_menu_selected_idx + 1) % filtered.len();
+                                } else if !app.repl_history.is_empty() {
                                     app.repl_history_idx = (app.repl_history_idx + 1) % app.repl_history.len();
                                     if let Some(hist) = app.repl_history.get(app.repl_history_idx) {
                                         app.repl_input = hist.clone();
@@ -442,6 +491,7 @@ fn run_loop(
                             }
                             KeyCode::Char(c) => {
                                 app.repl_input.push(c);
+                                app.slash_menu_selected_idx = 0;
                             }
                             _ => {}
                         }
@@ -635,8 +685,15 @@ fn run_loop(
                                 }
                             }
                             KeyCode::Char('/') => {
-                                app.is_filtering = true;
-                                app.filter_query.clear();
+                                if app.active_tab == ActiveTab::Work {
+                                    app.work_tab_mode = crate::ui::app::WorkTabMode::Console;
+                                    app.repl_active = true;
+                                    app.repl_input = "/".to_string();
+                                    app.slash_menu_selected_idx = 0;
+                                } else {
+                                    app.is_filtering = true;
+                                    app.filter_query.clear();
+                                }
                             }
                             _ => {}
                         }
@@ -853,7 +910,26 @@ fn run_loop(
                                 // 2. Main content clicks
                                 else if row >= 5 && row < area.height.saturating_sub(2) {
                                     if app.active_tab == ActiveTab::Work && app.work_tab_mode == crate::ui::app::WorkTabMode::Console {
-                                        if row >= area.height.saturating_sub(5) {
+                                        let input_lines = app.repl_input.lines().count().max(1);
+                                        let prompt_h = (input_lines as u16 + 4).clamp(6, 10);
+                                        let filtered_slash = app.filtered_slash_commands();
+                                        let prompt_y = area.height.saturating_sub(2).saturating_sub(prompt_h);
+
+                                        if app.repl_active && !filtered_slash.is_empty() {
+                                            let slash_h = (filtered_slash.len() as u16 + 2).min(8);
+                                            let slash_y = prompt_y.saturating_sub(slash_h);
+
+                                            if row >= slash_y && row < prompt_y {
+                                                let rel_slash_row = row.saturating_sub(slash_y + 1) as usize;
+                                                if rel_slash_row < filtered_slash.len() {
+                                                    let cmd = filtered_slash[rel_slash_row].name;
+                                                    app.execute_repl_command(cmd, db);
+                                                }
+                                                continue;
+                                            }
+                                        }
+
+                                        if row >= prompt_y {
                                             app.repl_active = true;
                                         } else {
                                             app.repl_active = false;

@@ -192,13 +192,33 @@ impl WorkView {
     }
 
     fn render_console_view(frame: &mut Frame, app: &App, area: Rect) {
-        let chunks = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([Constraint::Min(6), Constraint::Length(3)])
-            .split(area);
+        let input_lines = app.repl_input.lines().count().max(1);
+        let prompt_h = (input_lines as u16 + 4).clamp(6, 10);
+        let filtered_slash = app.filtered_slash_commands();
 
-        Self::render_diagnostic_stream(frame, app, chunks[0]);
-        Self::render_command_repl(frame, app, chunks[1]);
+        if app.repl_active && !filtered_slash.is_empty() {
+            let slash_h = (filtered_slash.len() as u16 + 2).min(8);
+            let chunks = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([
+                    Constraint::Min(6),
+                    Constraint::Length(slash_h),
+                    Constraint::Length(prompt_h),
+                ])
+                .split(area);
+
+            Self::render_diagnostic_stream(frame, app, chunks[0]);
+            Self::render_slash_menu(frame, app, &filtered_slash, chunks[1]);
+            Self::render_command_input(frame, app, chunks[2]);
+        } else {
+            let chunks = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([Constraint::Min(6), Constraint::Length(prompt_h)])
+                .split(area);
+
+            Self::render_diagnostic_stream(frame, app, chunks[0]);
+            Self::render_command_input(frame, app, chunks[1]);
+        }
     }
 
     fn render_diagnostic_stream(frame: &mut Frame, app: &App, area: Rect) {
@@ -215,7 +235,7 @@ impl WorkView {
             .style(Style::default().bg(t.bg_panel()).fg(t.text_primary()))
             .padding(Padding::new(2, 2, 1, 1))
             .title(Span::styled(
-                " Diagnostic Output & Audit Stream [o: Open Flagged | ↑↓: History | c: Clear] ",
+                " Terminal Output & Audit Stream [o: Open Flagged | ↑↓: History/Scroll | c: Clear] ",
                 t.title(),
             ));
 
@@ -223,18 +243,18 @@ impl WorkView {
             let empty = vec![
                 Line::from(""),
                 Line::from(Span::styled(
-                    "● Diagnostic stream is empty.",
+                    "● Output stream is empty.",
                     Style::default().fg(t.text_muted()),
                 )),
                 Line::from(""),
                 Line::from(vec![
                     Span::styled("Type ", Style::default().fg(t.text_primary())),
+                    Span::styled("/", Style::default().fg(t.status_proposed()).add_modifier(Modifier::BOLD)),
+                    Span::styled(" for Command Palette, or enter ", Style::default().fg(t.text_primary())),
                     Span::styled("audit", Style::default().fg(t.accent()).add_modifier(Modifier::BOLD)),
-                    Span::styled(" or ", Style::default().fg(t.text_primary())),
+                    Span::styled(" / ", Style::default().fg(t.text_primary())),
                     Span::styled("check", Style::default().fg(t.accent()).add_modifier(Modifier::BOLD)),
-                    Span::styled(" in prompt below, or press ", Style::default().fg(t.text_primary())),
-                    Span::styled("[Space]", Style::default().fg(t.accent()).add_modifier(Modifier::BOLD)),
-                    Span::styled(" for Action Palette.", Style::default().fg(t.text_primary())),
+                    Span::styled(" in the prompt below.", Style::default().fg(t.text_primary())),
                 ]),
             ];
             frame.render_widget(Paragraph::new(empty).block(block), area);
@@ -333,7 +353,48 @@ impl WorkView {
         frame.render_widget(p, area);
     }
 
-    fn render_command_repl(frame: &mut Frame, app: &App, area: Rect) {
+    fn render_slash_menu(
+        frame: &mut Frame,
+        app: &App,
+        filtered: &[&'static crate::ui::app::SlashCommand],
+        area: Rect,
+    ) {
+        let t = &app.theme;
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(t.status_proposed()).add_modifier(Modifier::BOLD))
+            .style(Style::default().bg(t.bg_panel()).fg(t.text_primary()))
+            .padding(Padding::new(1, 1, 0, 0))
+            .title(Span::styled(
+                " Command Palette [↑↓: Navigate | Enter/Tab: Select | Esc: Close] ",
+                t.title(),
+            ));
+
+        let sel_idx = app.slash_menu_selected_idx.min(filtered.len().saturating_sub(1));
+        let mut lines = Vec::new();
+
+        for (idx, cmd) in filtered.iter().enumerate() {
+            let is_sel = idx == sel_idx;
+            if is_sel {
+                lines.push(Line::from(vec![
+                    Span::styled(" ▶ /", Style::default().fg(t.status_proposed()).add_modifier(Modifier::BOLD)),
+                    Span::styled(format!("{:<12}", cmd.name), t.selected_row()),
+                    Span::styled(format!("  {}", cmd.description), Style::default().fg(t.text_primary()).add_modifier(Modifier::BOLD)),
+                ]));
+            } else {
+                lines.push(Line::from(vec![
+                    Span::styled("   /", Style::default().fg(t.text_muted())),
+                    Span::styled(format!("{:<12}", cmd.name), Style::default().fg(t.status_proposed())),
+                    Span::styled(format!("  {}", cmd.description), Style::default().fg(t.text_muted())),
+                ]));
+            }
+        }
+
+        let p = Paragraph::new(lines).block(block);
+        frame.render_widget(p, area);
+    }
+
+    fn render_command_input(frame: &mut Frame, app: &App, area: Rect) {
         let t = &app.theme;
         let border_color = if app.repl_active {
             t.accent()
@@ -349,44 +410,69 @@ impl WorkView {
                 Style::default().fg(border_color)
             })
             .style(Style::default().bg(t.bg_panel()).fg(t.text_primary()))
-            .padding(Padding::new(1, 1, 0, 0))
+            .padding(Padding::new(2, 2, 0, 0))
             .title(Span::styled(
                 if app.repl_active {
-                    " Cockpit REPL [Active: type command & press Enter] "
+                    " Command Input [Enter: Run | Shift+Enter/Option+Enter: Newline | '/' Commands] "
                 } else {
-                    " Cockpit REPL [Press ':' to focus | Space: Palette] "
+                    " Command Input [Click or press '/' or ':' to focus] "
                 },
                 if app.repl_active { t.title() } else { Style::default().fg(t.text_muted()) },
             ));
 
-        let prompt_line = if app.repl_input.is_empty() {
+        let mut lines = Vec::new();
+
+        if app.repl_input.is_empty() {
             if app.repl_active {
-                vec![
-                    Span::styled(" > ", Style::default().fg(t.status_proposed()).add_modifier(Modifier::BOLD)),
+                lines.push(Line::from(vec![
+                    Span::styled("> ", Style::default().fg(t.status_proposed()).add_modifier(Modifier::BOLD)),
                     Span::styled("▌", Style::default().fg(t.accent())),
                     Span::styled(
-                        " (type: audit, check, reindex, directives, grants, harnesses, clear, help...)",
+                        " Type a command or '/' for options (e.g. /audit, /check, /reindex, /help)...",
                         Style::default().fg(t.text_muted()),
                     ),
-                ]
+                ]));
             } else {
-                vec![
-                    Span::styled(" > ", Style::default().fg(t.accent()).add_modifier(Modifier::BOLD)),
+                lines.push(Line::from(vec![
+                    Span::styled("> ", Style::default().fg(t.accent()).add_modifier(Modifier::BOLD)),
                     Span::styled(
-                        "Press ':' or click to type commands (audit, check, reindex, harnesses, help)...",
+                        "Type '/' or click to enter commands (audit, check, reindex, harnesses, help)...",
                         Style::default().fg(t.text_muted()),
                     ),
-                ]
+                ]));
             }
         } else {
-            vec![
-                Span::styled(" > ", Style::default().fg(t.accent()).add_modifier(Modifier::BOLD)),
-                Span::styled(&app.repl_input, Style::default().fg(t.text_primary()).add_modifier(Modifier::BOLD)),
-                Span::styled("▌", Style::default().fg(t.accent())),
-            ]
-        };
+            let input_lines: Vec<&str> = app.repl_input.split('\n').collect();
+            for (idx, line_str) in input_lines.iter().enumerate() {
+                let prefix = if idx == 0 { "> " } else { "  " };
+                let is_last = idx == input_lines.len() - 1;
+                let mut spans = vec![
+                    Span::styled(prefix, Style::default().fg(t.accent()).add_modifier(Modifier::BOLD)),
+                    Span::styled(*line_str, Style::default().fg(t.text_primary()).add_modifier(Modifier::BOLD)),
+                ];
+                if is_last && app.repl_active {
+                    spans.push(Span::styled("▌", Style::default().fg(t.accent())));
+                }
+                lines.push(Line::from(spans));
+            }
+        }
 
-        let p = Paragraph::new(vec![Line::from(prompt_line)]).block(block);
+        // Add subtle shortcut helper if space permits
+        if area.height >= 5 {
+            lines.push(Line::from(""));
+            lines.push(Line::from(vec![
+                Span::styled("  [Enter] ", Style::default().fg(t.accent())),
+                Span::styled("Run  ", Style::default().fg(t.text_muted())),
+                Span::styled("  [Shift+Enter / Option+Enter] ", Style::default().fg(t.accent())),
+                Span::styled("Newline  ", Style::default().fg(t.text_muted())),
+                Span::styled("  [/] ", Style::default().fg(t.status_proposed())),
+                Span::styled("Command Palette  ", Style::default().fg(t.text_muted())),
+                Span::styled("  [Esc] ", Style::default().fg(t.accent())),
+                Span::styled("Unfocus", Style::default().fg(t.text_muted())),
+            ]));
+        }
+
+        let p = Paragraph::new(lines).block(block);
         frame.render_widget(p, area);
     }
 }

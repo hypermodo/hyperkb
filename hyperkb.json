@@ -38,6 +38,6 @@
     "audit_max_lines": 250,
     "audit_max_depth": 3,
     "theme": "tokyo_night",
-    "mouse_enabled": false
+    "mouse_enabled": true
   }
 }

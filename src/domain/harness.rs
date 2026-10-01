@@ -138,7 +138,7 @@ mod tests {
     fn test_harness_definition_serde_roundtrip() {
         let def = HarnessDefinition {
             id: "opencode".to_string(),
-            name: "OpenCode AI Cockpit".to_string(),
+            name: "OpenCode AI Harness".to_string(),
             protocol: HarnessProtocol::CliSubprocess {
                 binary: "opencode".to_string(),
                 default_args: vec!["--headless".to_string()],

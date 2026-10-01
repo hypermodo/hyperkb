@@ -119,6 +119,71 @@ pub static ACTION_PALETTE_ITEMS: &[ActionPaletteItem] = &[
     },
 ];
 
+#[derive(Debug, Clone)]
+pub struct SlashCommand {
+    pub name: &'static str,
+    pub description: &'static str,
+    pub example: &'static str,
+}
+
+pub static SLASH_COMMANDS: &[SlashCommand] = &[
+    SlashCommand {
+        name: "audit",
+        description: "Run KB anti-bloat, schema & directive decay audit",
+        example: "/audit",
+    },
+    SlashCommand {
+        name: "check",
+        description: "Check staged & changed files against risks and directives",
+        example: "/check",
+    },
+    SlashCommand {
+        name: "reindex",
+        description: "Re-index markdown documents into SQLite full-text search",
+        example: "/reindex",
+    },
+    SlashCommand {
+        name: "bootstrap",
+        description: "Mine git log history to bootstrap candidate risks",
+        example: "/bootstrap",
+    },
+    SlashCommand {
+        name: "harnesses",
+        description: "Inspect discovered AI harnesses & CISO governance status",
+        example: "/harnesses",
+    },
+    SlashCommand {
+        name: "directives",
+        description: "Switch to Policy Directives & Invariants tab",
+        example: "/directives",
+    },
+    SlashCommand {
+        name: "grants",
+        description: "Switch to Agent Authority Grants tab",
+        example: "/grants",
+    },
+    SlashCommand {
+        name: "backup",
+        description: "Create atomic verified point-in-time database snapshot",
+        example: "/backup",
+    },
+    SlashCommand {
+        name: "compact",
+        description: "SQLite database VACUUM & truncate WAL journal",
+        example: "/compact",
+    },
+    SlashCommand {
+        name: "clear",
+        description: "Clear terminal diagnostic stream output",
+        example: "/clear",
+    },
+    SlashCommand {
+        name: "help",
+        description: "Show available terminal commands and keybindings",
+        example: "/help",
+    },
+];
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ActiveTab {
     Work = 0,
@@ -236,10 +301,10 @@ pub struct App {
     pub action_palette_query: String,
     pub action_palette_selected_idx: usize,
 
-    // Work / Cockpit tab mode
+    // Work / Terminal tab mode
     pub work_tab_mode: WorkTabMode,
 
-    // Live Diagnostic Output Stream & REPL Cockpit
+    // Live Diagnostic Output Stream & Command Input
     pub diagnostic_stream: Vec<DiagnosticEntry>,
     pub selected_diagnostic_idx: usize,
     pub diagnostic_scroll: usize,
@@ -247,6 +312,7 @@ pub struct App {
     pub repl_history: Vec<String>,
     pub repl_history_idx: usize,
     pub repl_active: bool,
+    pub slash_menu_selected_idx: usize,
 
     // AI Harness & LLM Registry
     pub harnesses: Vec<crate::domain::HarnessDefinition>,
@@ -270,18 +336,18 @@ impl App {
         let init_entry = DiagnosticEntry {
             id: "boot".to_string(),
             timestamp: chrono::Utc::now(),
-            command: "hyperkb cockpit".to_string(),
-            title: "HyperKB Developer Cockpit Initialized".to_string(),
+            command: "hyperkb terminal".to_string(),
+            title: "HyperKB Terminal Initialized".to_string(),
             success: true,
             summary: format!(
-                "Governance kernel ready. Collection: '{}'. Rule ceiling: {}.",
+                "Collection: '{}'. Max briefing directives: {}.",
                 collection_id,
                 manifest.settings.max_briefing_directives
             ),
             lines: vec![
                 format!("Repo Manifest: loaded from {}", RepoManifest::FILE_NAME),
                 format!("Harness Discovery: {} AI tool(s) registered/detected locally", harnesses.len()),
-                "Type 'audit', 'check', 'reindex', 'directives', 'grants', 'harnesses', or 'help' below.".to_string(),
+                "Type '/' to open command palette, or 'audit', 'check', 'reindex', 'help' below.".to_string(),
             ],
             file_targets: Vec::new(),
             selected_file_idx: 0,
@@ -354,9 +420,28 @@ impl App {
             repl_history: Vec::new(),
             repl_history_idx: 0,
             repl_active: false,
+            slash_menu_selected_idx: 0,
             harnesses,
             selected_harness_idx,
         }
+    }
+
+    pub fn filtered_slash_commands(&self) -> Vec<&'static SlashCommand> {
+        if !self.repl_input.starts_with('/') {
+            return Vec::new();
+        }
+        let query = self.repl_input.trim_start_matches('/').trim().to_lowercase();
+        if query.is_empty() {
+            return SLASH_COMMANDS.iter().collect();
+        }
+        SLASH_COMMANDS
+            .iter()
+            .filter(|cmd| {
+                cmd.name.starts_with(&query)
+                    || cmd.name.contains(&query)
+                    || cmd.description.to_lowercase().contains(&query)
+            })
+            .collect()
     }
 
     pub fn toggle_raw_view(&mut self) {
@@ -1908,8 +1993,13 @@ impl App {
         self.repl_history.push(trimmed.to_string());
         self.repl_history_idx = self.repl_history.len();
         self.repl_input.clear();
+        self.slash_menu_selected_idx = 0;
 
-        let parts: Vec<&str> = trimmed.split_whitespace().collect();
+        let clean = trimmed.trim_start_matches('/');
+        let parts: Vec<&str> = clean.split_whitespace().collect();
+        if parts.is_empty() {
+            return;
+        }
         let op = parts[0].to_lowercase();
         match op.as_str() {
             "audit" | "audit-kb" => {
@@ -1988,30 +2078,32 @@ impl App {
             "clear" => {
                 self.diagnostic_stream.clear();
                 self.selected_diagnostic_idx = 0;
-                self.status_message = Some("Diagnostic stream cleared".to_string());
+                self.status_message = Some("Output stream cleared".to_string());
             }
             "help" => {
                 let lines = vec![
-                    "Supported Cockpit Commands:".to_string(),
-                    "  • audit      - Run comprehensive KB anti-bloat, schema & directive audit".to_string(),
-                    "  • check      - Audit staged/changed files against risks and directives".to_string(),
-                    "  • reindex    - Re-index documents into SQLite full-text search index".to_string(),
-                    "  • bootstrap  - Mine git log history to bootstrap candidate risks".to_string(),
-                    "  • harnesses  - Inspect discovered AI harnesses and CISO governance status".to_string(),
-                    "  • directives - Navigate to Directives & Policy Rules tab".to_string(),
-                    "  • grants     - Navigate to Agent Authority Grants tab".to_string(),
-                    "  • backup     - Create atomic verified database backup snapshot".to_string(),
-                    "  • compact    - Run SQLite VACUUM and truncate WAL journal".to_string(),
-                    "  • clear      - Clear diagnostic output stream".to_string(),
-                    "  • help       - Show this command reference".to_string(),
+                    "Available Terminal Commands:".to_string(),
+                    "  • /audit      - Run comprehensive KB anti-bloat, schema & directive audit".to_string(),
+                    "  • /check      - Audit staged/changed files against risks and directives".to_string(),
+                    "  • /reindex    - Re-index documents into SQLite full-text search index".to_string(),
+                    "  • /bootstrap  - Mine git log history to bootstrap candidate risks".to_string(),
+                    "  • /harnesses  - Inspect discovered AI harnesses and CISO governance status".to_string(),
+                    "  • /directives - Navigate to Directives & Policy Rules tab".to_string(),
+                    "  • /grants     - Navigate to Agent Authority Grants tab".to_string(),
+                    "  • /backup     - Create atomic verified database backup snapshot".to_string(),
+                    "  • /compact    - Run SQLite VACUUM and truncate WAL journal".to_string(),
+                    "  • /clear      - Clear terminal output stream".to_string(),
+                    "  • /help       - Show this command reference".to_string(),
+                    "".to_string(),
+                    "Tips: Type '/' anytime to open command palette. Shift+Enter or Option+Enter adds a newline.".to_string(),
                 ];
                 let entry = DiagnosticEntry {
                     id: uuid::Uuid::now_v7().to_string(),
                     timestamp: chrono::Utc::now(),
                     command: "hyperkb help".to_string(),
-                    title: "Cockpit Command Help & Reference".to_string(),
+                    title: "Terminal Command Reference".to_string(),
                     success: true,
-                    summary: "Reference guide for interactive cockpit REPL".to_string(),
+                    summary: "Interactive terminal and slash command guide".to_string(),
                     lines,
                     file_targets: Vec::new(),
                     selected_file_idx: 0,
@@ -2028,9 +2120,9 @@ impl App {
                     command: trimmed.to_string(),
                     title: format!("Unknown Command: '{}'", unknown),
                     success: false,
-                    summary: format!("Command '{}' not recognized. Type 'help' for available commands.", unknown),
+                    summary: format!("Command '{}' not recognized. Type '/' or 'help' for available commands.", unknown),
                     lines: vec![
-                        "Type 'help' to see available cockpit commands, or press [Space] for Action Palette.".to_string(),
+                        "Type '/' to open command palette, or 'help' for available commands.".to_string(),
                     ],
                     file_targets: Vec::new(),
                     selected_file_idx: 0,
@@ -2357,6 +2449,20 @@ mod tests {
         app.execute_repl_command("harnesses", &db);
         assert_eq!(app.diagnostic_stream.len(), 5);
         assert_eq!(app.diagnostic_stream.last().unwrap().command, "hyperkb harnesses");
+
+        // Slash command filtering tests
+        app.repl_input = "/".to_string();
+        let all_slash = app.filtered_slash_commands();
+        assert_eq!(all_slash.len(), SLASH_COMMANDS.len());
+
+        app.repl_input = "/au".to_string();
+        let au_slash = app.filtered_slash_commands();
+        assert!(au_slash.iter().any(|c| c.name == "audit"));
+
+        // Execute command with leading slash
+        app.execute_repl_command("/audit", &db);
+        assert_eq!(app.diagnostic_stream.len(), 6);
+        assert_eq!(app.diagnostic_stream.last().unwrap().command, "hyperkb audit-kb");
 
         // Execute clear
         app.execute_repl_command("clear", &db);

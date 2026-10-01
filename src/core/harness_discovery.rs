@@ -26,7 +26,7 @@ impl HarnessDiscovery {
         if manifest_config.auto_discovery {
             // Probe common developer AI harnesses
             let candidates = [
-                ("opencode", "OpenCode AI Cockpit", vec!["code_generation", "interactive_tui", "context_provider"], vec!["chatgpt-4o", "claude-3-7-sonnet", "local"]),
+                ("opencode", "OpenCode AI Harness", vec!["code_generation", "interactive_tui", "context_provider"], vec!["chatgpt-4o", "claude-3-7-sonnet", "local"]),
                 ("claude", "Claude Code CLI", vec!["code_generation", "subagents", "tool_calling"], vec!["claude-3-7-sonnet", "claude-3-5-haiku"]),
                 ("codex", "Codex / OpenAI CLI", vec!["code_generation", "inline_completion"], vec!["o1", "o3-mini", "gpt-4o"]),
                 ("ollama", "Ollama Local Engine", vec!["offline_local_inference", "embeddings", "code_generation"], vec!["llama3.3", "qwen2.5-coder", "deepseek-r1"]),
@@ -63,7 +63,7 @@ impl HarnessDiscovery {
                     seen_ids.insert("antigravity".to_string());
                     results.push(HarnessDefinition {
                         id: "antigravity".to_string(),
-                        name: "Google Antigravity (DeepMind Agent Cockpit)".to_string(),
+                        name: "Google Antigravity (DeepMind Agent Environment)".to_string(),
                         protocol: HarnessProtocol::McpBridge {
                             socket_or_url: "antigravity-mcp://local".to_string(),
                             transport: "stdio/jsonrpc".to_string(),

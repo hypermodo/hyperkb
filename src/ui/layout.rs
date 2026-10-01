@@ -135,9 +135,9 @@ impl Header {
                     Span::styled(" [w: RISKS & WORK] ", Style::default().fg(t.accent()).bg(t.bg_panel()).add_modifier(Modifier::BOLD))
                 };
                 let console_pill = if app.work_tab_mode == crate::ui::app::WorkTabMode::Console {
-                    Span::styled(" [c: DIAGNOSTIC CONSOLE] ", Style::default().fg(t.bg()).bg(t.status_accepted()).add_modifier(Modifier::BOLD))
+                    Span::styled(" [c: TERMINAL] ", Style::default().fg(t.bg()).bg(t.status_accepted()).add_modifier(Modifier::BOLD))
                 } else {
-                    Span::styled(" [c: DIAGNOSTIC CONSOLE] ", Style::default().fg(t.status_accepted()).bg(t.bg_panel()).add_modifier(Modifier::BOLD))
+                    Span::styled(" [c: TERMINAL] ", Style::default().fg(t.status_accepted()).bg(t.bg_panel()).add_modifier(Modifier::BOLD))
                 };
                 vec![
                     Span::styled("  Mode: ", Style::default().fg(t.text_muted()).add_modifier(Modifier::BOLD)),
@@ -310,16 +310,16 @@ impl Footer {
                         Span::raw("Quit"),
                     ],
                     crate::ui::app::WorkTabMode::Console => vec![
-                        Span::styled("[Space] ", Style::default().fg(t.accent())),
-                        Span::raw("Actions  "),
-                        Span::styled("[w] ", Style::default().fg(t.accent())),
-                        Span::raw("Risks  "),
-                        Span::styled("[:] ", Style::default().fg(t.accent())),
-                        Span::raw("Prompt  "),
+                        Span::styled("[/] ", Style::default().fg(t.status_proposed()).add_modifier(Modifier::BOLD)),
+                        Span::raw("Commands  "),
+                        Span::styled("[Enter] ", Style::default().fg(t.accent())),
+                        Span::raw("Run  "),
+                        Span::styled("[Shift+Enter] ", Style::default().fg(t.accent())),
+                        Span::raw("Newline  "),
                         Span::styled("[o] ", Style::default().fg(t.accent())),
                         Span::raw("Open Flagged  "),
-                        Span::styled("[c] ", Style::default().fg(t.accent())),
-                        Span::raw("Clear  "),
+                        Span::styled("[w] ", Style::default().fg(t.accent())),
+                        Span::raw("Risks  "),
                         Span::styled("[↑↓] ", Style::default().fg(t.accent())),
                         Span::raw("Scroll  "),
                         Span::styled("[T] ", Style::default().fg(t.accent())),

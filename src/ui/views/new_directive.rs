@@ -38,7 +38,7 @@ impl NewDirectiveModal {
             .border_style(Style::default().fg(t.accent()).add_modifier(Modifier::BOLD))
             .style(Style::default().bg(t.bg_panel()).fg(t.text_primary()))
             .padding(Padding::new(2, 2, 1, 1))
-            .title(Span::styled(" [n] Draft New Directive (Governance Cockpit) ", t.title()))
+            .title(Span::styled(" [n] Draft New Directive (Governance & Invariants) ", t.title()))
             .title_bottom(Line::from(vec![
                 Span::styled(" [Tab] ", t.key_badge()),
                 Span::styled("Next Field • ", Style::default().fg(t.text_muted())),
