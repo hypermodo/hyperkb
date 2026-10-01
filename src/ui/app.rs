@@ -178,7 +178,7 @@ impl App {
 
             items.push(ExploreTreeItem::Folder {
                 path: folder.clone(),
-                name: format!("{}/", folder),
+                name: folder.trim_end_matches('/').to_string(),
                 doc_count,
                 is_collapsed,
             });

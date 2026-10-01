@@ -41,7 +41,7 @@ impl MarkdownFormatter {
 
         let mut lines = vec![
             Line::from(vec![
-                Span::styled("  Status: ", Style::default().fg(Theme::TEXT_MUTED)),
+                Span::styled("Status: ", Style::default().fg(Theme::TEXT_MUTED)),
                 Span::styled(badge_text, badge_style),
                 Span::raw("    "),
                 Span::styled("Kind: ", Style::default().fg(Theme::TEXT_MUTED)),
@@ -56,8 +56,9 @@ impl MarkdownFormatter {
                 Span::styled("Topic: ", Style::default().fg(Theme::TEXT_MUTED)),
                 Span::styled(doc.topic.clone(), Style::default().fg(Color::White)),
             ]),
+            Line::from(""),
             Line::from(vec![
-                Span::styled("  Source: ", Style::default().fg(Theme::TEXT_MUTED)),
+                Span::styled("Source: ", Style::default().fg(Theme::TEXT_MUTED)),
                 Span::styled(doc.path.clone(), Style::default().fg(Theme::ACCENT)),
                 Span::raw("    "),
                 Span::styled("ID: ", Style::default().fg(Theme::TEXT_MUTED)),
@@ -66,15 +67,17 @@ impl MarkdownFormatter {
         ];
 
         if let Some(ref supersedes) = doc.supersedes {
+            lines.push(Line::from(""));
             lines.push(Line::from(vec![
-                Span::styled("  Supersedes: ", Style::default().fg(Theme::TEXT_MUTED)),
+                Span::styled("Supersedes: ", Style::default().fg(Theme::TEXT_MUTED)),
                 Span::styled(supersedes.clone(), Style::default().fg(Color::Yellow)),
             ]));
         }
 
         if let Some(ref repl) = doc.replacement_id {
+            lines.push(Line::from(""));
             lines.push(Line::from(vec![
-                Span::styled("  Replacement: ", Style::default().fg(Theme::TEXT_MUTED)),
+                Span::styled("Replacement: ", Style::default().fg(Theme::TEXT_MUTED)),
                 Span::styled(repl.clone(), Style::default().fg(Theme::STATUS_ACCEPTED)),
             ]));
         }
@@ -83,8 +86,9 @@ impl MarkdownFormatter {
             if let Some(ref del) = parsed.meta.as_ref().and_then(|m| m.delegation.as_ref()) {
                 let grant_str = del.grant_id.to_string();
                 let short_grant = if grant_str.len() >= 8 { &grant_str[..8] } else { &grant_str };
+                lines.push(Line::from(""));
                 lines.push(Line::from(vec![
-                    Span::styled("  Delegation: ", Style::default().fg(Theme::TEXT_MUTED)),
+                    Span::styled("Delegation: ", Style::default().fg(Theme::TEXT_MUTED)),
                     Span::styled(format!("Agent [{}] ", del.agent_id), Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
                     Span::styled(format!("via Grant #{} ", short_grant), Style::default().fg(Color::LightBlue)),
                     Span::styled(format!("(Authorizer: {})", del.granted_by), Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
@@ -192,9 +196,9 @@ impl MarkdownFormatter {
                         Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
                     ),
                 ]));
-                let bar_len = max_width.min(90).saturating_sub(4);
+                let bar_len = max_width.min(80).saturating_sub(4);
                 lines.push(Line::from(Span::styled(
-                    format!("  {:━<bar_len$}", "", bar_len = bar_len),
+                    format!("  {:─<bar_len$}", "", bar_len = bar_len),
                     Style::default().fg(Color::Rgb(56, 189, 248)),
                 )));
                 lines.push(Line::from(""));
@@ -228,11 +232,13 @@ impl MarkdownFormatter {
                         Style::default().fg(Color::White).add_modifier(Modifier::BOLD),
                     ),
                 ]));
+                lines.push(Line::from(""));
                 continue;
             }
 
             // 4. GitHub-style Callouts / Alerts (> [!NOTE], > [!WARNING], > [!TIP], > [!IMPORTANT])
             if trimmed.starts_with("> [!NOTE]") {
+                lines.push(Line::from(""));
                 lines.push(Line::from(vec![
                     Span::styled("  ┃ ", Style::default().fg(Color::LightBlue).add_modifier(Modifier::BOLD)),
                     Span::styled("ℹ NOTE", Style::default().fg(Color::LightBlue).add_modifier(Modifier::BOLD)),
@@ -240,6 +246,7 @@ impl MarkdownFormatter {
                 continue;
             }
             if trimmed.starts_with("> [!WARNING]") || trimmed.starts_with("> [!CAUTION]") {
+                lines.push(Line::from(""));
                 lines.push(Line::from(vec![
                     Span::styled("  ┃ ", Style::default().fg(Theme::STATUS_RISK_OPEN).add_modifier(Modifier::BOLD)),
                     Span::styled("▲ WARNING", Style::default().fg(Theme::STATUS_RISK_OPEN).add_modifier(Modifier::BOLD)),
@@ -247,6 +254,7 @@ impl MarkdownFormatter {
                 continue;
             }
             if trimmed.starts_with("> [!TIP]") {
+                lines.push(Line::from(""));
                 lines.push(Line::from(vec![
                     Span::styled("  ┃ ", Style::default().fg(Theme::STATUS_ACCEPTED).add_modifier(Modifier::BOLD)),
                     Span::styled("★ TIP", Style::default().fg(Theme::STATUS_ACCEPTED).add_modifier(Modifier::BOLD)),
@@ -254,6 +262,7 @@ impl MarkdownFormatter {
                 continue;
             }
             if trimmed.starts_with("> [!IMPORTANT]") {
+                lines.push(Line::from(""));
                 lines.push(Line::from(vec![
                     Span::styled("  ┃ ", Style::default().fg(Color::LightMagenta).add_modifier(Modifier::BOLD)),
                     Span::styled("◆ IMPORTANT", Style::default().fg(Color::LightMagenta).add_modifier(Modifier::BOLD)),
@@ -289,6 +298,7 @@ impl MarkdownFormatter {
                     8,
                 );
                 lines.extend(wrapped);
+                lines.push(Line::from(""));
                 continue;
             }
             if let Some(task) = trimmed.strip_prefix("- [ ] ") {
@@ -305,6 +315,7 @@ impl MarkdownFormatter {
                     8,
                 );
                 lines.extend(wrapped);
+                lines.push(Line::from(""));
                 continue;
             }
 
@@ -330,11 +341,8 @@ impl MarkdownFormatter {
                     total_hanging,
                 );
 
-                let is_multiline = wrapped.len() > 1;
                 lines.extend(wrapped);
-                if is_multiline {
-                    lines.push(Line::from(""));
-                }
+                lines.push(Line::from(""));
                 continue;
             }
 
@@ -364,11 +372,8 @@ impl MarkdownFormatter {
                     hanging_spaces,
                 );
 
-                let is_multiline = wrapped.len() > 1;
                 lines.extend(wrapped);
-                if is_multiline {
-                    lines.push(Line::from(""));
-                }
+                lines.push(Line::from(""));
                 continue;
             }
 

@@ -4,7 +4,7 @@ use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, List, ListItem, Paragraph, Wrap},
+    widgets::{Block, Borders, List, ListItem, Padding, Paragraph, Wrap},
     Frame,
 };
 
@@ -87,21 +87,22 @@ impl SessionsView {
         let list_block = Block::default()
             .borders(Borders::ALL)
             .border_style(Style::default().fg(border_color))
+            .padding(Padding::new(2, 2, 1, 1))
             .title(Span::styled(list_title, Theme::title()));
 
         if items.is_empty() {
             let empty_text = vec![
                 Line::from(""),
                 Line::from(Span::styled(
-                    "  No agent sessions recorded yet.",
+                    "No agent sessions recorded yet.",
                     Style::default().fg(Theme::TEXT_MUTED),
                 )),
                 Line::from(""),
                 Line::from(vec![
-                    Span::raw("  Sessions are recorded automatically when AI agents"),
+                    Span::raw("Sessions are recorded automatically when AI agents"),
                 ]),
                 Line::from(vec![
-                    Span::raw("  interact via the "),
+                    Span::raw("interact via the "),
                     Span::styled("HyperKB MCP Server", Style::default().fg(Theme::ACCENT)),
                     Span::raw("."),
                 ]),
@@ -130,6 +131,7 @@ impl SessionsView {
         let block = Block::default()
             .borders(Borders::ALL)
             .border_style(Style::default().fg(border_color))
+            .padding(Padding::new(2, 2, 1, 1))
             .title(Span::styled(" Session Scorecard & Behavioral Metrics ", title_style));
 
         if let Some(sess) = app.selected_session() {
@@ -162,15 +164,15 @@ impl SessionsView {
             };
 
             let text = vec![
-                Line::from(""), // Top breathing room
                 Line::from(vec![
-                    Span::styled("  Session ID: ", Style::default().fg(Theme::TEXT_MUTED)),
+                    Span::styled("Session ID:  ", Style::default().fg(Theme::TEXT_MUTED).add_modifier(Modifier::BOLD)),
                     Span::styled(&sess.id, Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
                 ]),
+                Line::from(""),
                 Line::from(vec![
-                    Span::styled("  Agent: ", Style::default().fg(Theme::TEXT_MUTED)),
+                    Span::styled("Agent: ", Style::default().fg(Theme::TEXT_MUTED)),
                     Span::styled(&sess.agent_id, Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
-                    Span::raw("   |   "),
+                    Span::raw("    "),
                     Span::styled("Status: ", Style::default().fg(Theme::TEXT_MUTED)),
                     Span::styled(
                         &sess.status,
@@ -182,17 +184,18 @@ impl SessionsView {
                             Theme::STATUS_RISK_OPEN
                         },
                     ),
-                    Span::raw("   |   "),
+                    Span::raw("    "),
                     Span::styled("Duration: ", Style::default().fg(Theme::TEXT_MUTED)),
                     Span::styled(
                         sess.formatted_duration(),
                         Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
                     ),
                 ]),
+                Line::from(""),
                 Line::from(vec![
-                    Span::styled("  Started: ", Style::default().fg(Theme::TEXT_MUTED)),
+                    Span::styled("Started: ", Style::default().fg(Theme::TEXT_MUTED)),
                     Span::styled(&sess.started_at, Style::default().fg(Theme::TEXT_MUTED)),
-                    Span::raw("   |   "),
+                    Span::raw("    "),
                     Span::styled("Ended: ", Style::default().fg(Theme::TEXT_MUTED)),
                     Span::styled(
                         sess.ended_at.as_deref().unwrap_or("In progress"),
@@ -201,12 +204,12 @@ impl SessionsView {
                 ]),
                 Line::from(""),
                 Line::from(Span::styled(
-                    "  ────── Performance & Effectiveness ──────",
+                    "────── Performance & Effectiveness ──────────────────────────",
                     Style::default().fg(Theme::BORDER),
                 )),
                 Line::from(""),
                 Line::from(vec![
-                    Span::styled("  Coding Effectiveness Score: ", Style::default().add_modifier(Modifier::BOLD)),
+                    Span::styled("Coding Effectiveness Score:  ", Style::default().add_modifier(Modifier::BOLD)),
                     Span::styled(
                         format!("{}% ", score_pct),
                         Style::default().fg(score_color).add_modifier(Modifier::BOLD),
@@ -222,8 +225,9 @@ impl SessionsView {
                         Style::default().fg(score_color),
                     ),
                 ]),
+                Line::from(""),
                 Line::from(vec![
-                    Span::styled("  Tool-to-Edit Ratio: ", Style::default().add_modifier(Modifier::BOLD)),
+                    Span::styled("Tool-to-Edit Ratio:          ", Style::default().add_modifier(Modifier::BOLD)),
                     Span::styled(format!("{:.1} calls/edit", edit_ratio), Style::default().fg(Color::White)),
                     Span::raw("   "),
                     Span::styled(
@@ -231,12 +235,14 @@ impl SessionsView {
                         Style::default().fg(Theme::TEXT_MUTED),
                     ),
                 ]),
+                Line::from(""),
                 Line::from(vec![
-                    Span::styled("  Total Diff Volume: ", Style::default().add_modifier(Modifier::BOLD)),
+                    Span::styled("Total Diff Volume:            ", Style::default().add_modifier(Modifier::BOLD)),
                     Span::styled(format!("{} lines", sess.total_diff_lines), Style::default().fg(Color::White)),
                 ]),
+                Line::from(""),
                 Line::from(vec![
-                    Span::styled("  Review Oscillations (Loops): ", Style::default().add_modifier(Modifier::BOLD)),
+                    Span::styled("Review Oscillations (Loops):  ", Style::default().add_modifier(Modifier::BOLD)),
                     Span::styled(
                         format!("{} loops", sess.review_loops),
                         if sess.review_loops > 0 {
@@ -246,8 +252,9 @@ impl SessionsView {
                         },
                     ),
                 ]),
+                Line::from(""),
                 Line::from(vec![
-                    Span::styled("  First Pass Clean: ", Style::default().add_modifier(Modifier::BOLD)),
+                    Span::styled("First Pass Clean:             ", Style::default().add_modifier(Modifier::BOLD)),
                     Span::styled(
                         if sess.first_pass_clean { "YES (Zero Review Cycles)" } else { "NO (Required Iteration)" },
                         if sess.first_pass_clean {
@@ -259,18 +266,18 @@ impl SessionsView {
                 ]),
                 Line::from(""),
                 Line::from(Span::styled(
-                    "  ────── Risk Interception & Governance ──────",
+                    "────── Risk Interception & Governance ───────────────────────",
                     Style::default().fg(Theme::BORDER),
                 )),
                 Line::from(""),
                 Line::from(vec![
-                    Span::styled("  Risks Prevented: ", Style::default().add_modifier(Modifier::BOLD)),
+                    Span::styled("Risks Prevented: ", Style::default().add_modifier(Modifier::BOLD)),
                     Span::styled(
                         format!("{} prevented", sess.risks_prevented),
                         Style::default().fg(Theme::STATUS_ACCEPTED).add_modifier(Modifier::BOLD),
                     ),
-                    Span::raw("   |   "),
-                    Span::styled("  Risks Cited: ", Style::default().add_modifier(Modifier::BOLD)),
+                    Span::raw("    |    "),
+                    Span::styled("Risks Cited: ", Style::default().add_modifier(Modifier::BOLD)),
                     Span::styled(
                         format!("{} cited", sess.risks_cited),
                         if sess.risks_cited > 0 {
@@ -280,8 +287,9 @@ impl SessionsView {
                         },
                     ),
                 ]),
+                Line::from(""),
                 Line::from(vec![
-                    Span::styled("  Delegation Grant: ", Style::default().add_modifier(Modifier::BOLD)),
+                    Span::styled("Delegation Grant: ", Style::default().add_modifier(Modifier::BOLD)),
                     Span::styled(
                         sess.grant_id.as_deref().unwrap_or("None (Standard agent scope)"),
                         Style::default().fg(Color::LightBlue),
@@ -295,9 +303,14 @@ impl SessionsView {
                 .wrap(Wrap { trim: false });
             frame.render_widget(paragraph, area);
         } else {
-            let paragraph = Paragraph::new("No session selected.")
-                .block(block)
-                .style(Style::default().fg(Theme::TEXT_MUTED));
+            let empty_card = vec![
+                Line::from(""),
+                Line::from(Span::styled("No session selected.", Style::default().fg(Theme::TEXT_MUTED))),
+                Line::from(""),
+                Line::from(Span::styled("Select an agent session from the left list to inspect telemetry and metrics.", Style::default().fg(Theme::TEXT_MUTED))),
+            ];
+            let paragraph = Paragraph::new(empty_card)
+                .block(block);
             frame.render_widget(paragraph, area);
         }
     }

@@ -4,7 +4,7 @@ use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, List, ListItem, Paragraph, Wrap},
+    widgets::{Block, Borders, List, ListItem, Padding, Paragraph, Wrap},
     Frame,
 };
 
@@ -85,18 +85,19 @@ impl DirectivesView {
         let list_block = Block::default()
             .borders(Borders::ALL)
             .border_style(Style::default().fg(border_color))
+            .padding(Padding::new(2, 2, 1, 1))
             .title(Span::styled(list_title, Theme::title()));
 
         if items.is_empty() {
             let empty_text = vec![
                 Line::from(""),
                 Line::from(Span::styled(
-                    "  No directives found for this category.",
+                    "No directives found for this category.",
                     Style::default().fg(Theme::TEXT_MUTED),
                 )),
                 Line::from(""),
                 Line::from(vec![
-                    Span::raw("  Use "),
+                    Span::raw("Use "),
                     Span::styled("hyperkb directive new", Style::default().fg(Theme::ACCENT)),
                     Span::raw(" to draft one."),
                 ]),
@@ -125,21 +126,21 @@ impl DirectivesView {
         let block = Block::default()
             .borders(Borders::ALL)
             .border_style(Style::default().fg(border_color))
+            .padding(Padding::new(2, 2, 1, 1))
             .title(Span::styled(" Directive Card [Tab: Switch Pane, Enter: Reader, r: Retire] ", title_style));
 
         if let Some(dir) = app.selected_directive() {
             let mut text = vec![
-                Line::from(""), // Top breathing room
                 Line::from(vec![
-                    Span::styled("  ", Style::default()),
                     Span::styled(&dir.title, Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
-                    Span::raw("  "),
+                    Span::raw("   "),
                     Span::styled(format!("[{}]", dir.id), Style::default().fg(Theme::TEXT_MUTED)),
                 ]),
+                Line::from(""),
                 Line::from(vec![
-                    Span::styled("  Category: ", Style::default().fg(Theme::TEXT_MUTED)),
+                    Span::styled("Category: ", Style::default().fg(Theme::TEXT_MUTED)),
                     Span::styled(format!("[{}]", dir.category.to_uppercase()), Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
-                    Span::raw("   "),
+                    Span::raw("    "),
                     Span::styled("Status: ", Style::default().fg(Theme::TEXT_MUTED)),
                     Span::styled(
                         format!("[{}]", dir.status.to_uppercase()),
@@ -149,28 +150,30 @@ impl DirectivesView {
                             Style::default().fg(Color::Yellow)
                         },
                     ),
-                    Span::raw("   "),
+                    Span::raw("    "),
                     Span::styled("Enforcement: ", Style::default().fg(Theme::TEXT_MUTED)),
                     Span::styled(&dir.enforcement, Style::default().fg(Color::LightBlue)),
                 ]),
+                Line::from(""),
                 Line::from(vec![
-                    Span::styled("  Author: ", Style::default().fg(Theme::TEXT_MUTED)),
+                    Span::styled("Author: ", Style::default().fg(Theme::TEXT_MUTED)),
                     Span::styled(&dir.author, Style::default().fg(Color::White)),
-                    Span::raw("   "),
+                    Span::raw("    "),
                     Span::styled("Scope: ", Style::default().fg(Theme::TEXT_MUTED)),
                     Span::styled(
                         if dir.is_global() { "global (*)".to_string() } else { dir.scope.join(", ") },
                         Style::default().fg(Color::LightYellow),
                     ),
-                    Span::raw("   "),
+                    Span::raw("    "),
                     Span::styled("Created: ", Style::default().fg(Theme::TEXT_MUTED)),
                     Span::styled(&dir.created_at, Style::default().fg(Theme::TEXT_MUTED)),
                 ]),
             ];
 
             if let Some(ref sup) = dir.supersedes {
+                text.push(Line::from(""));
                 text.push(Line::from(vec![
-                    Span::styled("  Supersedes: ", Style::default().fg(Theme::TEXT_MUTED)),
+                    Span::styled("Supersedes: ", Style::default().fg(Theme::TEXT_MUTED)),
                     Span::styled(sup, Style::default().fg(Theme::STATUS_SUPERSEDED)),
                 ]));
             }
@@ -178,19 +181,19 @@ impl DirectivesView {
             if dir.status == "retired" {
                 text.push(Line::from(""));
                 text.push(Line::from(Span::styled(
-                    "  [NOTICE] This directive is RETIRED and no longer active in briefings or pre-commit checks.",
+                    "[NOTICE] This directive is RETIRED and no longer active in briefings or pre-commit checks.",
                     Style::default().fg(Theme::STATUS_RISK_OPEN).add_modifier(Modifier::BOLD),
                 )));
             }
 
             text.push(Line::from(""));
             text.push(Line::from(Span::styled(
-                "  ──────────────────────────────────────────────────────────",
+                "────────────────────────────────────────────────────────────",
                 Style::default().fg(Theme::BORDER),
             )));
             text.push(Line::from(""));
 
-            let preview_width = area.width.saturating_sub(4) as usize;
+            let preview_width = area.width.saturating_sub(6) as usize;
             let formatted_body = crate::ui::markdown::MarkdownFormatter::format_markdown(&dir.content, preview_width);
             text.extend(formatted_body);
 
@@ -200,9 +203,14 @@ impl DirectivesView {
                 .wrap(Wrap { trim: false });
             frame.render_widget(paragraph, area);
         } else {
-            let paragraph = Paragraph::new("No directive selected.")
-                .block(block)
-                .style(Style::default().fg(Theme::TEXT_MUTED));
+            let empty_preview = vec![
+                Line::from(""),
+                Line::from(Span::styled("No directive selected.", Style::default().fg(Theme::TEXT_MUTED))),
+                Line::from(""),
+                Line::from(Span::styled("Select a directive from the left list to view its policy rules and context.", Style::default().fg(Theme::TEXT_MUTED))),
+            ];
+            let paragraph = Paragraph::new(empty_preview)
+                .block(block);
             frame.render_widget(paragraph, area);
         }
     }

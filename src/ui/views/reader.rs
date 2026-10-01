@@ -5,7 +5,7 @@ use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Paragraph, Wrap},
+    widgets::{Block, Borders, Padding, Paragraph, Wrap},
     Frame,
 };
 
@@ -23,18 +23,29 @@ impl ReaderView {
             let block = Block::default()
                 .borders(Borders::ALL)
                 .border_style(Style::default().fg(Theme::BORDER))
+                .padding(Padding::new(2, 2, 1, 1))
                 .title(Span::styled(" Reader ", Theme::title()));
 
-            let p = Paragraph::new("No document selected. Press [2] to browse and Enter to open.")
-                .block(block)
-                .style(Style::default().fg(Theme::TEXT_MUTED));
+            let empty_text = vec![
+                Line::from(""),
+                Line::from(Span::styled("No document selected.", Style::default().fg(Theme::TEXT_MUTED))),
+                Line::from(""),
+                Line::from(vec![
+                    Span::raw("Press "),
+                    Span::styled("[2]", Style::default().fg(Theme::ACCENT)),
+                    Span::raw(" to browse documents and "),
+                    Span::styled("[Enter]", Style::default().fg(Theme::ACCENT)),
+                    Span::raw(" to open in reader."),
+                ]),
+            ];
+            let p = Paragraph::new(empty_text).block(block);
             frame.render_widget(p, area);
         }
     }
 
     fn render_formatted(frame: &mut Frame, app: &App, area: Rect, doc: &crate::domain::Document) {
         let meta_lines = MarkdownFormatter::format_metadata_card(doc);
-        let meta_height = (meta_lines.len() as u16 + 2).clamp(4, 8);
+        let meta_height = (meta_lines.len() as u16 + 4).clamp(6, 12);
 
         // Vertical split: Adaptive Metadata Card + Formatted Document Body (Remaining)
         let chunks = Layout::default()
@@ -46,6 +57,7 @@ impl ReaderView {
         let meta_block = Block::default()
             .borders(Borders::ALL)
             .border_style(Style::default().fg(Theme::BORDER))
+            .padding(Padding::new(2, 2, 1, 1))
             .title(Span::styled(format!(" {} ", doc.title), Theme::title()));
 
         let meta_widget = Paragraph::new(meta_lines).block(meta_block);
@@ -55,12 +67,13 @@ impl ReaderView {
         let body_block = Block::default()
             .borders(Borders::ALL)
             .border_style(Style::default().fg(Theme::BORDER_FOCUSED))
+            .padding(Padding::new(2, 2, 1, 1))
             .title(Span::styled(
                 " Document Body [Press 'v' for Raw, Esc to Exit] ",
                 Style::default().fg(Theme::ACCENT).add_modifier(Modifier::BOLD),
             ));
 
-        let reader_width = chunks[1].width.saturating_sub(4) as usize;
+        let reader_width = chunks[1].width.saturating_sub(6) as usize;
         let formatted_lines = MarkdownFormatter::format_markdown(&doc.content, reader_width);
         let body_widget = Paragraph::new(formatted_lines)
             .block(body_block)
@@ -74,6 +87,7 @@ impl ReaderView {
         let block = Block::default()
             .borders(Borders::ALL)
             .border_style(Style::default().fg(Color::Yellow))
+            .padding(Padding::new(2, 2, 1, 1))
             .title(Span::styled(
                 " RAW Document View [Press 'v' to return to Formatted] ",
                 Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
@@ -82,7 +96,7 @@ impl ReaderView {
         let lines: Vec<Line> = doc
             .content
             .lines()
-            .map(|l| Line::from(format!("  {}", l)))
+            .map(|l| Line::from(l.to_string()))
             .collect();
 
         let widget = Paragraph::new(lines)

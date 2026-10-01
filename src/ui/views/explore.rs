@@ -5,7 +5,7 @@ use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, List, ListItem, Paragraph, Wrap},
+    widgets::{Block, Borders, List, ListItem, Padding, Paragraph, Wrap},
     Frame,
 };
 
@@ -92,6 +92,7 @@ impl ExploreView {
                 Block::default()
                     .borders(Borders::ALL)
                     .border_style(Style::default().fg(border_color))
+                    .padding(Padding::new(2, 2, 1, 1))
                     .title(Span::styled(title_text, Theme::title())),
             )
             .highlight_style(Theme::selected_row());
@@ -115,25 +116,27 @@ impl ExploreView {
         let block = Block::default()
             .borders(Borders::ALL)
             .border_style(Style::default().fg(border_color))
+            .padding(Padding::new(2, 2, 1, 1))
             .title(Span::styled(" Document Preview [Tab to focus, Enter for Reader] ", title_style));
 
         if let Some(doc) = app.selected_document() {
             let mut text = vec![
-                Line::from(""), // Top breathing room
                 Line::from(vec![
-                    Span::styled("  Title: ", Style::default().add_modifier(Modifier::BOLD)),
+                    Span::styled("Title:     ", Style::default().fg(Theme::TEXT_MUTED).add_modifier(Modifier::BOLD)),
                     Span::styled(&doc.title, Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
                 ]),
+                Line::from(""),
                 Line::from(vec![
-                    Span::styled("  Path: ", Style::default().add_modifier(Modifier::BOLD)),
+                    Span::styled("Path:      ", Style::default().fg(Theme::TEXT_MUTED).add_modifier(Modifier::BOLD)),
                     Span::styled(&doc.path, Style::default().fg(Theme::ACCENT)),
                 ]),
+                Line::from(""),
                 Line::from(vec![
-                    Span::styled("  Status: ", Style::default().add_modifier(Modifier::BOLD)),
-                    Span::styled(doc.status.as_str(), Style::default().fg(Color::Yellow)),
-                    Span::raw("   |   "),
-                    Span::styled("Kind: ", Style::default().add_modifier(Modifier::BOLD)),
-                    Span::styled(doc.kind.as_str(), Style::default().fg(Color::LightBlue)),
+                    Span::styled("Status:    ", Style::default().fg(Theme::TEXT_MUTED).add_modifier(Modifier::BOLD)),
+                    Span::styled(format!("● {}", doc.status.as_str()), Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+                    Span::raw("       "),
+                    Span::styled("Kind: ", Style::default().fg(Theme::TEXT_MUTED).add_modifier(Modifier::BOLD)),
+                    Span::styled(doc.kind.as_str().to_uppercase(), Style::default().fg(Color::LightBlue).add_modifier(Modifier::BOLD)),
                 ]),
             ];
 
@@ -141,8 +144,9 @@ impl ExploreView {
                 if let Some(ref del) = parsed.meta.as_ref().and_then(|m| m.delegation.as_ref()) {
                     let grant_str = del.grant_id.to_string();
                     let short_grant = if grant_str.len() >= 8 { &grant_str[..8] } else { &grant_str };
+                    text.push(Line::from(""));
                     text.push(Line::from(vec![
-                        Span::styled("Governance: ", Style::default().add_modifier(Modifier::BOLD)),
+                        Span::styled("Governance: ", Style::default().fg(Theme::TEXT_MUTED).add_modifier(Modifier::BOLD)),
                         Span::styled(format!("Agent [{}] ", del.agent_id), Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
                         Span::styled(format!("via Grant #{} ", short_grant), Style::default().fg(Color::LightBlue)),
                         Span::styled(format!("(Authorizer: {})", del.granted_by), Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
@@ -152,12 +156,12 @@ impl ExploreView {
 
             text.push(Line::from(""));
             text.push(Line::from(Span::styled(
-                "────── Content Preview ──────",
+                "────── Content Preview ──────────────────────────────────────",
                 Style::default().fg(Theme::BORDER),
             )));
             text.push(Line::from(""));
 
-            let preview_width = area.width.saturating_sub(4) as usize;
+            let preview_width = area.width.saturating_sub(6) as usize;
             let formatted_body = crate::ui::markdown::MarkdownFormatter::format_markdown(&doc.content, preview_width);
             text.extend(formatted_body);
 
@@ -167,7 +171,11 @@ impl ExploreView {
                 .wrap(Wrap { trim: false });
             frame.render_widget(paragraph, area);
         } else {
-            let paragraph = Paragraph::new("No documents found in this view.")
+            let empty_text = vec![
+                Line::from(""),
+                Line::from(Span::styled("No documents found in this view.", Style::default().fg(Theme::TEXT_MUTED))),
+            ];
+            let paragraph = Paragraph::new(empty_text)
                 .block(block)
                 .style(Style::default().fg(Theme::TEXT_MUTED));
             frame.render_widget(paragraph, area);
@@ -200,11 +208,12 @@ impl ExploreView {
                             Style::default().fg(Color::White).add_modifier(Modifier::BOLD)
                         };
 
+                        let clean_name = name.trim_end_matches('/');
                         ListItem::new(vec![
                             Line::from(vec![
                                 Span::raw(" "),
                                 Span::styled(icon, icon_style),
-                                Span::styled(format!("{}/", name), folder_style),
+                                Span::styled(format!("{}/", clean_name), folder_style),
                                 Span::raw("  "),
                                 Span::styled(format!("({} docs)", doc_count), Style::default().fg(Theme::TEXT_MUTED)),
                             ]),
@@ -247,6 +256,7 @@ impl ExploreView {
                 Block::default()
                     .borders(Borders::ALL)
                     .border_style(Style::default().fg(border_color))
+                    .padding(Padding::new(2, 2, 1, 1))
                     .title(Span::styled(title_text, Theme::title())),
             )
             .highlight_style(Theme::selected_row());
@@ -273,10 +283,12 @@ impl ExploreView {
                         Theme::title()
                     };
 
+                    let clean_name = name.trim_end_matches('/');
                     let block = Block::default()
                         .borders(Borders::ALL)
                         .border_style(Style::default().fg(border_color))
-                        .title(Span::styled(format!(" Directory: {}/ ", name), title_style));
+                        .padding(Padding::new(2, 2, 1, 1))
+                        .title(Span::styled(format!(" Directory: {}/ ", clean_name), title_style));
 
                     let matching_docs: Vec<&crate::domain::Document> = app.documents.iter().filter(|d| {
                         let f = std::path::Path::new(&d.path).parent().map(|p| p.to_string_lossy().to_string()).unwrap_or_default();
@@ -285,15 +297,14 @@ impl ExploreView {
                     }).collect();
 
                     let mut text = vec![
-                        Line::from(""),
                         Line::from(vec![
-                            Span::styled("  Directory: ", Style::default().fg(Theme::TEXT_MUTED).add_modifier(Modifier::BOLD)),
-                            Span::styled(format!("{}/", name), Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
-                            Span::raw("   "),
+                            Span::styled("Directory: ", Style::default().fg(Theme::TEXT_MUTED).add_modifier(Modifier::BOLD)),
+                            Span::styled(format!("{}/", clean_name), Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+                            Span::raw("    "),
                             Span::styled(format!("({} documents)", doc_count), Style::default().fg(Color::Cyan)),
                         ]),
                         Line::from(""),
-                        Line::from(Span::styled("  ────── Documents in this Directory ──────", Style::default().fg(Theme::BORDER))),
+                        Line::from(Span::styled("────── Documents in this Directory ──────────────────────────", Style::default().fg(Theme::BORDER))),
                         Line::from(""),
                     ];
 
@@ -306,21 +317,20 @@ impl ExploreView {
                             _ => ("· DOC", Style::default().fg(Theme::STATUS_UNKNOWN)),
                         };
                         text.push(Line::from(vec![
-                            Span::raw("    "),
                             Span::styled(badge.0, badge.1),
                             Span::raw("  "),
                             Span::styled(&doc.title, Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
                         ]));
                         text.push(Line::from(vec![
-                            Span::raw("       "),
+                            Span::raw("   "),
                             Span::styled(&doc.path, Style::default().fg(Theme::TEXT_MUTED)),
                         ]));
                         text.push(Line::from(""));
                     }
 
-                    text.push(Line::from(Span::styled("  ──────────────────────────────────────", Style::default().fg(Theme::BORDER))));
+                    text.push(Line::from(Span::styled("────────────────────────────────────────────────────────────", Style::default().fg(Theme::BORDER))));
                     text.push(Line::from(vec![
-                        Span::raw("  Press "),
+                        Span::raw("Press "),
                         Span::styled("[Enter]", Style::default().fg(Theme::ACCENT)),
                         Span::raw(" or "),
                         Span::styled("[Space]", Style::default().fg(Theme::ACCENT)),

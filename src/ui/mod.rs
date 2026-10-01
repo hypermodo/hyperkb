@@ -193,24 +193,30 @@ fn run_loop<B: ratatui::backend::Backend>(
 
                                 if col < list_width {
                                     app.focused_pane = crate::ui::app::FocusedPane::List;
-                                    let rel_row = row - 5;
-                                    if rel_row >= 1 {
+                                    let rel_row = row.saturating_sub(5);
+                                    if rel_row >= 2 {
                                         match app.active_tab {
+                                            ActiveTab::Work => {
+                                                let item_idx = ((rel_row - 2) / 3) as usize;
+                                                if item_idx < app.active_risks.len() {
+                                                    app.selected_risk_idx = item_idx;
+                                                }
+                                            }
                                             ActiveTab::Directives => {
-                                                let item_idx = ((rel_row - 1) / 3) as usize;
+                                                let item_idx = ((rel_row - 2) / 3) as usize;
                                                 if item_idx < app.directives.len() {
                                                     app.selected_directive_idx = item_idx;
                                                 }
                                             }
                                             ActiveTab::Sessions => {
-                                                let item_idx = ((rel_row - 1) / 3) as usize;
+                                                let item_idx = ((rel_row - 2) / 3) as usize;
                                                 if item_idx < app.sessions.len() {
                                                     app.selected_session_idx = item_idx;
                                                 }
                                             }
                                             ActiveTab::Explore => {
                                                 if app.explore_tree_mode {
-                                                    let tree_idx = ((rel_row - 1) / 2) as usize;
+                                                    let tree_idx = ((rel_row - 2) / 2) as usize;
                                                     let tree = app.build_explore_tree();
                                                     if tree_idx < tree.len() {
                                                         if app.selected_tree_idx == tree_idx {
@@ -223,7 +229,7 @@ fn run_loop<B: ratatui::backend::Backend>(
                                                         }
                                                     }
                                                 } else {
-                                                    let item_idx = ((rel_row - 1) / 3) as usize;
+                                                    let item_idx = ((rel_row - 2) / 3) as usize;
                                                     if item_idx < app.documents.len() {
                                                         app.selected_doc_idx = item_idx;
                                                     }
