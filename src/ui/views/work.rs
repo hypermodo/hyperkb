@@ -193,11 +193,11 @@ impl WorkView {
 
     fn render_console_view(frame: &mut Frame, app: &App, area: Rect) {
         let input_lines = app.repl_input.lines().count().max(1);
-        let prompt_h = (input_lines as u16 + 4).clamp(6, 10);
+        let prompt_h = (input_lines as u16 + 8).clamp(10, 16);
         let filtered_slash = app.filtered_slash_commands();
 
         if app.repl_active && !filtered_slash.is_empty() {
-            let slash_h = (filtered_slash.len() as u16 + 2).min(8);
+            let slash_h = (filtered_slash.len() as u16 + 2).min(7);
             let chunks = Layout::default()
                 .direction(Direction::Vertical)
                 .constraints([
@@ -365,10 +365,17 @@ impl WorkView {
             .border_style(Style::default().fg(t.status_proposed()).add_modifier(Modifier::BOLD))
             .style(Style::default().bg(t.bg_panel()).fg(t.text_primary()))
             .padding(Padding::new(1, 1, 0, 0))
-            .title(Span::styled(
-                " Command Palette [↑↓: Navigate | Enter/Tab: Select | Esc: Close] ",
-                t.title(),
-            ));
+            .title(Span::styled(" Command Palette ", t.title()))
+            .title_bottom(Line::from(vec![
+                Span::styled(" [↑↓] ", t.key_badge()),
+                Span::styled("Navigate • ", Style::default().fg(t.text_muted())),
+                Span::styled("[Tab] ", t.key_badge()),
+                Span::styled("Autocomplete • ", Style::default().fg(t.text_muted())),
+                Span::styled("[Enter] ", t.key_badge()),
+                Span::styled("Run • ", Style::default().fg(t.text_muted())),
+                Span::styled("[Esc] ", t.key_badge()),
+                Span::styled("Dismiss ", Style::default().fg(t.text_muted())),
+            ]));
 
         let sel_idx = app.slash_menu_selected_idx.min(filtered.len().saturating_sub(1));
         let mut lines = Vec::new();
@@ -410,15 +417,21 @@ impl WorkView {
                 Style::default().fg(border_color)
             })
             .style(Style::default().bg(t.bg_panel()).fg(t.text_primary()))
-            .padding(Padding::new(2, 2, 0, 0))
+            .padding(Padding::new(2, 2, 1, 1))
             .title(Span::styled(
-                if app.repl_active {
-                    " Command Input [Enter: Run | Shift+Enter/Option+Enter: Newline | '/' Commands] "
-                } else {
-                    " Command Input [Click or press '/' or ':' to focus] "
-                },
+                " Command Input ",
                 if app.repl_active { t.title() } else { Style::default().fg(t.text_muted()) },
-            ));
+            ))
+            .title_bottom(Line::from(vec![
+                Span::styled(" [Enter] ", if app.repl_active { t.key_badge() } else { Style::default().fg(t.text_muted()) }),
+                Span::styled("Run  ", Style::default().fg(t.text_muted())),
+                Span::styled("[Shift+Enter / Option+Enter] ", if app.repl_active { t.key_badge() } else { Style::default().fg(t.text_muted()) }),
+                Span::styled("Newline  ", Style::default().fg(t.text_muted())),
+                Span::styled("[/] ", if app.repl_active { Span::styled("/", t.badge_accepted()).style } else { Style::default().fg(t.text_muted()) }),
+                Span::styled("Palette  ", Style::default().fg(t.text_muted())),
+                Span::styled("[Esc] ", if app.repl_active { t.key_badge() } else { Style::default().fg(t.text_muted()) }),
+                Span::styled("Unfocus ", Style::default().fg(t.text_muted())),
+            ]));
 
         let mut lines = Vec::new();
 
@@ -428,7 +441,7 @@ impl WorkView {
                     Span::styled("> ", Style::default().fg(t.status_proposed()).add_modifier(Modifier::BOLD)),
                     Span::styled("▌", Style::default().fg(t.accent())),
                     Span::styled(
-                        " Type a command or '/' for options (e.g. /audit, /check, /reindex, /help)...",
+                        " Type a command or '/' for palette (e.g. /audit, /check, /reindex, /help)...",
                         Style::default().fg(t.text_muted()),
                     ),
                 ]));
@@ -436,18 +449,30 @@ impl WorkView {
                 lines.push(Line::from(vec![
                     Span::styled("> ", Style::default().fg(t.accent()).add_modifier(Modifier::BOLD)),
                     Span::styled(
-                        "Type '/' or click to enter commands (audit, check, reindex, harnesses, help)...",
+                        "Click or press '/' to enter commands (audit, check, reindex, help)...",
                         Style::default().fg(t.text_muted()),
                     ),
                 ]));
             }
         } else {
             let input_lines: Vec<&str> = app.repl_input.split('\n').collect();
+            let show_line_numbers = input_lines.len() > 1;
             for (idx, line_str) in input_lines.iter().enumerate() {
-                let prefix = if idx == 0 { "> " } else { "  " };
                 let is_last = idx == input_lines.len() - 1;
+                let prefix = if show_line_numbers {
+                    format!("{:>2} │ ", idx + 1)
+                } else {
+                    "> ".to_string()
+                };
                 let mut spans = vec![
-                    Span::styled(prefix, Style::default().fg(t.accent()).add_modifier(Modifier::BOLD)),
+                    Span::styled(
+                        prefix,
+                        if show_line_numbers {
+                            Style::default().fg(t.text_muted())
+                        } else {
+                            Style::default().fg(t.accent()).add_modifier(Modifier::BOLD)
+                        },
+                    ),
                     Span::styled(*line_str, Style::default().fg(t.text_primary()).add_modifier(Modifier::BOLD)),
                 ];
                 if is_last && app.repl_active {
@@ -455,21 +480,6 @@ impl WorkView {
                 }
                 lines.push(Line::from(spans));
             }
-        }
-
-        // Add subtle shortcut helper if space permits
-        if area.height >= 5 {
-            lines.push(Line::from(""));
-            lines.push(Line::from(vec![
-                Span::styled("  [Enter] ", Style::default().fg(t.accent())),
-                Span::styled("Run  ", Style::default().fg(t.text_muted())),
-                Span::styled("  [Shift+Enter / Option+Enter] ", Style::default().fg(t.accent())),
-                Span::styled("Newline  ", Style::default().fg(t.text_muted())),
-                Span::styled("  [/] ", Style::default().fg(t.status_proposed())),
-                Span::styled("Command Palette  ", Style::default().fg(t.text_muted())),
-                Span::styled("  [Esc] ", Style::default().fg(t.accent())),
-                Span::styled("Unfocus", Style::default().fg(t.text_muted())),
-            ]));
         }
 
         let p = Paragraph::new(lines).block(block);

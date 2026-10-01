@@ -6,7 +6,7 @@ pub mod views;
 
 use app::{ActiveTab, App, ExploreTreeItem};
 use crossterm::{
-    event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyModifiers, MouseButton, MouseEventKind},
+    event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyModifiers, KeyboardEnhancementFlags, MouseButton, MouseEventKind, PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags},
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
@@ -30,7 +30,7 @@ pub fn run(root: &Path, db: &Database, collection_id: &str, profile_id: &str) ->
     let original_hook = panic::take_hook();
     panic::set_hook(Box::new(move |panic_info| {
         let _ = disable_raw_mode();
-        let _ = execute!(io::stdout(), LeaveAlternateScreen, DisableMouseCapture);
+        let _ = execute!(io::stdout(), LeaveAlternateScreen, DisableMouseCapture, PopKeyboardEnhancementFlags);
         let _ = io::stdout().write_all(b"\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1005l\x1b[?1006l\x1b[?1015l");
         let _ = io::stdout().flush();
         original_hook(panic_info);
@@ -43,6 +43,10 @@ pub fn run(root: &Path, db: &Database, collection_id: &str, profile_id: &str) ->
     // 3. Setup terminal in raw mode & alternate screen buffer with mouse capture conditional on settings
     enable_raw_mode()?;
     let mut stdout = io::stdout();
+    let _ = execute!(
+        stdout,
+        PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES)
+    );
     if app.mouse_capture {
         execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
         let _ = stdout.flush();
@@ -59,6 +63,7 @@ pub fn run(root: &Path, db: &Database, collection_id: &str, profile_id: &str) ->
 
     // 5. Restore terminal state
     disable_raw_mode()?;
+    let _ = execute!(terminal.backend_mut(), PopKeyboardEnhancementFlags);
     execute!(terminal.backend_mut(), LeaveAlternateScreen, DisableMouseCapture)?;
     let _ = terminal.backend_mut().write_all(b"\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1005l\x1b[?1006l\x1b[?1015l");
     let _ = terminal.backend_mut().flush();
@@ -419,8 +424,15 @@ fn run_loop(
                                 }
                             }
                             KeyCode::Enter => {
-                                if key.modifiers.contains(KeyModifiers::SHIFT) || key.modifiers.contains(KeyModifiers::ALT) {
-                                    // Multi-line support: Shift+Enter or Option+Enter adds newline
+                                if key.modifiers.contains(KeyModifiers::SHIFT)
+                                    || key.modifiers.contains(KeyModifiers::ALT)
+                                    || key.modifiers.contains(KeyModifiers::CONTROL)
+                                {
+                                    // Multi-line support: Shift+Enter, Option+Enter, or Ctrl+Enter adds newline
+                                    app.repl_input.push('\n');
+                                } else if app.repl_input.ends_with('\\') {
+                                    // Trailing backslash continuation (shell standard)
+                                    app.repl_input.pop();
                                     app.repl_input.push('\n');
                                 } else {
                                     let filtered = app.filtered_slash_commands();
@@ -911,12 +923,12 @@ fn run_loop(
                                 else if row >= 5 && row < area.height.saturating_sub(2) {
                                     if app.active_tab == ActiveTab::Work && app.work_tab_mode == crate::ui::app::WorkTabMode::Console {
                                         let input_lines = app.repl_input.lines().count().max(1);
-                                        let prompt_h = (input_lines as u16 + 4).clamp(6, 10);
+                                        let prompt_h = (input_lines as u16 + 8).clamp(10, 16);
                                         let filtered_slash = app.filtered_slash_commands();
                                         let prompt_y = area.height.saturating_sub(2).saturating_sub(prompt_h);
 
                                         if app.repl_active && !filtered_slash.is_empty() {
-                                            let slash_h = (filtered_slash.len() as u16 + 2).min(8);
+                                            let slash_h = (filtered_slash.len() as u16 + 2).min(7);
                                             let slash_y = prompt_y.saturating_sub(slash_h);
 
                                             if row >= slash_y && row < prompt_y {
