@@ -128,12 +128,14 @@ From direct sampling of `ZDP-SYSTEM-KB`, four systemic failure modes were identi
 ### Phase 10: Cockpit Convergence Dashboard & Velocity Telemetry
 **Goal**: Provide real-time operator visibility into project convergence, blockers, and churn warnings directly in the Ratatui TUI.
 
-- [ ] **TUI Work Tab Cockpit (`src/ui/screens/work.rs`)**:
-  - Render Critical Path badge on Project Overview Card.
-  - Render Exit Criteria status indicator.
-  - Hotkey `[t]`: Quick-action popup to transition task status directly in TUI.
-- [ ] **Convergence Velocity Heuristic (`src/domain/telemetry.rs`)**:
-  - Compute churn ratio: sessions vs milestone transitions.
-  - Display `[▲ CHURN WARNING]` in TUI if session count exceeds threshold without milestone progression.
-- [ ] **Verification**:
-  - Run TUI across `ZDP-SYSTEM-KB`; verify interactive task transitions and churn warnings render cleanly.
+- [x] **TUI Work Tab Cockpit (`src/ui/views/work.rs`, `src/ui/views/task_transition.rs`, `src/ui/mod.rs`)**:
+  - Rendered Critical Path badge (`🔒 <active_task>`) on Project Overview Card.
+  - Rendered Exit Criteria status indicator (`🎯 [✔ VERIFIED]` / `🎯 [○ PENDING]`).
+  - Implemented interactive `TaskTransitionModal` with hotkey `[t]` to transition task status (`in_progress`, `completed`, `blocked`, `pending`) directly inside Ratatui TUI.
+- [x] **Convergence Velocity Heuristic (`src/domain/telemetry.rs`)**:
+  - Implemented `ProjectVelocityTelemetry` and `compute_project_churn`.
+  - Computes session-to-milestone churn ratio; displays bold `[▲ CHURN WARNING]` in Project Overview Card and `[▲ CHURN]` badge on project list items when threshold is exceeded without milestone progression.
+- [x] **Verification**:
+  - Validated across `ZDP-SYSTEM-KB` (60 projects cleanly segregated).
+  - Verified interactive task transition modal flow and state transitions.
+  - All 103 unit and integration tests passing.

@@ -12,6 +12,16 @@ pub struct ProjectSummary {
     pub open_risks: usize,
     pub decisions_count: usize,
     pub has_status_doc: bool,
+    #[serde(default)]
+    pub health: String,
+    #[serde(default)]
+    pub active_task: Option<String>,
+    #[serde(default)]
+    pub exit_criteria: Option<String>,
+    #[serde(default)]
+    pub exit_verified: bool,
+    #[serde(default)]
+    pub churn_warning: bool,
 }
 
 impl ProjectSummary {
@@ -20,6 +30,6 @@ impl ProjectSummary {
     }
 
     pub fn is_healthy(&self) -> bool {
-        self.has_status_doc && self.tasks_blocked == 0 && self.open_risks == 0
+        self.has_status_doc && self.tasks_blocked == 0 && self.open_risks == 0 && self.health != "blocked"
     }
 }

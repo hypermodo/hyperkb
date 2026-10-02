@@ -22,7 +22,7 @@ use std::io::{self, Write};
 use std::panic;
 use std::path::Path;
 use std::time::Duration;
-use views::{CommandDock, DirectivesView, ExploreView, HelpModal, IssueGrantModal, NewDirectiveModal, ReaderView, SessionsView, SettingsView, WorkView};
+use views::{CommandDock, DirectivesView, ExploreView, HelpModal, IssueGrantModal, NewDirectiveModal, ReaderView, SessionsView, SettingsView, TaskTransitionModal, WorkView};
 use crate::storage::Database;
 
 pub fn run(root: &Path, db: &Database, collection_id: &str, profile_id: &str) -> io::Result<()> {
@@ -193,6 +193,8 @@ fn run_loop(
                     NewDirectiveModal::render(frame, app, area);
                 } else if app.show_issue_grant_modal {
                     IssueGrantModal::render(frame, app, area);
+                } else if app.show_task_transition_modal {
+                    TaskTransitionModal::render(frame, app, area);
                 } else if app.show_help {
                     HelpModal::render(frame, app, area);
                 }
@@ -400,6 +402,30 @@ fn run_loop(
                             }
                             _ => {}
                         }
+                    } else if app.show_task_transition_modal {
+                        match key.code {
+                            KeyCode::Esc => {
+                                app.show_task_transition_modal = false;
+                            }
+                            KeyCode::Tab | KeyCode::Right => {
+                                app.next_task_transition_target();
+                            }
+                            KeyCode::BackTab | KeyCode::Left => {
+                                app.prev_task_transition_target();
+                            }
+                            KeyCode::Backspace => {
+                                app.task_transition_reason.pop();
+                            }
+                            KeyCode::Enter => {
+                                if let Err(err) = app.submit_task_transition(db) {
+                                    app.status_message = Some(format!("Error: {}", err));
+                                }
+                            }
+                            KeyCode::Char(c) => {
+                                app.task_transition_reason.push(c);
+                            }
+                            _ => {}
+                        }
                     } else if app.show_help {
                         match key.code {
                             KeyCode::Esc | KeyCode::Char('?') | KeyCode::Char('q') => {
@@ -593,6 +619,9 @@ fn run_loop(
                                     let _ = terminal.backend_mut().flush();
                                     app.status_message = Some("Mouse Mode: OFF (Native terminal drag-selection enabled without modifier keys)".to_string());
                                 }
+                            }
+                            KeyCode::Char('t') if app.active_tab == ActiveTab::Work && app.work_tab_mode == crate::ui::app::WorkTabMode::Projects => {
+                                app.open_task_transition_modal();
                             }
                             KeyCode::Char('T') => {
                                 app.next_theme();

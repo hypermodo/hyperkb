@@ -543,6 +543,11 @@ impl Queries {
                 open_risks,
                 decisions_count: decisions,
                 has_status_doc: has_status_num > 0,
+                health: if blocked > 0 { "blocked".to_string() } else { "healthy".to_string() },
+                active_task: None,
+                exit_criteria: None,
+                exit_verified: false,
+                churn_warning: false,
             });
         }
 

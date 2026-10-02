@@ -7,6 +7,7 @@ pub mod new_directive;
 pub mod reader;
 pub mod sessions;
 pub mod settings;
+pub mod task_transition;
 pub mod work;
 
 pub use command_dock::CommandDock;
@@ -18,4 +19,5 @@ pub use new_directive::NewDirectiveModal;
 pub use reader::ReaderView;
 pub use sessions::SessionsView;
 pub use settings::SettingsView;
+pub use task_transition::TaskTransitionModal;
 pub use work::WorkView;

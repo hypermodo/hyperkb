@@ -119,8 +119,14 @@ impl WorkView {
                     Style::default().fg(t.text_muted()),
                 );
 
+                let mut header_spans = vec![health_badge];
+                if proj.churn_warning {
+                    header_spans.push(Span::styled(" [▲ CHURN] ", t.badge_risk()));
+                }
+                header_spans.push(title);
+
                 ListItem::new(vec![
-                    Line::from(vec![health_badge, title]),
+                    Line::from(header_spans),
                     Line::from(vec![metrics, status_pill]),
                     Line::from(""),
                 ])
@@ -169,11 +175,11 @@ impl WorkView {
         };
 
         // Split vertically into:
-        // 1. Overview card (8 lines)
+        // 1. Overview card (9 lines)
         // 2. Task Funnel & Document list (remaining)
         let main_chunks = Layout::default()
             .direction(Direction::Vertical)
-            .constraints([Constraint::Length(8), Constraint::Min(8)])
+            .constraints([Constraint::Length(9), Constraint::Min(8)])
             .split(area);
 
         // --- 1. Overview Card ---
@@ -185,18 +191,56 @@ impl WorkView {
             .title(Span::styled(format!(" Project: {} ", proj.name), t.title()));
 
         let status_doc_desc = if proj.has_status_doc {
-            Span::styled("✓ Tracked (projects/.../status.md)", Style::default().fg(t.status_accepted()))
+            Span::styled("✓ Tracked (status.md)", Style::default().fg(t.status_accepted()))
         } else {
             Span::styled("✗ Missing status.md", Style::default().fg(t.status_proposed()))
         };
 
+        let health_span = match proj.health.as_str() {
+            "healthy" => Span::styled(" [✔ HEALTHY] ", t.badge_accepted()),
+            "blocked" => Span::styled(" [✖ BLOCKED] ", t.badge_risk()),
+            "degraded" => Span::styled(" [▲ DEGRADED] ", t.badge_proposed()),
+            _ => Span::styled(format!(" [{}] ", proj.health.to_uppercase()), t.badge_proposed()),
+        };
+
+        let mut line1_spans = vec![
+            Span::styled("Path: ", Style::default().fg(t.text_muted()).add_modifier(Modifier::BOLD)),
+            Span::styled(format!("projects/{}    ", proj.name), Style::default().fg(t.accent())),
+            Span::styled("Doc: ", Style::default().fg(t.text_muted()).add_modifier(Modifier::BOLD)),
+            status_doc_desc,
+            Span::styled("    Health: ", Style::default().fg(t.text_muted()).add_modifier(Modifier::BOLD)),
+            health_span,
+        ];
+        if proj.churn_warning {
+            line1_spans.push(Span::styled("  [▲ CHURN WARNING] ", t.badge_risk()));
+        }
+
+        // Line 2: Critical Path and Exit Criteria
+        let mut line2_spans = vec![
+            Span::styled("Critical Path: ", Style::default().fg(t.text_muted()).add_modifier(Modifier::BOLD)),
+        ];
+        if let Some(ref lock) = proj.active_task {
+            line2_spans.push(Span::styled(format!("🔒 {}    ", lock), Style::default().fg(t.accent()).add_modifier(Modifier::BOLD)));
+        } else if proj.tasks_in_progress > 0 {
+            line2_spans.push(Span::styled("▶ Auto (in-progress task)    ", Style::default().fg(t.status_accepted())));
+        } else {
+            line2_spans.push(Span::styled("○ None (unlocked)    ", Style::default().fg(t.text_muted())));
+        }
+
+        line2_spans.push(Span::styled("Exit Criteria: ", Style::default().fg(t.text_muted()).add_modifier(Modifier::BOLD)));
+        if let Some(ref ec) = proj.exit_criteria {
+            if proj.exit_verified {
+                line2_spans.push(Span::styled(format!("🎯 [✔ VERIFIED] {}", ec), Style::default().fg(t.status_accepted())));
+            } else {
+                line2_spans.push(Span::styled(format!("🎯 [○ PENDING] {}", ec), Style::default().fg(t.status_proposed())));
+            }
+        } else {
+            line2_spans.push(Span::styled("○ None declared", Style::default().fg(t.text_muted())));
+        }
+
         let overview_text = vec![
-            Line::from(vec![
-                Span::styled("Path: ", Style::default().fg(t.text_muted()).add_modifier(Modifier::BOLD)),
-                Span::styled(format!("projects/{}    ", proj.name), Style::default().fg(t.accent())),
-                Span::styled("Status Doc: ", Style::default().fg(t.text_muted()).add_modifier(Modifier::BOLD)),
-                status_doc_desc,
-            ]),
+            Line::from(line1_spans),
+            Line::from(line2_spans),
             Line::from(""),
             Line::from(vec![
                 Span::styled(format!("[ Total: {} ]  ", proj.total_documents), Style::default().fg(t.text_primary()).add_modifier(Modifier::BOLD)),
@@ -225,7 +269,7 @@ impl WorkView {
             .style(Style::default().bg(t.bg_panel()).fg(t.text_primary()))
             .padding(Padding::new(1, 1, 0, 0))
             .title(Span::styled(
-                format!(" Tasks & Documents ({}) [Enter: Read | o: IDE] ", app.project_tasks.len()),
+                format!(" Tasks & Documents ({}) [Enter: Read | t: Transition | o: IDE] ", app.project_tasks.len()),
                 t.title(),
             ));
 

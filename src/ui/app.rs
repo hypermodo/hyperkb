@@ -285,6 +285,11 @@ pub struct App {
     pub new_grant_ttl_hours: u32,
     pub new_grant_field: usize,
 
+    // Task Transition modal state
+    pub show_task_transition_modal: bool,
+    pub task_transition_target_idx: usize,
+    pub task_transition_reason: String,
+
 
     // Work / Cockpit tab mode and project scaling
     pub work_tab_mode: WorkTabMode,
@@ -409,6 +414,9 @@ impl App {
             new_grant_preset_idx: 0,
             new_grant_ttl_hours: 4,
             new_grant_field: 0,
+            show_task_transition_modal: false,
+            task_transition_target_idx: 0,
+            task_transition_reason: String::new(),
             work_tab_mode: WorkTabMode::Projects,
             projects: Vec::new(),
             selected_project_idx: 0,
@@ -591,7 +599,24 @@ impl App {
             }
         }
 
-        if let Ok(projects) = Queries::list_projects(db.conn(), &self.collection_id, false) {
+        if let Ok(mut projects) = Queries::list_projects(db.conn(), &self.collection_id, false) {
+            for proj in &mut projects {
+                if let Ok(status) = crate::core::StatusEngine::get_project_status(&self.root, &proj.name) {
+                    proj.health = format!("{:?}", status.health).to_lowercase();
+                    proj.active_task = status.active_task;
+                    if let Some(ref ec) = status.exit_criteria {
+                        proj.exit_criteria = Some(ec.command.clone());
+                        proj.exit_verified = ec.verified_at.is_some();
+                    }
+                }
+                proj.churn_warning = crate::domain::telemetry::compute_project_churn(
+                    db.conn(),
+                    &self.collection_id,
+                    &proj.name,
+                    proj.tasks_completed,
+                    proj.open_tasks_count(),
+                );
+            }
             self.projects = projects;
             if self.selected_project_idx >= self.projects.len() && !self.projects.is_empty() {
                 self.selected_project_idx = self.projects.len() - 1;
@@ -625,6 +650,73 @@ impl App {
             self.selected_project_task_idx = 0;
             self.refresh_project_tasks(db);
         }
+    }
+
+    pub const TASK_STATUS_TARGETS: &'static [&'static str] = &["in_progress", "completed", "blocked", "pending"];
+
+    pub fn open_task_transition_modal(&mut self) {
+        if self.project_tasks.is_empty() {
+            self.status_message = Some("No tasks available in project to transition".to_string());
+            return;
+        }
+        self.show_task_transition_modal = true;
+        self.task_transition_target_idx = 0;
+        self.task_transition_reason.clear();
+    }
+
+    pub fn next_task_transition_target(&mut self) {
+        self.task_transition_target_idx = (self.task_transition_target_idx + 1) % Self::TASK_STATUS_TARGETS.len();
+    }
+
+    pub fn prev_task_transition_target(&mut self) {
+        if self.task_transition_target_idx == 0 {
+            self.task_transition_target_idx = Self::TASK_STATUS_TARGETS.len() - 1;
+        } else {
+            self.task_transition_target_idx -= 1;
+        }
+    }
+
+    pub fn submit_task_transition(&mut self, db: &Database) -> Result<(), String> {
+        let proj = match self.projects.get(self.selected_project_idx) {
+            Some(p) => p.name.clone(),
+            None => return Err("No active project selected".to_string()),
+        };
+        let doc = match self.project_tasks.get(self.selected_project_task_idx) {
+            Some(d) => d,
+            None => return Err("No task selected".to_string()),
+        };
+
+        let task_id = if !doc.id.is_empty() {
+            doc.id.as_str()
+        } else {
+            doc.path.split('/').last().unwrap_or(&doc.title)
+        };
+
+        let target_str = Self::TASK_STATUS_TARGETS[self.task_transition_target_idx];
+        let target_state = match target_str {
+            "in_progress" => crate::domain::schema::TaskState::InProgress,
+            "completed" => crate::domain::schema::TaskState::Completed,
+            "blocked" => crate::domain::schema::TaskState::Blocked,
+            _ => crate::domain::schema::TaskState::Pending,
+        };
+        let reason = if self.task_transition_reason.trim().is_empty() {
+            None
+        } else {
+            Some(self.task_transition_reason.trim())
+        };
+
+        let result = crate::core::StatusEngine::transition_task(
+            &self.root,
+            &proj,
+            task_id,
+            target_state,
+            reason,
+        )?;
+
+        self.show_task_transition_modal = false;
+        self.status_message = Some(format!("✓ Transitioned task to '{:?}'", result.status));
+        self.refresh_data(db);
+        Ok(())
     }
 
     pub fn cycle_work_tab_mode(&mut self, db: &Database) {
@@ -3385,6 +3477,11 @@ mod tests {
                 open_risks: 0,
                 decisions_count: 1,
                 has_status_doc: true,
+                health: "blocked".to_string(),
+                active_task: Some("task-02".to_string()),
+                exit_criteria: Some("cargo test".to_string()),
+                exit_verified: false,
+                churn_warning: true,
             },
             ProjectSummary {
                 name: "service-billing".to_string(),
@@ -3397,6 +3494,11 @@ mod tests {
                 open_risks: 0,
                 decisions_count: 0,
                 has_status_doc: true,
+                health: "healthy".to_string(),
+                active_task: None,
+                exit_criteria: None,
+                exit_verified: false,
+                churn_warning: false,
             },
         ];
 
@@ -3415,6 +3517,53 @@ mod tests {
         assert_eq!(app.work_tab_mode, WorkTabMode::Console);
         app.cycle_work_tab_mode(&db);
         assert_eq!(app.work_tab_mode, WorkTabMode::Projects);
+    }
+
+    #[test]
+    fn test_task_transition_modal_flow() {
+        let mut app = App::new("test_coll", "test_prof");
+        assert!(!app.show_task_transition_modal);
+
+        // Open with no tasks -> fails gracefully with status message
+        app.open_task_transition_modal();
+        assert!(!app.show_task_transition_modal);
+        assert!(app.status_message.is_some());
+
+        // Simulate having a project and a task
+        let doc = Document {
+            id: "task-01".to_string(),
+            collection_id: "test_coll".to_string(),
+            path: "projects/service-auth/tasks/01.md".to_string(),
+            title: "Implement Phase 10".to_string(),
+            topic: "task".to_string(),
+            status: DocumentStatus::InProgress,
+            kind: DocumentKind::Task,
+            owner: "dev".to_string(),
+            issue: String::new(),
+            replacement_id: None,
+            supersedes: None,
+            content: String::new(),
+            source: "local".to_string(),
+            available: true,
+            stale: false,
+            declared_status: None,
+            checksum: String::new(),
+            worktree_state: None,
+            is_tombstone: false,
+        };
+        app.project_tasks.push(doc);
+
+        app.open_task_transition_modal();
+        assert!(app.show_task_transition_modal);
+        assert_eq!(app.task_transition_target_idx, 0);
+
+        // Cycle targets
+        app.next_task_transition_target();
+        assert_eq!(app.task_transition_target_idx, 1);
+        app.prev_task_transition_target();
+        assert_eq!(app.task_transition_target_idx, 0);
+        app.prev_task_transition_target();
+        assert_eq!(app.task_transition_target_idx, 3);
     }
 
     #[test]

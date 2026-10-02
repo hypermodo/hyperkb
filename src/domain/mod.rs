@@ -10,6 +10,7 @@ pub mod project;
 pub mod risk;
 pub mod schema;
 pub mod session;
+pub mod telemetry;
 
 pub use actor::{ActionKind, Actor, AuthorityGrant, DelegationMeta, GrantConstraints};
 pub use directive::Directive;
@@ -32,6 +33,7 @@ pub use schema::{
     TaskDocument, TaskState, ViolationItem,
 };
 pub use session::{AgentSession, CriticalPathLock, SessionBriefing, SessionEventRecord, SessionScorecard};
+pub use telemetry::{compute_project_churn, ProjectVelocityTelemetry};
 
 
 
