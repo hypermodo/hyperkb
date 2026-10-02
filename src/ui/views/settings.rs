@@ -76,7 +76,15 @@ impl SettingsView {
             .border_style(Style::default().fg(border_color))
             .style(Style::default().bg(t.bg_panel()).fg(t.text_primary()))
             .padding(Padding::new(2, 2, 1, 1))
-            .title(Span::styled(" Configurable Settings & Policy Knobs ", t.title()));
+            .title(Span::styled(" Configurable Settings & Policy Knobs ", t.title()))
+            .title_bottom(Line::from(vec![
+                Span::styled(" [↑/↓] ", t.key_badge()),
+                Span::styled("Select • ", Style::default().fg(t.text_muted())),
+                Span::styled("[←/→] ", t.key_badge()),
+                Span::styled("Adjust Value • ", Style::default().fg(t.text_muted())),
+                Span::styled("[Enter] ", t.key_badge()),
+                Span::styled("Save", Style::default().fg(t.text_muted())),
+            ]));
 
         let list = List::new(items).block(list_block);
         frame.render_widget(list, area);
@@ -249,11 +257,7 @@ impl SettingsView {
                 Span::styled("[←] / [→]", t.key_badge()),
                 Span::styled(" or ", Style::default().fg(t.text_primary())),
                 Span::styled("[-] / [+]", t.key_badge()),
-                Span::styled(" (or ", Style::default().fg(t.text_primary())),
-                Span::styled("[Tab]", t.key_badge()),
-                Span::styled(" + ", Style::default().fg(t.text_primary())),
-                Span::styled("[↑] / [↓]", t.key_badge()),
-                Span::styled(") to adjust numerical value live.", Style::default().fg(t.text_primary())),
+                Span::styled(" to adjust numerical value live.", Style::default().fg(t.text_primary())),
             ]));
             text.push(Line::from(vec![
                 Span::styled("  Press ", Style::default().fg(t.text_primary())),

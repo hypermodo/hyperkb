@@ -650,11 +650,56 @@ fn run_loop(
                                     app.refresh_project_tasks(db);
                                 }
                             }
-                            KeyCode::Left | KeyCode::Char('h') if app.active_tab == ActiveTab::Settings || app.active_tab == ActiveTab::Work => {
+                            KeyCode::Left | KeyCode::Char('h') if app.active_tab == ActiveTab::Settings => {
+                                if app.focused_pane == crate::ui::app::FocusedPane::Detail && (app.settings_selected_idx == 7 || app.settings_selected_idx == 6) {
+                                    app.focused_pane = crate::ui::app::FocusedPane::List;
+                                } else {
+                                    let old_mouse = app.mouse_capture;
+                                    app.adjust_setting(-1);
+                                    if app.mouse_capture != old_mouse {
+                                        if app.mouse_capture {
+                                            let _ = execute!(terminal.backend_mut(), EnableMouseCapture);
+                                            let _ = terminal.backend_mut().flush();
+                                        } else {
+                                            let _ = execute!(terminal.backend_mut(), DisableMouseCapture);
+                                            let _ = terminal.backend_mut().write_all(b"\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1005l\x1b[?1006l\x1b[?1015l");
+                                            let _ = terminal.backend_mut().flush();
+                                        }
+                                    }
+                                }
+                            }
+                            KeyCode::Right | KeyCode::Char('l') if app.active_tab == ActiveTab::Settings => {
+                                if app.settings_selected_idx == 7 || app.settings_selected_idx == 6 {
+                                    app.focused_pane = crate::ui::app::FocusedPane::Detail;
+                                } else {
+                                    let old_mouse = app.mouse_capture;
+                                    app.adjust_setting(1);
+                                    if app.mouse_capture != old_mouse {
+                                        if app.mouse_capture {
+                                            let _ = execute!(terminal.backend_mut(), EnableMouseCapture);
+                                            let _ = terminal.backend_mut().flush();
+                                        } else {
+                                            let _ = execute!(terminal.backend_mut(), DisableMouseCapture);
+                                            let _ = terminal.backend_mut().write_all(b"\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1005l\x1b[?1006l\x1b[?1015l");
+                                            let _ = terminal.backend_mut().flush();
+                                        }
+                                    }
+                                }
+                            }
+                            KeyCode::Left | KeyCode::Char('h') if app.active_tab == ActiveTab::Work => {
                                 app.focused_pane = crate::ui::app::FocusedPane::List;
                             }
-                            KeyCode::Right | KeyCode::Char('l') if app.active_tab == ActiveTab::Settings || app.active_tab == ActiveTab::Work => {
+                            KeyCode::Right | KeyCode::Char('l') if app.active_tab == ActiveTab::Work => {
                                 app.focused_pane = crate::ui::app::FocusedPane::Detail;
+                            }
+                            KeyCode::Char('g') | KeyCode::Home if app.active_tab == ActiveTab::Reader => {
+                                app.scroll_reader_to_top();
+                            }
+                            KeyCode::Char('G') | KeyCode::End if app.active_tab == ActiveTab::Reader => {
+                                app.scroll_reader_to_end();
+                            }
+                            KeyCode::Char('x') | KeyCode::Char('X') if app.active_tab == ActiveTab::Sessions => {
+                                app.prune_stale_sessions(db);
                             }
                             KeyCode::Char('-') if app.active_tab == ActiveTab::Settings => {
                                 let old_mouse = app.mouse_capture;

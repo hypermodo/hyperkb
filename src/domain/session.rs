@@ -122,6 +122,33 @@ impl AgentSession {
             dur_str
         }
     }
+
+    pub fn parse_agent_taxonomy(&self) -> (&str, Option<&str>) {
+        let trimmed = self.agent_id.trim();
+        if let Some(open_paren) = trimmed.find('(') {
+            if let Some(close_paren) = trimmed.rfind(')') {
+                let harness = trimmed[..open_paren].trim();
+                let model = trimmed[open_paren + 1..close_paren].trim();
+                return (harness, Some(model));
+            }
+        }
+        if let Some(slash) = trimmed.find('/') {
+            let harness = trimmed[..slash].trim();
+            let model = trimmed[slash + 1..].trim();
+            return (harness, Some(model));
+        }
+        (trimmed, None)
+    }
+
+    pub fn is_stale(&self) -> bool {
+        if self.status != "active" {
+            return false;
+        }
+        let start = DateTime::parse_from_rfc3339(&self.started_at)
+            .map(|dt| dt.with_timezone(&Utc))
+            .unwrap_or_else(|_| Utc::now());
+        (Utc::now() - start).num_seconds() > 900
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -498,5 +525,33 @@ pub mod tests {
         let line_count = md.lines().count();
         assert!(line_count < 50, "Briefing must never exceed 50 lines, got {}", line_count);
         assert!(md.contains("Standing Directives (Rule of 5)"));
+    }
+
+    #[test]
+    fn test_parse_agent_taxonomy_and_staleness() {
+        let s1 = AgentSession::new("s1", "col", "prof", "opencode (claude-3-7-sonnet)", None);
+        let (harness, model) = s1.parse_agent_taxonomy();
+        assert_eq!(harness, "opencode");
+        assert_eq!(model, Some("claude-3-7-sonnet"));
+
+        let s2 = AgentSession::new("s2", "col", "prof", "claude-code/claude-3-5-haiku", None);
+        let (harness2, model2) = s2.parse_agent_taxonomy();
+        assert_eq!(harness2, "claude-code");
+        assert_eq!(model2, Some("claude-3-5-haiku"));
+
+        let s3 = AgentSession::new("s3", "col", "prof", "mcp_agent", None);
+        let (harness3, model3) = s3.parse_agent_taxonomy();
+        assert_eq!(harness3, "mcp_agent");
+        assert_eq!(model3, None);
+
+        // Staleness check
+        let mut s_old = AgentSession::new("s_old", "col", "prof", "opencode", None);
+        s_old.started_at = "2020-01-01T00:00:00Z".to_string();
+        assert!(s_old.is_stale());
+
+        let mut s_completed = AgentSession::new("s_comp", "col", "prof", "opencode", None);
+        s_completed.started_at = "2020-01-01T00:00:00Z".to_string();
+        s_completed.status = "completed".to_string();
+        assert!(!s_completed.is_stale());
     }
 }

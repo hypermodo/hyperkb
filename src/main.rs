@@ -154,7 +154,14 @@ enum Commands {
         environments: Vec<String>,
     },
     /// Run as Model Context Protocol (MCP) stdio server for AI agents
-    Mcp,
+    Mcp {
+        /// Optional agent harness identifier (e.g. 'opencode', 'claude-code')
+        #[arg(long)]
+        agent: Option<String>,
+        /// Optional LLM model identifier (e.g. 'claude-3-7-sonnet', 'gpt-4o')
+        #[arg(long)]
+        model: Option<String>,
+    },
     /// Remember a private local note
     Remember {
         title: String,
@@ -476,7 +483,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     let is_same_target = cli.root.canonicalize().ok() == effective_root.canonicalize().ok();
-    if !is_same_target && !matches!(cli.command, Some(Commands::Mcp)) {
+    if !is_same_target && !matches!(cli.command, Some(Commands::Mcp { .. })) {
         eprintln!(
             "ℹ Discovered sibling knowledge hub: {}{}",
             effective_root.display(),
@@ -864,9 +871,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!("  Paths:  {}", draft.paths.join(", "));
             println!("\nIndexed and active for pre-edit interception.");
         }
-        Some(Commands::Mcp) => {
+        Some(Commands::Mcp { agent, model }) => {
             let _ = Scanner::index_workspace(db.conn(), &effective_root, &manifest);
-            McpServer::run_stdio(&effective_root, db.conn(), collection_id, profile_id)?;
+            McpServer::run_stdio_with_agent(
+                &effective_root,
+                db.conn(),
+                collection_id,
+                profile_id,
+                agent.as_deref(),
+                model.as_deref(),
+            )?;
         }
         Some(Commands::DraftDecision {
             title,

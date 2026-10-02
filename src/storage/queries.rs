@@ -793,11 +793,42 @@ impl Queries {
         }
     }
 
+    pub fn update_session_agent_id(conn: &Connection, session_id: &str, agent_id: &str) -> Result<()> {
+        conn.execute(
+            "UPDATE agent_sessions SET agent_id = ?1 WHERE id = ?2;",
+            params![agent_id, session_id],
+        )?;
+        Ok(())
+    }
+
+    pub fn retire_stale_sessions(conn: &Connection, collection_id: &str, stale_seconds: i64) -> Result<usize> {
+        let cutoff = (chrono::Utc::now() - chrono::Duration::seconds(stale_seconds)).to_rfc3339();
+        let changed = conn.execute(
+            "UPDATE agent_sessions 
+             SET status = 'idle', ended_at = coalesce(ended_at, started_at) 
+             WHERE collection_id = ?1 AND status = 'active' AND started_at < ?2;",
+            params![collection_id, cutoff],
+        )?;
+        Ok(changed)
+    }
+
+    pub fn prune_stale_sessions(conn: &Connection, collection_id: &str) -> Result<usize> {
+        let now_str = chrono::Utc::now().to_rfc3339();
+        let changed = conn.execute(
+            "UPDATE agent_sessions 
+             SET status = 'completed', ended_at = coalesce(ended_at, ?2) 
+             WHERE collection_id = ?1 AND status != 'completed';",
+            params![collection_id, now_str],
+        )?;
+        Ok(changed)
+    }
+
     pub fn list_sessions(
         conn: &Connection,
         collection_id: &str,
         limit: usize,
     ) -> Result<Vec<AgentSession>> {
+        let _ = Self::retire_stale_sessions(conn, collection_id, 900);
         let mut stmt = conn.prepare(
             "SELECT id, collection_id, profile_id, agent_id, grant_id, started_at, ended_at,
                     total_tool_calls, total_edits, total_diff_lines, risks_cited, risks_prevented,

@@ -916,14 +916,16 @@ impl App {
                 }
             }
             ActiveTab::Settings => {
-                if self.focused_pane == FocusedPane::Detail {
-                    self.adjust_setting(1);
+                if self.focused_pane == FocusedPane::Detail && self.settings_selected_idx == 7 {
+                    if !self.harnesses.is_empty() {
+                        self.selected_harness_idx = (self.selected_harness_idx + 1) % self.harnesses.len();
+                    }
                 } else {
                     self.next_setting();
                 }
             }
             ActiveTab::Reader => {
-                self.reader_scroll_offset += 2;
+                self.scroll_reader_down(2);
             }
         }
     }
@@ -1047,18 +1049,20 @@ impl App {
                 }
             }
             ActiveTab::Settings => {
-                if self.focused_pane == FocusedPane::Detail {
-                    self.adjust_setting(-1);
+                if self.focused_pane == FocusedPane::Detail && self.settings_selected_idx == 7 {
+                    if !self.harnesses.is_empty() {
+                        if self.selected_harness_idx == 0 {
+                            self.selected_harness_idx = self.harnesses.len() - 1;
+                        } else {
+                            self.selected_harness_idx -= 1;
+                        }
+                    }
                 } else {
                     self.prev_setting();
                 }
             }
             ActiveTab::Reader => {
-                if self.reader_scroll_offset > 2 {
-                    self.reader_scroll_offset -= 2;
-                } else {
-                    self.reader_scroll_offset = 0;
-                }
+                self.scroll_reader_up(2);
             }
         }
     }
@@ -1121,7 +1125,7 @@ impl App {
                 self.next_setting();
             }
             ActiveTab::Reader => {
-                self.reader_scroll_offset += 15;
+                self.scroll_reader_down(12);
             }
         }
     }
@@ -1182,7 +1186,7 @@ impl App {
                 self.prev_setting();
             }
             ActiveTab::Reader => {
-                self.reader_scroll_offset = self.reader_scroll_offset.saturating_sub(15);
+                self.scroll_reader_up(12);
             }
         }
     }
@@ -1327,8 +1331,54 @@ impl App {
             self.repl_active = false;
         } else if self.active_tab == ActiveTab::Work && self.work_tab_mode != WorkTabMode::Projects {
             self.work_tab_mode = WorkTabMode::Projects;
+        } else if self.active_tab == ActiveTab::Settings && self.focused_pane == FocusedPane::Detail {
+            self.focused_pane = FocusedPane::List;
         } else if self.active_tab == ActiveTab::Reader {
             self.active_tab = ActiveTab::Explore;
+        }
+    }
+
+    pub fn reader_max_scroll(&self) -> usize {
+        if let Some(ref doc) = self.current_document {
+            let (term_width, term_height) = crossterm::terminal::size().unwrap_or((80, 24));
+            if self.show_raw {
+                let total_lines = doc.content.lines().count();
+                let visible = (term_height as usize).saturating_sub(4);
+                total_lines.saturating_sub(visible)
+            } else {
+                let reader_width = (term_width as usize).saturating_sub(10).max(20);
+                let meta_lines = crate::ui::markdown::MarkdownFormatter::format_metadata_card_with_theme(doc, &self.theme);
+                let meta_height = (meta_lines.len() as u16 + 4).clamp(6, 12) as usize;
+                let visible_height = (term_height as usize).saturating_sub(meta_height + 4);
+                let formatted = crate::ui::markdown::MarkdownFormatter::format_markdown_with_theme(&doc.content, reader_width, &self.theme);
+                formatted.len().saturating_sub(visible_height)
+            }
+        } else {
+            0
+        }
+    }
+
+    pub fn scroll_reader_down(&mut self, amount: usize) {
+        let max = self.reader_max_scroll();
+        self.reader_scroll_offset = (self.reader_scroll_offset + amount).min(max);
+    }
+
+    pub fn scroll_reader_up(&mut self, amount: usize) {
+        self.reader_scroll_offset = self.reader_scroll_offset.saturating_sub(amount);
+    }
+
+    pub fn scroll_reader_to_top(&mut self) {
+        self.reader_scroll_offset = 0;
+    }
+
+    pub fn scroll_reader_to_end(&mut self) {
+        self.reader_scroll_offset = self.reader_max_scroll();
+    }
+
+    pub fn prune_stale_sessions(&mut self, db: &crate::storage::Database) {
+        if let Ok(count) = Queries::prune_stale_sessions(db.conn(), &self.collection_id) {
+            self.status_message = Some(format!("✔ Cleaned up {} inactive session(s)", count));
+            self.refresh_data(db);
         }
     }
 
@@ -3756,5 +3806,89 @@ mod tests {
         let colored = "\x1b[32mSuccess\x1b[0m: Process finished with code \x1b[1m0\x1b[0m";
         let clean = strip_ansi_codes(colored);
         assert_eq!(clean, "Success: Process finished with code 0");
+    }
+
+    #[test]
+    fn test_reader_scroll_bounds_and_navigation() {
+        let mut app = App::new("test", "test");
+        app.active_tab = ActiveTab::Reader;
+        app.current_document = Some(Document {
+            id: "d1".to_string(),
+            collection_id: "test".to_string(),
+            path: "docs/test.md".to_string(),
+            title: "Test Doc".to_string(),
+            topic: "general".to_string(),
+            status: crate::domain::DocumentStatus::Accepted,
+            kind: crate::domain::DocumentKind::Decision,
+            owner: "dev".to_string(),
+            issue: "".to_string(),
+            replacement_id: None,
+            supersedes: None,
+            content: (0..100).map(|i| format!("Line {i}")).collect::<Vec<_>>().join("\n"),
+            source: "local".to_string(),
+            available: true,
+            stale: false,
+            declared_status: None,
+            checksum: "123".to_string(),
+            worktree_state: None,
+            is_tombstone: false,
+        });
+
+        assert_eq!(app.reader_scroll_offset, 0);
+
+        // Scroll down
+        app.scroll_reader_down(10);
+        assert_eq!(app.reader_scroll_offset, 10);
+
+        // Scroll up
+        app.scroll_reader_up(4);
+        assert_eq!(app.reader_scroll_offset, 6);
+
+        // Scroll up cannot go below 0
+        app.scroll_reader_up(20);
+        assert_eq!(app.reader_scroll_offset, 0);
+
+        // Scroll down is clamped to max
+        let max = app.reader_max_scroll();
+        app.scroll_reader_down(max + 500);
+        assert_eq!(app.reader_scroll_offset, max);
+
+        // Scrolling up from clamped max immediately decreases
+        app.scroll_reader_up(2);
+        assert_eq!(app.reader_scroll_offset, max.saturating_sub(2));
+
+        // Jump to top and end
+        app.scroll_reader_to_top();
+        assert_eq!(app.reader_scroll_offset, 0);
+        app.scroll_reader_to_end();
+        assert_eq!(app.reader_scroll_offset, max);
+    }
+
+    #[test]
+    fn test_settings_arrow_navigation_and_adjustment() {
+        let mut app = App::new("test", "test");
+        app.active_tab = ActiveTab::Settings;
+        assert_eq!(app.settings_selected_idx, 0);
+
+        // Down / Up moves settings rows
+        app.next();
+        assert_eq!(app.settings_selected_idx, 1);
+        app.prev();
+        assert_eq!(app.settings_selected_idx, 0);
+
+        // Directives ceiling adjustment
+        let orig = app.manifest.settings.max_briefing_directives;
+        app.adjust_setting(1);
+        assert_eq!(app.manifest.settings.max_briefing_directives, orig + 1);
+        app.adjust_setting(-1);
+        assert_eq!(app.manifest.settings.max_briefing_directives, orig);
+
+        // Theme adjustment
+        app.settings_selected_idx = 4;
+        let orig_theme = app.theme;
+        app.adjust_setting(1);
+        assert_ne!(app.theme, orig_theme);
+        app.adjust_setting(-1);
+        assert_eq!(app.theme, orig_theme);
     }
 }

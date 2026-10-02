@@ -33,6 +33,19 @@ pub struct JsonRpcError {
 
 pub struct McpServer;
 
+struct SessionGuard<'a> {
+    conn: &'a Connection,
+    session_id: Option<String>,
+}
+
+impl<'a> Drop for SessionGuard<'a> {
+    fn drop(&mut self) {
+        if let Some(ref id) = self.session_id {
+            let _ = SessionManager::end_session(self.conn, id, "completed");
+        }
+    }
+}
+
 impl McpServer {
     /// Runs the stdio MCP server loop, processing JSON-RPC 2.0 messages from stdin and replying on stdout.
     pub fn run_stdio<P: AsRef<Path>>(
@@ -41,20 +54,38 @@ impl McpServer {
         collection_id: &str,
         profile_id: &str,
     ) -> std::io::Result<()> {
+        Self::run_stdio_with_agent(root, conn, collection_id, profile_id, None, None)
+    }
+
+    pub fn run_stdio_with_agent<P: AsRef<Path>>(
+        root: P,
+        conn: &Connection,
+        collection_id: &str,
+        profile_id: &str,
+        cli_agent: Option<&str>,
+        cli_model: Option<&str>,
+    ) -> std::io::Result<()> {
         let root = root.as_ref();
         let stdin = std::io::stdin();
         let mut stdout = std::io::stdout();
         let reader = std::io::BufReader::new(stdin.lock());
+
+        let initial_agent = Self::resolve_initial_agent(cli_agent, cli_model);
 
         // Initialize active session for this stdio server connection
         let active_session = SessionManager::start_session(
             conn,
             collection_id,
             profile_id,
-            "mcp_agent",
+            &initial_agent,
             None,
         ).ok();
-        let active_session_id = active_session.as_ref().map(|s| s.id.as_str());
+        let active_session_id = active_session.as_ref().map(|s| s.id.clone());
+
+        let _guard = SessionGuard {
+            conn,
+            session_id: active_session_id.clone(),
+        };
 
         for line in reader.lines() {
             let line = line?;
@@ -63,7 +94,7 @@ impl McpServer {
             }
 
             if let Ok(req) = serde_json::from_str::<JsonRpcRequest>(&line) {
-                if let Some(resp) = Self::handle_request_with_session(root, conn, collection_id, profile_id, active_session_id, req) {
+                if let Some(resp) = Self::handle_request_with_session(root, conn, collection_id, profile_id, active_session_id.as_deref(), req) {
                     let mut out = serde_json::to_string(&resp).map_err(|e| {
                         std::io::Error::new(std::io::ErrorKind::InvalidData, e)
                     })?;
@@ -74,11 +105,29 @@ impl McpServer {
             }
         }
 
-        if let Some(ref sess) = active_session {
-            let _ = SessionManager::end_session(conn, &sess.id, "completed");
-        }
-
         Ok(())
+    }
+
+    fn resolve_initial_agent(cli_agent: Option<&str>, cli_model: Option<&str>) -> String {
+        let agent_name = cli_agent
+            .map(|s| s.to_string())
+            .or_else(|| std::env::var("HYPERKB_AGENT").ok())
+            .or_else(|| std::env::var("OPENCODE_CLIENT").ok())
+            .unwrap_or_else(|| "opencode".to_string());
+
+        let model = cli_model
+            .map(|s| s.to_string())
+            .or_else(|| std::env::var("OPENCODE_MODEL").ok())
+            .or_else(|| std::env::var("HYPERKB_MODEL").ok())
+            .or_else(|| std::env::var("MODEL").ok())
+            .or_else(|| std::env::var("LLM_MODEL").ok())
+            .or_else(|| std::env::var("ANTHROPIC_MODEL").ok())
+            .or_else(|| std::env::var("OPENAI_MODEL").ok());
+
+        match model {
+            Some(m) if !m.is_empty() => format!("{} ({})", agent_name, m),
+            _ => agent_name,
+        }
     }
 
     /// Handles a single JSON-RPC request and returns a response, or None if it's a notification.
@@ -108,21 +157,43 @@ impl McpServer {
         };
 
         match req.method.as_str() {
-            "initialize" => Some(JsonRpcResponse {
-                jsonrpc: "2.0",
-                id,
-                result: Some(json!({
-                    "protocolVersion": "2024-11-05",
-                    "capabilities": {
-                        "tools": {}
-                    },
-                    "serverInfo": {
-                        "name": "hyperkb",
-                        "version": "0.1.0"
+            "initialize" => {
+                if let Some(sess_id) = session_id {
+                    let client_name = req.params.as_ref()
+                        .and_then(|p| p.get("clientInfo"))
+                        .and_then(|c| c.get("name"))
+                        .and_then(|n| n.as_str());
+                    if let Some(cname) = client_name {
+                        let model = std::env::var("OPENCODE_MODEL")
+                            .or_else(|_| std::env::var("HYPERKB_MODEL"))
+                            .or_else(|_| std::env::var("MODEL"))
+                            .or_else(|_| std::env::var("LLM_MODEL"))
+                            .or_else(|_| std::env::var("ANTHROPIC_MODEL"))
+                            .or_else(|_| std::env::var("OPENAI_MODEL"))
+                            .ok();
+                        let agent_tag = match model {
+                            Some(m) if !m.is_empty() => format!("{} ({})", cname, m),
+                            _ => cname.to_string(),
+                        };
+                        let _ = SessionManager::set_agent_id(conn, sess_id, &agent_tag);
                     }
-                })),
-                error: None,
-            }),
+                }
+                Some(JsonRpcResponse {
+                    jsonrpc: "2.0",
+                    id,
+                    result: Some(json!({
+                        "protocolVersion": "2024-11-05",
+                        "capabilities": {
+                            "tools": {}
+                        },
+                        "serverInfo": {
+                            "name": "hyperkb",
+                            "version": "0.1.0"
+                        }
+                    })),
+                    error: None,
+                })
+            }
 
             "ping" => Some(JsonRpcResponse {
                 jsonrpc: "2.0",
@@ -437,6 +508,14 @@ impl McpServer {
                         "grant_scope": {
                             "type": "string",
                             "description": "Optional active authority grant scope pattern (e.g. 'src/**')"
+                        },
+                        "model": {
+                            "type": "string",
+                            "description": "Optional LLM model identifier (e.g. 'claude-3-7-sonnet', 'gpt-4o') to register in the session taxonomy"
+                        },
+                        "agent_id": {
+                            "type": "string",
+                            "description": "Optional agent or harness identifier (e.g. 'opencode', 'cursor')"
                         }
                     }
                 }
@@ -1224,6 +1303,15 @@ impl McpServer {
 
                 if let Some(ref sess_id) = current_sess_id {
                     let _ = SessionManager::record_tool_call(conn, sess_id, "get_session_briefing", "", "{}");
+                    if let Some(model) = args.get("model").and_then(|v| v.as_str()) {
+                        if let Ok(Some(existing)) = Queries::get_session(conn, sess_id) {
+                            let (harness, _) = existing.parse_agent_taxonomy();
+                            let new_tag = format!("{} ({})", harness, model);
+                            let _ = SessionManager::set_agent_id(conn, sess_id, &new_tag);
+                        }
+                    } else if let Some(agent) = args.get("agent_id").and_then(|v| v.as_str()) {
+                        let _ = SessionManager::set_agent_id(conn, sess_id, agent);
+                    }
                 }
 
                 let serialized = serde_json::to_string_pretty(&briefing)

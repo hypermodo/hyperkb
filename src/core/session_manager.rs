@@ -31,6 +31,18 @@ impl SessionManager {
         Ok(session)
     }
 
+    pub fn set_agent_id(
+        conn: &Connection,
+        session_id: &str,
+        agent_id: &str,
+    ) -> Result<(), String> {
+        Queries::update_session_agent_id(conn, session_id, agent_id)
+            .map_err(|e| format!("Failed to update agent_id: {}", e))?;
+        let detail = serde_json::json!({ "agent_id": agent_id }).to_string();
+        let _ = Queries::record_session_event(conn, session_id, "agent_identified", "", agent_id, &detail);
+        Ok(())
+    }
+
     pub fn record_tool_call(
         conn: &Connection,
         session_id: &str,

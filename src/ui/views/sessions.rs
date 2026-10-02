@@ -45,16 +45,35 @@ impl SessionsView {
             .enumerate()
             .map(|(filtered_idx, (_orig_idx, sess))| {
                 let is_selected = filtered_idx == app.selected_session_idx;
+                let is_stale = sess.is_stale();
 
                 let (badge_text, badge_style) = match sess.status.as_str() {
+                    "active" if is_stale => ("⏸ IDLE ", Style::default().fg(t.text_muted())),
                     "active" => ("● ACTIVE ", t.badge_accepted()),
+                    "idle" => ("⏸ IDLE ", Style::default().fg(t.text_muted())),
                     "completed" => ("✔ DONE ", t.badge_resolved()),
                     "failed" => ("✕ FAILED ", t.badge_risk()),
                     _ => ("· SESS ", Style::default().fg(t.status_unknown())),
                 };
 
-                let short_id = if sess.id.len() > 18 {
-                    format!("{}...", &sess.id[..18])
+                let (harness_name, model_opt) = sess.parse_agent_taxonomy();
+
+                let harness_tag = Span::styled(
+                    format!("[{}] ", harness_name.to_uppercase()),
+                    Style::default().fg(t.accent()).add_modifier(Modifier::BOLD),
+                );
+
+                let model_tag = if let Some(model) = model_opt {
+                    Span::styled(
+                        format!("{model} • "),
+                        Style::default().fg(t.status_proposed()).add_modifier(Modifier::BOLD),
+                    )
+                } else {
+                    Span::raw("")
+                };
+
+                let short_id = if sess.id.len() > 14 {
+                    format!("{}...", &sess.id[..14])
                 } else {
                     sess.id.clone()
                 };
@@ -68,11 +87,6 @@ impl SessionsView {
                     },
                 );
 
-                let agent_tag = Span::styled(
-                    format!("[{}] ", sess.agent_id.to_uppercase()),
-                    Style::default().fg(t.accent()).add_modifier(Modifier::BOLD),
-                );
-
                 let score = sess.efficiency_score_pct();
                 let score_style = if score >= 80 {
                     t.badge_accepted()
@@ -83,10 +97,11 @@ impl SessionsView {
                 };
                 let score_tag = Span::styled(format!(" Score: {}/100", score), score_style);
 
+                let model_str = model_opt.unwrap_or("standard");
                 let sub_info = Span::styled(
                     format!(
-                        "   dur: {} | edits: {} | tools: {} | diff: {} lines",
-                        sess.formatted_duration(), sess.total_edits, sess.total_tool_calls, sess.total_diff_lines
+                        "   Harness: {} | Model: {} | dur: {} | edits: {} | tools: {}",
+                        harness_name, model_str, sess.formatted_duration(), sess.total_edits, sess.total_tool_calls
                     ),
                     Style::default().fg(t.text_muted()),
                 );
@@ -94,7 +109,8 @@ impl SessionsView {
                 ListItem::new(vec![
                     Line::from(vec![
                         Span::styled(badge_text, badge_style),
-                        agent_tag,
+                        harness_tag,
+                        model_tag,
                         title,
                         score_tag,
                     ]),
@@ -113,7 +129,9 @@ impl SessionsView {
             .title(Span::styled(list_title, t.title()))
             .title_bottom(Line::from(vec![
                 Span::styled(" [h] ", t.key_badge()),
-                Span::styled("Harness Filter • ", Style::default().fg(t.text_muted())),
+                Span::styled("Filter • ", Style::default().fg(t.text_muted())),
+                Span::styled("[x] ", t.key_badge()),
+                Span::styled("Prune Stale • ", Style::default().fg(t.text_muted())),
                 Span::styled("[g] ", t.key_badge()),
                 Span::styled("Grants • ", Style::default().fg(t.text_muted())),
                 Span::styled("[y] ", t.key_badge()),
@@ -266,6 +284,18 @@ impl SessionsView {
                 return;
             }
 
+            let (harness_name, model_opt) = sess.parse_agent_taxonomy();
+            let model_str = model_opt.unwrap_or("standard / uncalibrated");
+            let is_stale = sess.is_stale();
+            let display_status = match sess.status.as_str() {
+                "active" if is_stale => "⏸ Idle / Disconnected",
+                "active" => "● Active (In Progress)",
+                "idle" => "⏸ Idle / Disconnected",
+                "completed" => "✔ Completed",
+                "failed" => "✕ Failed",
+                other => other,
+            };
+
             let text = vec![
                 Line::from(vec![
                     Span::styled("Session ID:  ", Style::default().fg(t.text_muted()).add_modifier(Modifier::BOLD)),
@@ -273,18 +303,23 @@ impl SessionsView {
                 ]),
                 Line::from(""),
                 Line::from(vec![
-                    Span::styled("Agent: ", Style::default().fg(t.text_muted())),
-                    Span::styled(&sess.agent_id, Style::default().fg(t.text_primary()).add_modifier(Modifier::BOLD)),
-                    Span::raw("    "),
-                    Span::styled("Status: ", Style::default().fg(t.text_muted())),
+                    Span::styled("Agent Harness:  ", Style::default().fg(t.text_muted()).add_modifier(Modifier::BOLD)),
+                    Span::styled(harness_name.to_uppercase(), Style::default().fg(t.accent()).add_modifier(Modifier::BOLD)),
+                    Span::raw("      "),
+                    Span::styled("LLM Model / Engine: ", Style::default().fg(t.text_muted()).add_modifier(Modifier::BOLD)),
+                    Span::styled(model_str, Style::default().fg(t.status_proposed()).add_modifier(Modifier::BOLD)),
+                ]),
+                Line::from(""),
+                Line::from(vec![
+                    Span::styled("Run Status:     ", Style::default().fg(t.text_muted())),
                     Span::styled(
-                        &sess.status,
+                        display_status,
                         if sess.status == "completed" {
                             Style::default().fg(t.status_accepted()).add_modifier(Modifier::BOLD)
-                        } else if sess.status == "active" {
+                        } else if sess.status == "active" && !is_stale {
                             Style::default().fg(t.status_proposed()).add_modifier(Modifier::BOLD)
                         } else {
-                            Style::default().fg(t.status_risk()).add_modifier(Modifier::BOLD)
+                            Style::default().fg(t.text_muted()).add_modifier(Modifier::BOLD)
                         },
                     ),
                     Span::raw("    "),
@@ -301,7 +336,7 @@ impl SessionsView {
                     Span::raw("    "),
                     Span::styled("Ended: ", Style::default().fg(t.text_muted())),
                     Span::styled(
-                        sess.ended_at.as_deref().unwrap_or("In progress"),
+                        sess.ended_at.as_deref().unwrap_or(if is_stale { "Inactive" } else { "In progress" }),
                         Style::default().fg(t.text_muted()),
                     ),
                 ]),
