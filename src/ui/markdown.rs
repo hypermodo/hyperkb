@@ -23,6 +23,10 @@ impl MarkdownFormatter {
         let (badge_text, badge_style) = match doc.status {
             DocumentStatus::Accepted => ("● ACCEPTED", theme.badge_accepted()),
             DocumentStatus::Proposed => ("○ PROPOSED", theme.badge_proposed()),
+            DocumentStatus::Pending => ("⏳ PENDING", theme.badge_proposed()),
+            DocumentStatus::InProgress => ("⚡ ACTIVE", Style::default().fg(theme.accent()).add_modifier(Modifier::BOLD)),
+            DocumentStatus::Completed => ("✔ DONE", theme.badge_resolved()),
+            DocumentStatus::Blocked => ("✖ BLOCKED", theme.badge_conflict()),
             DocumentStatus::Open => ("▲ OPEN", theme.badge_risk()),
             DocumentStatus::Acknowledged => ("✔ ACKNOWLEDGED", theme.badge_acknowledged()),
             DocumentStatus::Resolved => ("✔ RESOLVED", theme.badge_resolved()),

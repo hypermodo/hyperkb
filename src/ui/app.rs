@@ -575,7 +575,7 @@ impl App {
         }
     }
 
-    pub const CATEGORIES: &'static [&'static str] = &["all", "decisions", "risks", "specs", "plans"];
+    pub const CATEGORIES: &'static [&'static str] = &["all", "tasks", "decisions", "risks", "specs", "plans"];
 
     pub fn next_category(&mut self, db: &Database) {
         let current_pos = Self::CATEGORIES

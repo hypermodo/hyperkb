@@ -261,7 +261,7 @@ impl SessionBriefing {
 
         if !active_directives.is_empty() {
             out.push_str("### Standing Directives (Rule of 5)\n");
-            for d in active_directives {
+            for d in active_directives.iter().take(5) {
                 out.push_str(&format!("- {}\n", d));
             }
             out.push('\n');
@@ -269,7 +269,7 @@ impl SessionBriefing {
 
         if !friction_warnings.is_empty() {
             out.push_str("### Friction Hotspots & Review Warnings\n");
-            for w in friction_warnings {
+            for w in friction_warnings.iter().take(3) {
                 out.push_str(&format!("- {}\n", w));
             }
             out.push('\n');
@@ -277,7 +277,7 @@ impl SessionBriefing {
 
         if !active_invariants.is_empty() {
             out.push_str("### Architectural Invariants (Accepted ADRs)\n");
-            for inv in active_invariants {
+            for inv in active_invariants.iter().take(4) {
                 out.push_str(&format!("- {}\n", inv));
             }
             out.push('\n');
@@ -285,7 +285,7 @@ impl SessionBriefing {
 
         if !active_risks.is_empty() {
             out.push_str("### High-Priority Risks\n");
-            for r in active_risks {
+            for r in active_risks.iter().take(5) {
                 out.push_str(&format!("- {}\n", r));
             }
             out.push('\n');
@@ -293,7 +293,7 @@ impl SessionBriefing {
 
         if !recent_hotspots.is_empty() {
             out.push_str("### Recent Touched Paths\n");
-            for h in recent_hotspots {
+            for h in recent_hotspots.iter().take(4) {
                 out.push_str(&format!("- `{}`\n", h));
             }
             out.push('\n');
@@ -301,14 +301,22 @@ impl SessionBriefing {
 
         if !knowledge_debt.is_empty() {
             out.push_str("### Knowledge Debt (Unanswered Queries)\n");
-            for q in knowledge_debt {
+            for q in knowledge_debt.iter().take(3) {
                 out.push_str(&format!("- \"{}\"\n", q));
             }
             out.push('\n');
         }
 
         out.push_str("> *HyperKB Zero-Ceremony Protocol: All context pre-warmed. Proceed directly to code.*\n");
-        out
+
+        let lines: Vec<&str> = out.lines().collect();
+        if lines.len() > 48 {
+            let mut clamped = lines[..46].join("\n");
+            clamped.push_str("\n\n> *[Briefing clamped by HyperKB Rule of 5 to preserve agent attention]*\n");
+            clamped
+        } else {
+            out
+        }
     }
 }
 
@@ -435,5 +443,30 @@ pub mod tests {
 
         session.ended_at = Some("2026-10-01T12:00:00.250Z".to_string());
         assert_eq!(session.formatted_duration(), "250ms");
+    }
+
+    #[test]
+    fn test_briefing_clamped_under_50_lines() {
+        let many_directives: Vec<String> = (0..50).map(|i| format!("Directive {}", i)).collect();
+        let many_invariants: Vec<String> = (0..50).map(|i| format!("Invariant {}", i)).collect();
+        let many_risks: Vec<String> = (0..50).map(|i| format!("Risk {}", i)).collect();
+        let many_hotspots: Vec<String> = (0..50).map(|i| format!("Hotspot {}", i)).collect();
+        let many_frictions: Vec<String> = (0..50).map(|i| format!("Friction {}", i)).collect();
+        let many_debts: Vec<String> = (0..50).map(|i| format!("Debt {}", i)).collect();
+
+        let md = SessionBriefing::render_markdown(
+            "MegaRepo",
+            &many_directives,
+            &many_invariants,
+            &many_risks,
+            &many_hotspots,
+            &many_frictions,
+            &many_debts,
+            Some("src/**"),
+        );
+
+        let line_count = md.lines().count();
+        assert!(line_count < 50, "Briefing must never exceed 50 lines, got {}", line_count);
+        assert!(md.contains("Standing Directives (Rule of 5)"));
     }
 }

@@ -218,19 +218,47 @@ impl McpServer {
             }),
             json!({
                 "name": "browse",
-                "description": "Browse repository documents by category (decisions, risks, specs, plans) or topic.",
+                "description": "Browse repository documents by category (tasks, decisions, risks, specs, plans), project, kind, status, or topic.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
                         "category": {
                             "type": "string",
-                            "description": "Optional category filter: all, decisions, risks, specs, plans"
+                            "description": "Optional category filter: all, tasks, decisions, risks, specs, plans"
+                        },
+                        "project": {
+                            "type": "string",
+                            "description": "Optional project filter (e.g. 'core-engine' or 'auth-service')"
+                        },
+                        "kind": {
+                            "type": "string",
+                            "description": "Optional kind filter: task, risk, decision, spec, plan, document"
+                        },
+                        "status": {
+                            "type": "string",
+                            "description": "Optional status filter: pending, in_progress, completed, blocked, open, accepted, superseded"
                         },
                         "topic": {
                             "type": "string",
                             "description": "Optional topic filter"
+                        },
+                        "limit": {
+                            "type": "integer",
+                            "description": "Max results to return (default: 20)"
+                        },
+                        "offset": {
+                            "type": "integer",
+                            "description": "Offset for pagination (default: 0)"
                         }
                     }
+                }
+            }),
+            json!({
+                "name": "list_projects",
+                "description": "List all segregated projects in the repository with health, task counts, open risks, and status documentation coverage.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {}
                 }
             }),
             json!({
@@ -640,17 +668,28 @@ impl McpServer {
 
             "browse" => {
                 let category = args.get("category").and_then(|v| v.as_str()).unwrap_or("all").to_string();
+                let project = args.get("project").and_then(|v| v.as_str()).map(String::from);
+                let kind = args.get("kind").and_then(|v| v.as_str()).map(String::from);
+                let status = args.get("status").and_then(|v| v.as_str()).map(String::from);
                 let topic = args.get("topic").and_then(|v| v.as_str()).map(String::from);
+                let limit = args.get("limit").and_then(|v| v.as_u64()).map(|n| n as usize).unwrap_or(20);
+                let offset = args.get("offset").and_then(|v| v.as_u64()).map(|n| n as usize).unwrap_or(0);
 
                 if let Some(ref sess_id) = current_sess_id {
-                    let _ = SessionManager::record_tool_call(conn, sess_id, "browse", "", &category);
+                    let log_param = project.as_deref().unwrap_or(&category);
+                    let _ = SessionManager::record_tool_call(conn, sess_id, "browse", "", log_param);
                 }
 
                 let opts = BrowseOptions {
                     category,
+                    collection_id: None,
+                    project,
                     topic,
-                    limit: 20,
-                    ..Default::default()
+                    status,
+                    kind,
+                    recent: false,
+                    limit,
+                    offset,
                 };
 
                 let (docs, total) = Queries::browse(conn, &[collection_id.to_string()], &opts)
@@ -662,6 +701,28 @@ impl McpServer {
                 });
 
                 let serialized = serde_json::to_string_pretty(&result_payload)
+                    .map_err(|e| format!("Serialization error: {}", e))?;
+
+                Ok(json!({
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": serialized
+                        }
+                    ],
+                    "isError": false
+                }))
+            }
+
+            "list_projects" => {
+                if let Some(ref sess_id) = current_sess_id {
+                    let _ = SessionManager::record_tool_call(conn, sess_id, "list_projects", "", "");
+                }
+
+                let projects = Queries::list_projects(conn, collection_id)
+                    .map_err(|e| format!("Failed to list projects: {}", e))?;
+
+                let serialized = serde_json::to_string_pretty(&projects)
                     .map_err(|e| format!("Serialization error: {}", e))?;
 
                 Ok(json!({
@@ -1282,6 +1343,7 @@ impl McpServer {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domain::RecordMeta;
     use crate::storage::Database;
 
     #[test]
@@ -1716,5 +1778,87 @@ mod tests {
         assert!(warnings[0].as_str().unwrap().contains("KB Linter"));
 
         let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_mcp_list_projects_and_browse_enhancements() {
+        let db = Database::open_in_memory("coll_mcp_proj", "prof_mcp_proj").unwrap();
+
+        let meta = RecordMeta {
+            paths: vec![],
+            versions: vec![],
+            environments: vec![],
+            supersedes: None,
+            issue: None,
+            ..Default::default()
+        };
+
+        Queries::upsert_document(
+            db.conn(),
+            "doc-proj-1",
+            "coll_mcp_proj",
+            "projects/hyper-cli/tasks/task-01.md",
+            "task",
+            "Build CLI Parser",
+            "Task content",
+            "Task content",
+            &meta,
+            "chk-1",
+        ).unwrap();
+        db.conn().execute(
+            "UPDATE documents SET kind = 'task', status = 'pending' WHERE source_id = 'doc-proj-1';",
+            [],
+        ).unwrap();
+
+        Queries::upsert_document(
+            db.conn(),
+            "doc-proj-2",
+            "coll_mcp_proj",
+            "projects/hyper-cli/status.md",
+            "status",
+            "Hyper CLI Status",
+            "Status content",
+            "Status content",
+            &meta,
+            "chk-2",
+        ).unwrap();
+
+        let list_proj_req = JsonRpcRequest {
+            jsonrpc: "2.0".into(),
+            id: Some(json!(50)),
+            method: "tools/call".into(),
+            params: Some(json!({
+                "name": "list_projects",
+                "arguments": {}
+            })),
+        };
+
+        let list_proj_resp = McpServer::handle_request(".", db.conn(), "coll_mcp_proj", "prof_mcp_proj", list_proj_req).unwrap();
+        let list_proj_val: Value = serde_json::from_str(list_proj_resp.result.unwrap()["content"][0]["text"].as_str().unwrap()).unwrap();
+        let proj_arr = list_proj_val.as_array().unwrap();
+        assert_eq!(proj_arr.len(), 1);
+        assert_eq!(proj_arr[0]["name"], "hyper-cli");
+        assert_eq!(proj_arr[0]["tasks_pending"], 1);
+        assert_eq!(proj_arr[0]["has_status_doc"], true);
+
+        let browse_req = JsonRpcRequest {
+            jsonrpc: "2.0".into(),
+            id: Some(json!(51)),
+            method: "tools/call".into(),
+            params: Some(json!({
+                "name": "browse",
+                "arguments": {
+                    "project": "hyper-cli",
+                    "kind": "task",
+                    "status": "pending"
+                }
+            })),
+        };
+
+        let browse_resp = McpServer::handle_request(".", db.conn(), "coll_mcp_proj", "prof_mcp_proj", browse_req).unwrap();
+        let browse_val: Value = serde_json::from_str(browse_resp.result.unwrap()["content"][0]["text"].as_str().unwrap()).unwrap();
+        assert_eq!(browse_val["total"], 1);
+        assert_eq!(browse_val["documents"][0]["title"], "Build CLI Parser");
+        assert_eq!(browse_val["documents"][0]["kind"], "task");
     }
 }

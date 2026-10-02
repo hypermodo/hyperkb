@@ -1,7 +1,7 @@
 use chrono::Utc;
 use clap::{Parser, Subcommand};
 use hyperkb::core::{
-    Archeology, DecisionWorkflow, DirectiveWorkflow, Git, GrantStore, KbLinter,
+    Archeology, DecisionWorkflow, DirectiveWorkflow, Git, GrantStore, HarnessInit, KbLinter,
     MaintenanceManager, RiskWorkflow, Scanner, SessionManager,
 };
 use hyperkb::domain::{ActionKind, Actor, BrowseOptions, GrantConstraints, RepoManifest};
@@ -54,6 +54,29 @@ enum Commands {
         project: Option<String>,
         #[arg(short, long)]
         topic: Option<String>,
+        #[arg(short, long)]
+        status: Option<String>,
+        #[arg(short, long)]
+        kind: Option<String>,
+    },
+    /// List segregated projects and their task, risk, and decision status breakdown
+    Projects {
+        /// Output project summaries as JSON
+        #[arg(long)]
+        json: bool,
+    },
+    /// Initialize or generate thin pointer files for AI harnesses (AGENTS.md, CLAUDE.md, GEMINI.md, etc.)
+    #[command(alias = "init_harness", alias = "harness-init")]
+    InitHarness {
+        /// Target harness: all, agents, claude, gemini, cursor, copilot
+        #[arg(default_value = "all")]
+        harness: String,
+        /// Force overwrite of existing harness instruction files
+        #[arg(long)]
+        force: bool,
+        /// Output report as JSON
+        #[arg(long)]
+        json: bool,
     },
     /// Check planned files against cited risks and architectural boundaries
     #[command(alias = "check_work", alias = "check")]
@@ -404,17 +427,75 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             category,
             project,
             topic,
+            status,
+            kind,
         }) => {
             let opts = BrowseOptions {
                 category,
                 project,
                 topic,
+                status,
+                kind,
                 ..Default::default()
             };
             let (docs, total) = Queries::browse(db.conn(), &[collection_id.clone()], &opts)?;
             println!("Browse ({} total documents):", total);
             for doc in docs {
                 println!("- [{}] {} ({})", doc.status.as_str(), doc.title, doc.path);
+            }
+        }
+        Some(Commands::Projects { json }) => {
+            let _ = Scanner::index_workspace(db.conn(), &cli.root, &manifest);
+            let summaries = Queries::list_projects(db.conn(), &collection_id)?;
+            if json {
+                println!("{}", serde_json::to_string_pretty(&summaries).unwrap());
+            } else if summaries.is_empty() {
+                println!("No projects found under 'projects/*/' directory.");
+            } else {
+                println!("Discovered {} Project(s):", summaries.len());
+                println!(
+                    "{:<24} {:<6} {:<9} {:<8} {:<6} {:<9} {:<7} {:<6} {:<6}",
+                    "PROJECT", "DOCS", "PENDING", "ACTIVE", "DONE", "BLOCKED", "RISKS", "DECS", "STATUS"
+                );
+                println!("{}", "-".repeat(88));
+                for p in summaries {
+                    let status_marker = if p.has_status_doc { "yes" } else { "no" };
+                    println!(
+                        "{:<24} {:<6} {:<9} {:<8} {:<6} {:<9} {:<7} {:<6} {:<6}",
+                        p.name,
+                        p.total_documents,
+                        p.tasks_pending,
+                        p.tasks_in_progress,
+                        p.tasks_completed,
+                        p.tasks_blocked,
+                        p.open_risks,
+                        p.decisions_count,
+                        status_marker
+                    );
+                }
+            }
+        }
+        Some(Commands::InitHarness {
+            harness,
+            force,
+            json,
+        }) => {
+            match HarnessInit::init_harness(&cli.root, &harness, force) {
+                Ok(reports) => {
+                    if json {
+                        println!("{}", serde_json::to_string_pretty(&reports).unwrap());
+                    } else {
+                        println!("Harness Pointer Generation ('{}'):", harness);
+                        for r in reports {
+                            let icon = if r.created { "✓ Created" } else { "- Skipped" };
+                            println!("  {} {} - {}", icon, r.file_path, r.message);
+                        }
+                    }
+                }
+                Err(err) => {
+                    eprintln!("Error initializing harness pointers: {}", err);
+                    std::process::exit(1);
+                }
             }
         }
         Some(Commands::CheckWork {

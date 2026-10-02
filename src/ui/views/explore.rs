@@ -45,6 +45,10 @@ impl ExploreView {
                 let (badge_text, badge_style) = match doc.status {
                     DocumentStatus::Accepted => ("● ACCEPTED ", t.badge_accepted()),
                     DocumentStatus::Proposed => ("○ PROPOSED ", t.badge_proposed()),
+                    DocumentStatus::Pending => ("⏳ PENDING ", t.badge_proposed()),
+                    DocumentStatus::InProgress => ("⚡ ACTIVE ", Style::default().fg(t.accent()).add_modifier(Modifier::BOLD)),
+                    DocumentStatus::Completed => ("✔ DONE ", t.badge_resolved()),
+                    DocumentStatus::Blocked => ("✖ BLOCKED ", t.badge_conflict()),
                     DocumentStatus::Open => ("▲ OPEN ", t.badge_risk()),
                     DocumentStatus::Acknowledged => ("✔ ACKNOWLEDGED ", t.badge_acknowledged()),
                     DocumentStatus::Resolved => ("✔ RESOLVED ", t.badge_resolved()),

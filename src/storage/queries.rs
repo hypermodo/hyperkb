@@ -341,6 +341,7 @@ impl Queries {
         }
 
         match opts.category.as_str() {
+            "tasks" => where_clauses.push("d.kind = 'task'".into()),
             "decisions" => where_clauses.push("d.kind = 'decision'".into()),
             "risks" => where_clauses.push("d.kind = 'risk' AND e.effective_status = 'open'".into()),
             "proposals" => where_clauses.push("e.effective_status = 'proposed'".into()),
@@ -348,6 +349,16 @@ impl Queries {
             "specs" => where_clauses.push("d.path LIKE '%/specs/%' AND d.kind != 'directive'".into()),
             "plans" => where_clauses.push("d.path LIKE '%/plans/%' AND d.kind != 'directive'".into()),
             _ => where_clauses.push("d.kind != 'directive'".into()),
+        }
+
+        if let Some(ref kind) = opts.kind {
+            where_clauses.push("d.kind = ?".into());
+            params.push(rusqlite::types::Value::Text(kind.clone()));
+        }
+
+        if let Some(ref status) = opts.status {
+            where_clauses.push("e.effective_status = ?".into());
+            params.push(rusqlite::types::Value::Text(status.clone()));
         }
 
         if let Some(ref project) = opts.project {
@@ -443,6 +454,59 @@ impl Queries {
         }
 
         Ok((docs, total))
+    }
+
+    pub fn list_projects(
+        conn: &Connection,
+        collection_id: &str,
+    ) -> Result<Vec<crate::domain::ProjectSummary>> {
+        let mut stmt = conn.prepare(
+            "SELECT
+                substr(path, 10, instr(substr(path, 10), '/') - 1) AS proj_name,
+                count(*) AS total_docs,
+                count(CASE WHEN kind = 'task' AND status IN ('pending', 'todo', 'open') THEN 1 END) AS pending_tasks,
+                count(CASE WHEN kind = 'task' AND status IN ('in_progress', 'active') THEN 1 END) AS in_progress_tasks,
+                count(CASE WHEN kind = 'task' AND status IN ('completed', 'done', 'resolved') THEN 1 END) AS completed_tasks,
+                count(CASE WHEN kind = 'task' AND status = 'blocked' THEN 1 END) AS blocked_tasks,
+                count(CASE WHEN kind = 'risk' AND status = 'open' THEN 1 END) AS open_risks,
+                count(CASE WHEN kind = 'decision' THEN 1 END) AS decisions_count,
+                max(CASE WHEN lower(path) = 'projects/' || lower(substr(path, 10, instr(substr(path, 10), '/') - 1)) || '/status.md' THEN 1 ELSE 0 END) AS has_status
+             FROM documents
+             WHERE collection_id = ?1 AND path LIKE 'projects/%/%'
+             GROUP BY proj_name
+             HAVING length(proj_name) > 0
+             ORDER BY proj_name ASC;",
+        )?;
+
+        let mut rows = stmt.query([collection_id])?;
+        let mut summaries = Vec::new();
+
+        while let Some(row) = rows.next()? {
+            let name: String = row.get(0)?;
+            let total_docs: usize = row.get(1)?;
+            let pending: usize = row.get(2)?;
+            let in_progress: usize = row.get(3)?;
+            let completed: usize = row.get(4)?;
+            let blocked: usize = row.get(5)?;
+            let open_risks: usize = row.get(6)?;
+            let decisions: usize = row.get(7)?;
+            let has_status_num: i64 = row.get(8)?;
+
+            summaries.push(crate::domain::ProjectSummary {
+                name: name.clone(),
+                path: format!("projects/{}", name),
+                total_documents: total_docs,
+                tasks_pending: pending,
+                tasks_in_progress: in_progress,
+                tasks_completed: completed,
+                tasks_blocked: blocked,
+                open_risks,
+                decisions_count: decisions,
+                has_status_doc: has_status_num > 0,
+            });
+        }
+
+        Ok(summaries)
     }
 
     pub fn remember(
@@ -1343,6 +1407,123 @@ mod tests {
         let active_only = Queries::list_directives(db.conn(), "coll_dir", None, Some("active"))?;
         assert_eq!(active_only.len(), 1);
         assert_eq!(active_only[0].id, "DIR-001");
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_list_projects_aggregation() -> Result<()> {
+        let db = Database::open_in_memory("coll_proj", "prof_proj")?;
+
+        let meta_task = RecordMeta {
+            paths: vec![],
+            versions: vec![],
+            environments: vec![],
+            supersedes: None,
+            issue: None,
+            ..Default::default()
+        };
+
+        Queries::upsert_document(
+            db.conn(),
+            "doc-1",
+            "coll_proj",
+            "projects/alpha/tasks/task1.md",
+            "task",
+            "Alpha Task 1",
+            "Pending task",
+            "Pending task",
+            &meta_task,
+            "chk1",
+        )?;
+        db.conn().execute(
+            "UPDATE documents SET kind = 'task', status = 'pending' WHERE source_id = 'doc-1';",
+            [],
+        )?;
+
+        Queries::upsert_document(
+            db.conn(),
+            "doc-2",
+            "coll_proj",
+            "projects/alpha/tasks/task2.md",
+            "task",
+            "Alpha Task 2",
+            "In progress task",
+            "In progress task",
+            &meta_task,
+            "chk2",
+        )?;
+        db.conn().execute(
+            "UPDATE documents SET kind = 'task', status = 'in_progress' WHERE source_id = 'doc-2';",
+            [],
+        )?;
+
+        Queries::upsert_document(
+            db.conn(),
+            "doc-3",
+            "coll_proj",
+            "projects/alpha/risks/risk1.md",
+            "risk",
+            "Alpha Risk 1",
+            "Open risk",
+            "Open risk",
+            &meta_task,
+            "chk3",
+        )?;
+        db.conn().execute(
+            "UPDATE documents SET kind = 'risk', status = 'open' WHERE source_id = 'doc-3';",
+            [],
+        )?;
+
+        Queries::upsert_document(
+            db.conn(),
+            "doc-4",
+            "coll_proj",
+            "projects/alpha/status.md",
+            "status",
+            "Alpha Project Status",
+            "Current status",
+            "Current status",
+            &meta_task,
+            "chk4",
+        )?;
+
+        Queries::upsert_document(
+            db.conn(),
+            "doc-5",
+            "coll_proj",
+            "projects/beta/tasks/task1.md",
+            "task",
+            "Beta Task 1",
+            "Completed task",
+            "Completed task",
+            &meta_task,
+            "chk5",
+        )?;
+        db.conn().execute(
+            "UPDATE documents SET kind = 'task', status = 'completed' WHERE source_id = 'doc-5';",
+            [],
+        )?;
+
+        let projects = Queries::list_projects(db.conn(), "coll_proj")?;
+        assert_eq!(projects.len(), 2);
+
+        let alpha = &projects[0];
+        assert_eq!(alpha.name, "alpha");
+        assert_eq!(alpha.path, "projects/alpha");
+        assert_eq!(alpha.total_documents, 4);
+        assert_eq!(alpha.tasks_pending, 1);
+        assert_eq!(alpha.tasks_in_progress, 1);
+        assert_eq!(alpha.tasks_completed, 0);
+        assert_eq!(alpha.open_risks, 1);
+        assert!(alpha.has_status_doc);
+
+        let beta = &projects[1];
+        assert_eq!(beta.name, "beta");
+        assert_eq!(beta.path, "projects/beta");
+        assert_eq!(beta.total_documents, 1);
+        assert_eq!(beta.tasks_completed, 1);
+        assert!(!beta.has_status_doc);
 
         Ok(())
     }

@@ -9,6 +9,10 @@ pub enum DocumentStatus {
     Open,
     Acknowledged,
     Resolved,
+    Pending,
+    InProgress,
+    Completed,
+    Blocked,
     Unknown,
     Conflict,
 }
@@ -28,6 +32,10 @@ impl DocumentStatus {
             DocumentStatus::Open => "open",
             DocumentStatus::Acknowledged => "acknowledged",
             DocumentStatus::Resolved => "resolved",
+            DocumentStatus::Pending => "pending",
+            DocumentStatus::InProgress => "in_progress",
+            DocumentStatus::Completed => "completed",
+            DocumentStatus::Blocked => "blocked",
             DocumentStatus::Unknown => "unknown",
             DocumentStatus::Conflict => "conflict",
         }
@@ -41,6 +49,10 @@ impl DocumentStatus {
             "open" => DocumentStatus::Open,
             "acknowledged" => DocumentStatus::Acknowledged,
             "resolved" => DocumentStatus::Resolved,
+            "pending" | "todo" => DocumentStatus::Pending,
+            "in_progress" | "inprogress" | "active" => DocumentStatus::InProgress,
+            "completed" | "done" => DocumentStatus::Completed,
+            "blocked" => DocumentStatus::Blocked,
             "conflict" => DocumentStatus::Conflict,
             _ => DocumentStatus::Unknown,
         }
@@ -53,6 +65,8 @@ pub enum DocumentKind {
     Document,
     Decision,
     Risk,
+    Task,
+    Audit,
     Spec,
     Plan,
 }
@@ -69,6 +83,8 @@ impl DocumentKind {
             DocumentKind::Document => "document",
             DocumentKind::Decision => "decision",
             DocumentKind::Risk => "risk",
+            DocumentKind::Task => "task",
+            DocumentKind::Audit => "audit",
             DocumentKind::Spec => "spec",
             DocumentKind::Plan => "plan",
         }
@@ -78,6 +94,8 @@ impl DocumentKind {
         match s.to_ascii_lowercase().as_str() {
             "decision" => DocumentKind::Decision,
             "risk" => DocumentKind::Risk,
+            "task" => DocumentKind::Task,
+            "audit" => DocumentKind::Audit,
             "spec" => DocumentKind::Spec,
             "plan" => DocumentKind::Plan,
             _ => DocumentKind::Document,
@@ -149,12 +167,33 @@ pub struct RecordMeta {
     pub delegation: Option<crate::domain::DelegationMeta>,
 }
 
+impl Default for RecordMeta {
+    fn default() -> Self {
+        Self {
+            id: String::new(),
+            kind: String::new(),
+            status: String::new(),
+            owner: String::new(),
+            issue: None,
+            paths: Vec::new(),
+            versions: Vec::new(),
+            environments: Vec::new(),
+            supersedes: None,
+            delegation: None,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BrowseOptions {
     pub category: String,
     pub collection_id: Option<String>,
     pub project: Option<String>,
     pub topic: Option<String>,
+    #[serde(default)]
+    pub status: Option<String>,
+    #[serde(default)]
+    pub kind: Option<String>,
     pub recent: bool,
     pub limit: usize,
     pub offset: usize,
@@ -167,10 +206,12 @@ impl Default for BrowseOptions {
             collection_id: None,
             project: None,
             topic: None,
+            status: None,
+            kind: None,
             recent: false,
             limit: 20,
             offset: 0,
-            }
+        }
     }
 }
 

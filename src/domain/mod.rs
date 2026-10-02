@@ -5,6 +5,7 @@ pub mod harness;
 pub mod hlc;
 pub mod manifest;
 pub mod memory;
+pub mod project;
 pub mod risk;
 pub mod session;
 
@@ -20,6 +21,7 @@ pub use harness::{
 pub use hlc::Hlc;
 pub use manifest::{KbSettings, RepoManifest, TaxonomyCategory, TaxonomyConfig};
 pub use memory::Memory;
+pub use project::ProjectSummary;
 pub use risk::{RiskApplicability, RiskCheck, RiskMatch};
 pub use session::{AgentSession, SessionBriefing, SessionEventRecord, SessionScorecard};
 
