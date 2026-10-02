@@ -1,10 +1,10 @@
 {
   "mcpServers": {
     "hyperkb": {
-      "command": "/Volumes/ExtSSD/Workspace/HyperModo/hyperkb-rs/target/release/hyperkb",
+      "command": "/Volumes/ExtSSD/Workspace/HyperModo/hyperkb/target/release/hyperkb",
       "args": [
         "--root",
-        "/Volumes/ExtSSD/Workspace/HyperModo/hyperkb-rs",
+        "/Volumes/ExtSSD/Workspace/HyperModo/hyperkb",
         "mcp"
       ],
       "env": {}
