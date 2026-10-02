@@ -2,9 +2,11 @@ use chrono::Utc;
 use clap::{Parser, Subcommand};
 use hyperkb::core::{
     Archeology, DecisionWorkflow, DirectiveWorkflow, Git, GrantStore, HarnessInit, KbLinter,
-    MaintenanceManager, RiskWorkflow, Scanner, SessionManager,
+    MaintenanceManager, RiskWorkflow, Scanner, SessionManager, StatusEngine,
 };
-use hyperkb::domain::{ActionKind, Actor, BrowseOptions, GrantConstraints, RepoManifest};
+use hyperkb::domain::{
+    ActionKind, Actor, BrowseOptions, GrantConstraints, HealthState, RepoManifest, TaskState,
+};
 use hyperkb::storage::{Database, Queries};
 use hyperkb::transport::McpServer;
 use hyperkb::ui;
@@ -255,6 +257,16 @@ enum Commands {
         /// Optional section to display (overview, shortcuts, math, settings, themes, mcp)
         section: Option<String>,
     },
+    /// Manage project health, blockers, and status.md
+    Status {
+        #[command(subcommand)]
+        command: StatusCommands,
+    },
+    /// Manage project tasks and transitions
+    Task {
+        #[command(subcommand)]
+        command: TaskCommands,
+    },
 }
 
 #[derive(Subcommand)]
@@ -303,6 +315,55 @@ enum DirectiveCommands {
     /// Audit directives for bloat (>5 global rules) and stale paths
     Audit {
         /// Output report as JSON
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Subcommand)]
+enum StatusCommands {
+    /// Inspect typed status, health, and blockers for a project
+    Get {
+        /// Project name (directory name under projects/)
+        project: String,
+        /// Output status as JSON
+        #[arg(long)]
+        json: bool,
+    },
+    /// Transition project health and blockers atomically
+    Transition {
+        /// Project name (directory name under projects/)
+        project: String,
+        /// Target health: healthy, at_risk, blocked
+        #[arg(short, long)]
+        health: String,
+        /// Optional reason for transition
+        #[arg(short, long)]
+        reason: Option<String>,
+        /// Optional blocker description
+        #[arg(short, long)]
+        blocker: Option<String>,
+        /// Output updated status as JSON
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Subcommand)]
+enum TaskCommands {
+    /// Transition a project task atomically
+    Transition {
+        /// Project name (directory name under projects/)
+        project: String,
+        /// Task ID or slug (e.g. task-01 or 01)
+        task_id: String,
+        /// Target status: pending, in_progress, completed, blocked
+        #[arg(short, long)]
+        to: String,
+        /// Optional reason for transition
+        #[arg(short, long)]
+        reason: Option<String>,
+        /// Output updated task as JSON
         #[arg(long)]
         json: bool,
     },
@@ -1332,6 +1393,105 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Some(Commands::Docs { section }) => {
             print_docs(section.as_deref());
         }
+        Some(Commands::Status { command }) => match command {
+            StatusCommands::Get { project, json } => {
+                match StatusEngine::get_project_status(&effective_root, &project) {
+                    Ok(st) => {
+                        if json {
+                            println!("{}", serde_json::to_string_pretty(&st)?);
+                        } else {
+                            println!("Project Status: {}", project);
+                            println!("  Status:       [{}]", st.status.as_str());
+                            println!("  Health:       [{}]", st.health.as_str());
+                            if let Some(ref at) = st.active_task {
+                                println!("  Active Task:  {}", at);
+                            }
+                            println!("  Goal:         {}", st.goal);
+                            if !st.blockers.is_empty() {
+                                println!("  Blockers ({}):", st.blockers.len());
+                                for b in &st.blockers {
+                                    let res_icon = if b.resolved { "✔ [RESOLVED]" } else { "✖ [OPEN]" };
+                                    println!("    • {} {}: {}", res_icon, b.id, b.description);
+                                }
+                            }
+                        }
+                    }
+                    Err(err) => {
+                        eprintln!("Error reading project status: {}", err);
+                        std::process::exit(1);
+                    }
+                }
+            }
+            StatusCommands::Transition {
+                project,
+                health,
+                reason,
+                blocker,
+                json,
+            } => {
+                let health_state = HealthState::from_str_loose(&health);
+                match StatusEngine::transition_project_health(
+                    &effective_root,
+                    &project,
+                    health_state,
+                    reason.as_deref(),
+                    blocker.as_deref(),
+                ) {
+                    Ok(st) => {
+                        let _ = Scanner::index_workspace(db.conn(), &effective_root, &manifest);
+                        if json {
+                            println!("{}", serde_json::to_string_pretty(&st)?);
+                        } else {
+                            println!("✓ Project '{}' health transitioned to '{}'. Status: '{}'", project, st.health.as_str(), st.status.as_str());
+                            if let Some(ref r) = reason {
+                                println!("  Reason:  {}", r);
+                            }
+                            if let Some(ref b) = blocker {
+                                println!("  Blocker: {}", b);
+                            }
+                        }
+                    }
+                    Err(err) => {
+                        eprintln!("Error transitioning status: {}", err);
+                        std::process::exit(1);
+                    }
+                }
+            }
+        },
+        Some(Commands::Task { command }) => match command {
+            TaskCommands::Transition {
+                project,
+                task_id,
+                to,
+                reason,
+                json,
+            } => {
+                let task_state = TaskState::from_str_loose(&to);
+                match StatusEngine::transition_task(
+                    &effective_root,
+                    &project,
+                    &task_id,
+                    task_state,
+                    reason.as_deref(),
+                ) {
+                    Ok(t) => {
+                        let _ = Scanner::index_workspace(db.conn(), &effective_root, &manifest);
+                        if json {
+                            println!("{}", serde_json::to_string_pretty(&t)?);
+                        } else {
+                            println!("✓ Task '{}' in project '{}' transitioned to '{}'.", task_id, project, t.status.as_str());
+                            if let Some(ref r) = t.reason {
+                                println!("  Reason: {}", r);
+                            }
+                        }
+                    }
+                    Err(err) => {
+                        eprintln!("Error transitioning task: {}", err);
+                        std::process::exit(1);
+                    }
+                }
+            }
+        },
         None => {
             // Index existing docs in workspace so the TUI opens with real knowledge ready to browse
             let _ = Scanner::index_workspace(db.conn(), &effective_root, &manifest);

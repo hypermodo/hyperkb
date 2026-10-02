@@ -531,6 +531,45 @@ impl McpServer {
                     }
                 }
             }),
+            json!({
+                "name": "transition_task",
+                "description": "Atomically transition the state of a project task (pending, in_progress, completed, blocked) and update the project's active critical path.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "project": { "type": "string", "description": "Project name (e.g. data-load-throughput)" },
+                        "task_id": { "type": "string", "description": "Task identifier (e.g. task-01)" },
+                        "status": { "type": "string", "description": "Target status: pending, in_progress, completed, blocked" },
+                        "reason": { "type": "string", "description": "Optional rationale or evidence for transition" }
+                    },
+                    "required": ["project", "task_id", "status"]
+                }
+            }),
+            json!({
+                "name": "update_status",
+                "description": "Atomically transition a project's health (healthy, at_risk, blocked), record blockers, and update status.md without modifying markdown body.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "project": { "type": "string", "description": "Project name (e.g. adaptive-resource-tuning)" },
+                        "health": { "type": "string", "description": "Health state: healthy, at_risk, blocked" },
+                        "blocker": { "type": "string", "description": "Optional description of a blocker" },
+                        "reason": { "type": "string", "description": "Optional rationale for the health change" }
+                    },
+                    "required": ["project", "health"]
+                }
+            }),
+            json!({
+                "name": "get_project_status",
+                "description": "Get strongly-typed status document for a project, including health, goal, active task, blockers, and exit criteria.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "project": { "type": "string", "description": "Project name (e.g. jwt-hotreload)" }
+                    },
+                    "required": ["project"]
+                }
+            }),
         ]
     }
 
@@ -1358,6 +1397,137 @@ impl McpServer {
                 }
             }
 
+            "transition_task" => {
+                let project = args
+                    .get("project")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| "Missing required argument 'project'".to_string())?;
+                let task_id = args
+                    .get("task_id")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| "Missing required argument 'task_id'".to_string())?;
+                let status_str = args
+                    .get("status")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| "Missing required argument 'status'".to_string())?;
+                let reason = args.get("reason").and_then(|v| v.as_str());
+
+                let to_state = crate::domain::TaskState::from_str_loose(status_str);
+
+                if let Some(ref sess_id) = current_sess_id {
+                    let _ = SessionManager::record_tool_call(
+                        conn,
+                        sess_id,
+                        "transition_task",
+                        &format!("projects/{}/tasks/{}", project, task_id),
+                        &format!("status={}", status_str),
+                    );
+                }
+
+                match crate::core::StatusEngine::transition_task(
+                    root,
+                    project,
+                    task_id,
+                    to_state,
+                    reason,
+                ) {
+                    Ok(task) => {
+                        let manifest = crate::domain::RepoManifest::load_or_default(root);
+                        let _ = crate::core::Scanner::index_workspace(conn, root, &manifest);
+                        let serialized = serde_json::to_string_pretty(&task)
+                            .map_err(|e| format!("Serialization error: {}", e))?;
+                        Ok(json!({
+                            "content": [{ "type": "text", "text": serialized }],
+                            "isError": false
+                        }))
+                    }
+                    Err(err) => Ok(json!({
+                        "content": [{ "type": "text", "text": format!("Error transitioning task: {}", err) }],
+                        "isError": true
+                    })),
+                }
+            }
+
+            "update_status" => {
+                let project = args
+                    .get("project")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| "Missing required argument 'project'".to_string())?;
+                let health_str = args
+                    .get("health")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| "Missing required argument 'health'".to_string())?;
+                let blocker = args.get("blocker").and_then(|v| v.as_str());
+                let reason = args.get("reason").and_then(|v| v.as_str());
+
+                let health_state = crate::domain::HealthState::from_str_loose(health_str);
+
+                if let Some(ref sess_id) = current_sess_id {
+                    let _ = SessionManager::record_tool_call(
+                        conn,
+                        sess_id,
+                        "update_status",
+                        &format!("projects/{}/status.md", project),
+                        &format!("health={}", health_str),
+                    );
+                }
+
+                match crate::core::StatusEngine::transition_project_health(
+                    root,
+                    project,
+                    health_state,
+                    reason,
+                    blocker,
+                ) {
+                    Ok(st) => {
+                        let manifest = crate::domain::RepoManifest::load_or_default(root);
+                        let _ = crate::core::Scanner::index_workspace(conn, root, &manifest);
+                        let serialized = serde_json::to_string_pretty(&st)
+                            .map_err(|e| format!("Serialization error: {}", e))?;
+                        Ok(json!({
+                            "content": [{ "type": "text", "text": serialized }],
+                            "isError": false
+                        }))
+                    }
+                    Err(err) => Ok(json!({
+                        "content": [{ "type": "text", "text": format!("Error updating status: {}", err) }],
+                        "isError": true
+                    })),
+                }
+            }
+
+            "get_project_status" => {
+                let project = args
+                    .get("project")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| "Missing required argument 'project'".to_string())?;
+
+                if let Some(ref sess_id) = current_sess_id {
+                    let _ = SessionManager::record_tool_call(
+                        conn,
+                        sess_id,
+                        "get_project_status",
+                        &format!("projects/{}/status.md", project),
+                        "",
+                    );
+                }
+
+                match crate::core::StatusEngine::get_project_status(root, project) {
+                    Ok(st) => {
+                        let serialized = serde_json::to_string_pretty(&st)
+                            .map_err(|e| format!("Serialization error: {}", e))?;
+                        Ok(json!({
+                            "content": [{ "type": "text", "text": serialized }],
+                            "isError": false
+                        }))
+                    }
+                    Err(err) => Ok(json!({
+                        "content": [{ "type": "text", "text": format!("Error reading project status: {}", err) }],
+                        "isError": true
+                    })),
+                }
+            }
+
             _ => Err(format!("Unknown tool '{}'", tool_name)),
         }
     }
@@ -1885,5 +2055,74 @@ mod tests {
         assert_eq!(browse_val["total"], 1);
         assert_eq!(browse_val["documents"][0]["title"], "Build CLI Parser");
         assert_eq!(browse_val["documents"][0]["kind"], "task");
+    }
+
+    #[test]
+    fn test_mcp_task_and_status_tools() {
+        let temp_dir = std::env::temp_dir().join(format!("hyperkb_test_mcp_status_{}", uuid::Uuid::now_v7()));
+        let db = Database::open_in_memory("coll_test", "prof_test").unwrap();
+        let root_str = temp_dir.to_str().unwrap();
+
+        // 1. update_status tool
+        let update_status_req = JsonRpcRequest {
+            jsonrpc: "2.0".into(),
+            id: Some(json!(60)),
+            method: "tools/call".into(),
+            params: Some(json!({
+                "name": "update_status",
+                "arguments": {
+                    "project": "agent-gateway",
+                    "health": "blocked",
+                    "blocker": "Missing upstream TLS certificate",
+                    "reason": "Security requirement"
+                }
+            })),
+        };
+
+        let status_resp = McpServer::handle_request(root_str, db.conn(), "coll_test", "prof_test", update_status_req).unwrap();
+        let status_val: Value = serde_json::from_str(status_resp.result.unwrap()["content"][0]["text"].as_str().unwrap()).unwrap();
+        assert_eq!(status_val["health"], "blocked");
+        assert_eq!(status_val["status"], "blocked");
+        assert_eq!(status_val["blockers"][0]["description"], "Missing upstream TLS certificate");
+
+        // 2. transition_task tool
+        let task_req = JsonRpcRequest {
+            jsonrpc: "2.0".into(),
+            id: Some(json!(61)),
+            method: "tools/call".into(),
+            params: Some(json!({
+                "name": "transition_task",
+                "arguments": {
+                    "project": "agent-gateway",
+                    "task_id": "task-01",
+                    "status": "in_progress",
+                    "reason": "Commencing implementation of TLS cert rotation"
+                }
+            })),
+        };
+
+        let task_resp = McpServer::handle_request(root_str, db.conn(), "coll_test", "prof_test", task_req).unwrap();
+        let task_val: Value = serde_json::from_str(task_resp.result.unwrap()["content"][0]["text"].as_str().unwrap()).unwrap();
+        assert_eq!(task_val["id"], "task-01");
+        assert_eq!(task_val["status"], "in_progress");
+
+        // 3. get_project_status tool
+        let get_status_req = JsonRpcRequest {
+            jsonrpc: "2.0".into(),
+            id: Some(json!(62)),
+            method: "tools/call".into(),
+            params: Some(json!({
+                "name": "get_project_status",
+                "arguments": {
+                    "project": "agent-gateway"
+                }
+            })),
+        };
+
+        let get_resp = McpServer::handle_request(root_str, db.conn(), "coll_test", "prof_test", get_status_req).unwrap();
+        let get_val: Value = serde_json::from_str(get_resp.result.unwrap()["content"][0]["text"].as_str().unwrap()).unwrap();
+        assert_eq!(get_val["active_task"], "task-01");
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
     }
 }

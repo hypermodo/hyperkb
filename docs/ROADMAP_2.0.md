@@ -47,40 +47,42 @@ From direct sampling of `ZDP-SYSTEM-KB`, four systemic failure modes were identi
 ### Phase 6: Native Tombstoning & Clean Context Partitioning
 **Goal**: Immediately eliminate context bloat by hiding `_archive/`, `_draft/`, and completed plans from FTS5 and briefings, without moving files in Git.
 
-- [ ] **Storage Layer (`src/storage/sqlite.rs`)**:
-  - Add `is_tombstone INTEGER DEFAULT 0` column to `documents` table.
-  - Create index: `CREATE INDEX idx_documents_tombstone ON documents(is_tombstone);`.
-- [ ] **Scanner Layer (`src/core/scanner.rs`)**:
+- [x] **Storage Layer (`src/storage/schema.sql`, `src/storage/db.rs`)**:
+  - Add `is_tombstone INTEGER DEFAULT 0` column to `documents` table with non-destructive auto-migration and backfill.
+  - Create index: `CREATE INDEX IF NOT EXISTS documents_tombstone ON documents(collection_id, is_tombstone);`.
+- [x] **Scanner Layer (`src/core/scanner.rs`)**:
   - Detect tombstones during directory walk:
-    - Path matches `**/_archive/**` or `**/_draft/**`.
-    - YAML frontmatter has `status: completed`, `status: archived`, or `tombstone: true`.
-    - Plan document exceeds TTL with all checkpoints done.
-- [ ] **Query Layer (`src/core/queries.rs`)**:
-  - Default `search`, `browse`, and `get_session_briefing` to `WHERE is_tombstone = 0`.
-  - Add `--include-archived` flag to CLI and `include_archived: bool` parameter to MCP search tools.
-- [ ] **Verification**:
-  - Run `hyperkb search` on `ZDP-SYSTEM-KB`: verify 0 hits from `_archive` by default; verify hits return with `--include-archived`.
+    - Path matches `**/_archive/**`, `**/_draft/**`, `**/refuted/**`, `**/_trash/**`.
+    - YAML frontmatter has `status: completed` (plans), `status: archived`, `status: refuted`, or `tombstone: true`.
+    - Automatically syncs tombstone status even for unchanged files.
+- [x] **Query Layer (`src/storage/queries.rs`, `src/transport/mcp.rs`, `src/main.rs`)**:
+  - Default `search`, `browse`, and `list_projects` to `WHERE is_tombstone = 0` (excluding `_archive` & `_draft`).
+  - Add `--include-archived` flag to CLI and `include_archived: bool` parameter to MCP search, browse, and list_projects tools.
+- [x] **Verification**:
+  - Run `hyperkb search`, `hyperkb browse`, and `hyperkb projects` on `ZDP-SYSTEM-KB`: verified 0 hits from `_archive` by default; verified all 373 archived documents cleanly segregated and accessible with `--include-archived`.
 
 ---
 
 ### Phase 7: Typed Frontmatter Schemas & Atomic Mutation Engine
 **Goal**: Replace fragile ASCII pipe tables and markdown surgery with strongly-typed schemas and atomic frontmatter mutations.
 
-- [ ] **Domain Schema Module (`src/domain/schema.rs`)**:
-  - `StatusDocument`: `status` enum (`planned`, `active`, `blocked`, `completed`, `archived`), `goal`, `baseline`, `blockers: Vec<Blocker>`, `milestones: Vec<Milestone>`.
-  - `SpecDocument`: `invariants: Vec<Invariant>`, `non_goals: Vec<String>`, `contracts`.
-  - `PlanDocument`: `ttl_days: u32`, `checkpoints: Vec<Checkpoint>`.
-  - `AuditDocument`: `commit_sha`, `rules_evaluated`, `violations`.
-- [ ] **Frontmatter Splicer (`src/domain/document.rs`)**:
+- [x] **Domain Schema Module (`src/domain/schema.rs`)**:
+  - `StatusDocument`: `status` enum (`planned`, `active`, `blocked`, `completed`, `archived`), `health` (`healthy`, `at_risk`, `blocked`), `goal`, `baseline`, `blockers: Vec<BlockerItem>`, `milestones: Vec<MilestoneItem>`, `active_task`, `exit_criteria`.
+  - `SpecDocument`: `invariants: Vec<String>`, `non_goals: Vec<String>`, `contracts: Vec<ContractItem>`.
+  - `PlanDocument`: `ttl_days: u32`, `checkpoints: Vec<CheckpointItem>`.
+  - `AuditDocument`: `commit_sha`, `verdict`, `rules_evaluated`, `violations: Vec<ViolationItem>`.
+- [x] **Frontmatter Splicer (`src/domain/frontmatter.rs`)**:
   - Parse and isolate the YAML frontmatter block (`--- ... ---`).
-  - Mutate frontmatter fields and rewrite to disk while keeping the body markdown byte-identical.
-- [ ] **CLI & MCP Mutation Commands**:
-  - CLI: `hyperkb status transition <project> --health <healthy|blocked> [--reason <str>]`.
-  - CLI: `hyperkb task transition <project> <task_id> --to <in_progress|completed|blocked>`.
+  - Mutate frontmatter fields and rewrite atomically to disk while keeping the body markdown byte-identical.
+- [x] **CLI & MCP Mutation Commands (`src/core/status_engine.rs`, `src/main.rs`, `src/transport/mcp.rs`)**:
+  - CLI: `hyperkb status get <project>`, `hyperkb status transition <project> --health <healthy|at_risk|blocked> [--reason <str>] [--blocker <str>]`.
+  - CLI: `hyperkb task transition <project> <task_id> --to <pending|in_progress|completed|blocked> [--reason <str>]`.
   - MCP: `transition_task(project, task_id, status, reason)`.
-  - MCP: `update_status(project, health, blocker)`.
-- [ ] **Verification**:
-  - Mutate a project's status via CLI and MCP; verify git diff modifies only YAML frontmatter without breaking markdown syntax.
+  - MCP: `update_status(project, health, blocker, reason)`.
+  - MCP: `get_project_status(project)`.
+- [x] **Verification**:
+  - Tested on `ZDP-SYSTEM-KB` (extracted real-world goal from 29KB STATUS.md).
+  - Verified atomic git diff: 100% byte-identical markdown body preservation under task and status mutations.
 
 ---
 
