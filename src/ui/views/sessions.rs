@@ -37,12 +37,14 @@ impl SessionsView {
             t.border()
         };
 
-        let items: Vec<ListItem> = app
-            .sessions
+        let filtered = app.filtered_sessions();
+        let filter_label = app.session_harness_filter.as_deref().unwrap_or("ALL");
+
+        let items: Vec<ListItem> = filtered
             .iter()
             .enumerate()
-            .map(|(idx, sess)| {
-                let is_selected = idx == app.selected_session_idx;
+            .map(|(filtered_idx, (_orig_idx, sess))| {
+                let is_selected = filtered_idx == app.selected_session_idx;
 
                 let (badge_text, badge_style) = match sess.status.as_str() {
                     "active" => ("● ACTIVE ", t.badge_accepted()),
@@ -67,9 +69,19 @@ impl SessionsView {
                 );
 
                 let agent_tag = Span::styled(
-                    format!("[{}] ", sess.agent_id),
-                    Style::default().fg(t.accent()),
+                    format!("[{}] ", sess.agent_id.to_uppercase()),
+                    Style::default().fg(t.accent()).add_modifier(Modifier::BOLD),
                 );
+
+                let score = sess.efficiency_score_pct();
+                let score_style = if score >= 80 {
+                    t.badge_accepted()
+                } else if score >= 50 {
+                    Style::default().fg(t.status_proposed()).add_modifier(Modifier::BOLD)
+                } else {
+                    t.badge_risk()
+                };
+                let score_tag = Span::styled(format!(" Score: {}/100", score), score_style);
 
                 let sub_info = Span::styled(
                     format!(
@@ -84,6 +96,7 @@ impl SessionsView {
                         Span::styled(badge_text, badge_style),
                         agent_tag,
                         title,
+                        score_tag,
                     ]),
                     Line::from(sub_info),
                     Line::from(""),
@@ -91,7 +104,7 @@ impl SessionsView {
             })
             .collect();
 
-        let list_title = format!(" Agent Sessions ({}) ", app.sessions.len());
+        let list_title = format!(" Agent Runs [Harness: {}] ({}) ", filter_label.to_uppercase(), filtered.len());
         let list_block = Block::default()
             .borders(Borders::ALL)
             .border_style(Style::default().fg(border_color))
@@ -99,8 +112,10 @@ impl SessionsView {
             .padding(Padding::new(2, 2, 1, 1))
             .title(Span::styled(list_title, t.title()))
             .title_bottom(Line::from(vec![
-                Span::styled(" [g] ", t.key_badge()),
-                Span::styled("Switch to Grants • ", Style::default().fg(t.text_muted())),
+                Span::styled(" [h] ", t.key_badge()),
+                Span::styled("Harness Filter • ", Style::default().fg(t.text_muted())),
+                Span::styled("[g] ", t.key_badge()),
+                Span::styled("Grants • ", Style::default().fg(t.text_muted())),
                 Span::styled("[y] ", t.key_badge()),
                 Span::styled("Copy Scorecard", Style::default().fg(t.text_muted())),
             ]));
@@ -191,44 +206,44 @@ impl SessionsView {
             };
 
             if app.show_scoring_methodology {
-                // Render Formal Mathematical Proof & Methodology Card
+                // Render Session Quality Score Heuristic Breakdown
                 let text = vec![
                     Line::from(vec![
-                        Span::styled("MATHEMATICAL SCORING SPECIFICATION & PROOF", Style::default().fg(t.accent()).add_modifier(Modifier::BOLD)),
+                        Span::styled("SESSION QUALITY SCORE BREAKDOWN", Style::default().fg(t.accent()).add_modifier(Modifier::BOLD)),
                         Span::styled("  [Press 'e' to return]", Style::default().fg(t.text_muted())),
                     ]),
                     Line::from(""),
-                    Line::from(Span::styled("1. Objective & Design Philosophy", Style::default().fg(t.status_proposed()).add_modifier(Modifier::BOLD))),
-                    Line::from(Span::styled("  Coding Effectiveness measures an agent's capability to converge on correct code", Style::default().fg(t.text_primary()))),
-                    Line::from(Span::styled("  without human intervention, review thrashing, or excessive search oscillations.", Style::default().fg(t.text_primary()))),
+                    Line::from(Span::styled("1. Purpose & Heuristic", Style::default().fg(t.status_proposed()).add_modifier(Modifier::BOLD))),
+                    Line::from(Span::styled("  Measures an agent's ability to complete its task efficiently", Style::default().fg(t.text_primary()))),
+                    Line::from(Span::styled("  without excessive review loops, tool thrashing, or test iteration failures.", Style::default().fg(t.text_primary()))),
                     Line::from(""),
-                    Line::from(Span::styled("2. Formal Formula", Style::default().fg(t.status_proposed()).add_modifier(Modifier::BOLD))),
+                    Line::from(Span::styled("2. Scoring Breakdown", Style::default().fg(t.status_proposed()).add_modifier(Modifier::BOLD))),
                     Line::from(vec![
-                        Span::styled("  S = clamp(", Style::default().fg(t.text_primary()).add_modifier(Modifier::BOLD)),
+                        Span::styled("  Score = clamp(", Style::default().fg(t.text_primary()).add_modifier(Modifier::BOLD)),
                         Span::styled("100% ", Style::default().fg(t.status_accepted()).add_modifier(Modifier::BOLD)),
                         Span::styled("- P_loops - P_friction - P_thrash + B_hazard", Style::default().fg(t.accent())),
                         Span::styled(", 5%, 100%)", Style::default().fg(t.text_primary()).add_modifier(Modifier::BOLD)),
                     ]),
                     Line::from(""),
-                    Line::from(Span::styled("  Where:", Style::default().fg(t.text_muted()))),
+                    Line::from(Span::styled("  Deductions & Adjustments:", Style::default().fg(t.text_muted()))),
                     Line::from(vec![
-                        Span::styled("  • P_loops    = min(review_loops × 15%, 45%)", Style::default().fg(t.text_primary())),
+                        Span::styled("  • Review Loops (P_loops):    -15% per loop (max -45%)", Style::default().fg(t.text_primary())),
                         Span::styled(" (penalizes cyclic PR rejection loops)", Style::default().fg(t.text_muted())),
                     ]),
                     Line::from(vec![
-                        Span::styled("  • P_friction = 15%", Style::default().fg(t.text_primary())),
-                        Span::styled(" if initial pass required test/compiler fix cycles", Style::default().fg(t.text_muted())),
+                        Span::styled("  • Test Friction (P_friction): -15%", Style::default().fg(t.text_primary())),
+                        Span::styled(" if initial pass required test or compiler fixes", Style::default().fg(t.text_muted())),
                     ]),
                     Line::from(vec![
-                        Span::styled("  • P_thrash   = 20%", Style::default().fg(t.text_primary())),
-                        Span::styled(" if tool-to-edit ratio > 10.0 (lost exploration loops)", Style::default().fg(t.text_muted())),
+                        Span::styled("  • Tool Thrash (P_thrash):     -20%", Style::default().fg(t.text_primary())),
+                        Span::styled(" if tool-to-edit ratio exceeds 10:1 (lost search loops)", Style::default().fg(t.text_muted())),
                     ]),
                     Line::from(vec![
-                        Span::styled("  • B_hazard   = +10%", Style::default().fg(t.text_primary())),
+                        Span::styled("  • Directive Bonus (B_hazard): +10%", Style::default().fg(t.text_primary())),
                         Span::styled(" for proactive adherence to active architectural invariants", Style::default().fg(t.text_muted())),
                     ]),
                     Line::from(""),
-                    Line::from(Span::styled("3. Current Session Parameter Values", Style::default().fg(t.status_proposed()).add_modifier(Modifier::BOLD))),
+                    Line::from(Span::styled("3. Current Run Values", Style::default().fg(t.status_proposed()).add_modifier(Modifier::BOLD))),
                     Line::from(Span::styled("  • Base Score:          100%", Style::default().fg(t.text_primary()))),
                     Line::from(Span::styled(format!("  • Loop Deduction:     -{:.0}% ({} loops detected)", loop_penalty * 100.0, sess.review_loops), Style::default().fg(t.text_primary()))),
                     Line::from(Span::styled(format!("  • Re-iteration:       -{:.0}% (first_pass_clean: {})", first_pass_penalty * 100.0, sess.first_pass_clean), Style::default().fg(t.text_primary()))),
@@ -236,8 +251,8 @@ impl SessionsView {
                     Line::from(Span::styled(format!("  • Hazard Mitigation:  +{:.0}% ({} risks prevented)", hazard_bonus * 100.0, sess.risks_prevented), Style::default().fg(t.text_primary()))),
                     Line::from(Span::styled("  ──────────────────────────────────────────", Style::default().fg(t.border()))),
                     Line::from(vec![
-                        Span::styled(format!("  • Net Effectiveness:   {}% ", score_pct), Style::default().fg(score_color).add_modifier(Modifier::BOLD)),
-                        Span::styled("(Mathematically Verified)", Style::default().fg(t.status_accepted())),
+                        Span::styled(format!("  • Net Quality Score:   {}% ", score_pct), Style::default().fg(score_color).add_modifier(Modifier::BOLD)),
+                        Span::styled("(Heuristic Score)", Style::default().fg(t.status_accepted())),
                     ]),
                     Line::from(""),
                     Line::from(Span::styled("Press [e] or [Esc] to return to session dashboard.", Style::default().fg(t.text_muted()))),
@@ -363,7 +378,7 @@ impl SessionsView {
                 ]),
                 Line::from(""),
                 Line::from(Span::styled(
-                    "────── Advanced Scientific Telemetry & Efficiency ───────────",
+                    "────── Run Telemetry & Quality Metrics ─────────────────────",
                     Style::default().fg(t.border()),
                 )),
                 Line::from(""),

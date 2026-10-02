@@ -6,23 +6,23 @@ pub mod views;
 
 use app::{ActiveTab, App, ExploreTreeItem};
 use crossterm::{
-    event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyModifiers, KeyboardEnhancementFlags, MouseButton, MouseEventKind, PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags},
+    event::{self, DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture, Event, KeyCode, KeyModifiers, KeyboardEnhancementFlags, MouseButton, MouseEventKind, PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags},
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
 use layout::{Footer, Header};
 use ratatui::{
     backend::CrosstermBackend,
-    layout::{Constraint, Direction, Layout},
+    layout::Rect,
     style::Style,
-    widgets::Block,
+    widgets::{Block, Clear},
     Terminal,
 };
 use std::io::{self, Write};
 use std::panic;
 use std::path::Path;
 use std::time::Duration;
-use views::{ActionPaletteModal, DirectivesView, ExploreView, HelpModal, IssueGrantModal, NewDirectiveModal, ReaderView, SessionsView, SettingsView, WorkView};
+use views::{CommandDock, DirectivesView, ExploreView, HelpModal, IssueGrantModal, NewDirectiveModal, ReaderView, SessionsView, SettingsView, WorkView};
 use crate::storage::Database;
 
 pub fn run(root: &Path, db: &Database, collection_id: &str, profile_id: &str) -> io::Result<()> {
@@ -30,7 +30,7 @@ pub fn run(root: &Path, db: &Database, collection_id: &str, profile_id: &str) ->
     let original_hook = panic::take_hook();
     panic::set_hook(Box::new(move |panic_info| {
         let _ = disable_raw_mode();
-        let _ = execute!(io::stdout(), LeaveAlternateScreen, DisableMouseCapture, PopKeyboardEnhancementFlags);
+        let _ = execute!(io::stdout(), LeaveAlternateScreen, DisableBracketedPaste, DisableMouseCapture, PopKeyboardEnhancementFlags);
         let _ = io::stdout().write_all(b"\x1b[>4;0m\x1b[>4m\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1005l\x1b[?1006l\x1b[?1015l");
         let _ = io::stdout().flush();
         original_hook(panic_info);
@@ -52,10 +52,10 @@ pub fn run(root: &Path, db: &Database, collection_id: &str, profile_id: &str) ->
     let _ = stdout.flush();
 
     if app.mouse_capture {
-        execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
+        execute!(stdout, EnterAlternateScreen, EnableBracketedPaste, EnableMouseCapture)?;
         let _ = stdout.flush();
     } else {
-        execute!(stdout, EnterAlternateScreen)?;
+        execute!(stdout, EnterAlternateScreen, EnableBracketedPaste)?;
         let _ = stdout.write_all(b"\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1005l\x1b[?1006l\x1b[?1015l");
         let _ = stdout.flush();
     }
@@ -69,7 +69,7 @@ pub fn run(root: &Path, db: &Database, collection_id: &str, profile_id: &str) ->
     disable_raw_mode()?;
     let _ = execute!(terminal.backend_mut(), PopKeyboardEnhancementFlags);
     let _ = terminal.backend_mut().write_all(b"\x1b[>4;0m\x1b[>4m");
-    execute!(terminal.backend_mut(), LeaveAlternateScreen, DisableMouseCapture)?;
+    execute!(terminal.backend_mut(), LeaveAlternateScreen, DisableBracketedPaste, DisableMouseCapture)?;
     let _ = terminal.backend_mut().write_all(b"\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1005l\x1b[?1006l\x1b[?1015l");
     let _ = terminal.backend_mut().flush();
     terminal.show_cursor()?;
@@ -83,98 +83,176 @@ fn run_loop(
     app: &mut App,
     db: &Database,
 ) -> io::Result<()> {
+    let mut needs_redraw = true;
+
     while !app.should_quit {
-        let mut highlighted_text: Option<String> = None;
-        terminal.draw(|frame| {
-            let area = frame.area();
-            let t = &app.theme;
-
-            // Fill entire frame with active theme background color and primary text color
-            let bg_block = Block::default().style(Style::default().bg(t.bg()).fg(t.text_primary()));
-            frame.render_widget(bg_block, area);
-
-            // Main vertical layout: Header (5 rows with generous breathing room), Content (Remaining), Footer (2 rows)
-            let chunks = Layout::default()
-                .direction(Direction::Vertical)
-                .constraints([
-                    Constraint::Length(5),
-                    Constraint::Min(5),
-                    Constraint::Length(2),
-                ])
-                .split(area);
-
-            Header::render(frame, app, chunks[0]);
-
-            match app.active_tab {
-                ActiveTab::Work => WorkView::render(frame, app, chunks[1]),
-                ActiveTab::Explore => ExploreView::render(frame, app, chunks[1]),
-                ActiveTab::Directives => DirectivesView::render(frame, app, chunks[1]),
-                ActiveTab::Sessions => SessionsView::render(frame, app, chunks[1]),
-                ActiveTab::Settings => SettingsView::render(frame, app, chunks[1]),
-                ActiveTab::Reader => ReaderView::render(frame, app, chunks[1]),
-            }
-
-            Footer::render(frame, app, chunks[2]);
-
-            if app.show_action_palette {
-                ActionPaletteModal::render(frame, app, area);
-            } else if app.show_new_directive_modal {
-                NewDirectiveModal::render(frame, app, area);
-            } else if app.show_issue_grant_modal {
-                IssueGrantModal::render(frame, app, area);
-            } else if app.show_help {
-                HelpModal::render(frame, app, area);
-            }
-
-            // Visual in-TUI mouse drag selection highlight
-            if app.is_dragging {
-                if let (Some((start_col, start_row)), Some((curr_col, curr_row))) = (app.drag_start, app.drag_current) {
-                    let (from, to) = if (start_row, start_col) <= (curr_row, curr_col) {
-                        ((start_row, start_col), (curr_row, curr_col))
+        // Poll background AI agent thread non-blocking
+        if let Some(ref rx) = app.agent_rx {
+            match rx.try_recv() {
+                Ok(entry) => {
+                    if let Some(pos) = app.diagnostic_stream.iter().position(|e| e.id == "pending_agent_query") {
+                        app.diagnostic_stream[pos] = entry;
                     } else {
-                        ((curr_row, curr_col), (start_row, start_col))
-                    };
-
-                    let buffer = frame.buffer_mut();
-                    let buf_area = buffer.area;
-                    let mut selected_text = String::new();
-
-                    for r in from.0..=to.0 {
-                        if r >= buf_area.height {
-                            continue;
-                        }
-                        let c_start = if r == from.0 { from.1 } else { 0 };
-                        let c_end = if r == to.0 { to.1 } else { buf_area.width.saturating_sub(1) };
-
-                        let mut line_str = String::new();
-                        for c in c_start..=c_end {
-                            if c >= buf_area.width {
-                                continue;
-                            }
-                            let cell = &mut buffer[(c, r)];
-                            line_str.push_str(cell.symbol());
-                            cell.set_style(
-                                Style::default()
-                                    .bg(t.accent())
-                                    .fg(t.bg())
-                            );
-                        }
-                        if !selected_text.is_empty() {
-                            selected_text.push('\n');
-                        }
-                        selected_text.push_str(line_str.trim_end());
+                        app.diagnostic_stream.push(entry);
                     }
-                    highlighted_text = Some(selected_text);
+                    app.selected_diagnostic_idx = app.diagnostic_stream.len().saturating_sub(1);
+                    app.diagnostic_scroll = 0;
+                    app.agent_rx = None;
+                    app.pending_agent_query = None;
+                    app.status_message = Some("AI response received".to_string());
+                    needs_redraw = true;
+                }
+                Err(std::sync::mpsc::TryRecvError::Empty) => {
+                    // Running in background - keep responsive
+                    needs_redraw = true;
+                }
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    app.agent_rx = None;
+                    app.pending_agent_query = None;
+                    needs_redraw = true;
                 }
             }
-        })?;
-
-        if let Some(txt) = highlighted_text {
-            app.last_selected_text = Some(txt);
         }
 
-        // Non-blocking poll with 16ms timeout (~60 FPS response time, 0% CPU when idle)
-        if event::poll(Duration::from_millis(16))? {
+        if needs_redraw {
+            let mut highlighted_text: Option<String> = None;
+            terminal.draw(|frame| {
+                let area = frame.area();
+                let t = &app.theme;
+
+                // Clear entire frame and fill with active theme background color
+                frame.render_widget(Clear, area);
+                let bg_block = Block::default().style(Style::default().bg(t.bg()).fg(t.text_primary()));
+                frame.render_widget(bg_block, area);
+
+                let input_lines = app.repl_input.lines().count().max(1);
+                let prompt_h = if area.height >= 30 {
+                    (input_lines as u16 + 5).clamp(6, 14)
+                } else {
+                    (input_lines as u16 + 4).clamp(5, 12)
+                };
+                let footer_h: u16 = if area.height >= 22 { 2 } else { 1 };
+                let filtered_slash = app.filtered_slash_commands();
+                let slash_h = if app.repl_active && !filtered_slash.is_empty() {
+                    (filtered_slash.len() as u16 + 2).min(7)
+                } else {
+                    0
+                };
+
+                let dock_y = area.height.saturating_sub(footer_h).saturating_sub(prompt_h);
+                let header_area = Rect { x: area.x, y: area.y, width: area.width, height: 3 };
+                let main_tab_h = dock_y.saturating_sub(3) + 1; // + 1 so row dock_y is shared as the single unified frame divider!
+                let main_tab_area = Rect { x: area.x, y: area.y + 3, width: area.width, height: main_tab_h };
+                let dock_area = Rect { x: area.x, y: dock_y, width: area.width, height: prompt_h };
+                let footer_area = Rect { x: area.x, y: dock_y + prompt_h, width: area.width, height: footer_h };
+
+                Header::render(frame, app, header_area);
+
+                frame.render_widget(Clear, main_tab_area);
+                match app.active_tab {
+                    ActiveTab::Work => WorkView::render(frame, app, main_tab_area),
+                    ActiveTab::Explore => ExploreView::render(frame, app, main_tab_area),
+                    ActiveTab::Directives => DirectivesView::render(frame, app, main_tab_area),
+                    ActiveTab::Sessions => SessionsView::render(frame, app, main_tab_area),
+                    ActiveTab::Settings => SettingsView::render(frame, app, main_tab_area),
+                    ActiveTab::Reader => ReaderView::render(frame, app, main_tab_area),
+                }
+
+                let divider_x = match app.active_tab {
+                    ActiveTab::Work => {
+                        if app.work_tab_mode == crate::ui::app::WorkTabMode::Risks && !app.active_risks.is_empty() {
+                            Some(area.width * 45 / 100)
+                        } else {
+                            None
+                        }
+                    }
+                    ActiveTab::Explore | ActiveTab::Directives | ActiveTab::Sessions => {
+                        Some((area.width * 38 / 100).clamp(36, 68))
+                    }
+                    ActiveTab::Settings => {
+                        Some((area.width * 40 / 100).clamp(38, 65))
+                    }
+                    _ => None,
+                };
+
+                frame.render_widget(Clear, dock_area);
+                CommandDock::render(frame, app, dock_area, divider_x);
+
+                if slash_h > 0 {
+                    let slash_y = dock_y.saturating_sub(slash_h);
+                    let slash_area = Rect { x: area.x, y: slash_y, width: area.width, height: slash_h };
+                    frame.render_widget(Clear, slash_area);
+                    CommandDock::render_slash_menu(frame, app, &filtered_slash, slash_area);
+                }
+
+                Footer::render(frame, app, footer_area);
+
+                if app.show_new_directive_modal {
+                    NewDirectiveModal::render(frame, app, area);
+                } else if app.show_issue_grant_modal {
+                    IssueGrantModal::render(frame, app, area);
+                } else if app.show_help {
+                    HelpModal::render(frame, app, area);
+                }
+
+                // Visual in-TUI mouse drag selection highlight
+                if app.is_dragging {
+                    if let (Some((start_col, start_row)), Some((curr_col, curr_row))) = (app.drag_start, app.drag_current) {
+                        let (from, to) = if (start_row, start_col) <= (curr_row, curr_col) {
+                            ((start_row, start_col), (curr_row, curr_col))
+                        } else {
+                            ((curr_row, curr_col), (start_row, start_col))
+                        };
+
+                        let buffer = frame.buffer_mut();
+                        let buf_area = buffer.area;
+                        let mut selected_text = String::new();
+
+                        for r in from.0..=to.0 {
+                            if r >= buf_area.height {
+                                continue;
+                            }
+                            let c_start = if r == from.0 { from.1 } else { 0 };
+                            let c_end = if r == to.0 { to.1 } else { buf_area.width.saturating_sub(1) };
+
+                            let mut line_str = String::new();
+                            for c in c_start..=c_end {
+                                if c >= buf_area.width {
+                                    continue;
+                                }
+                                let cell = &mut buffer[(c, r)];
+                                line_str.push_str(cell.symbol());
+                                cell.set_style(
+                                    Style::default()
+                                        .bg(t.accent())
+                                        .fg(t.bg())
+                                );
+                            }
+                            if !selected_text.is_empty() {
+                                selected_text.push('\n');
+                            }
+                            selected_text.push_str(line_str.trim_end());
+                        }
+                        highlighted_text = Some(selected_text);
+                    }
+                }
+            })?;
+
+            if let Some(txt) = highlighted_text {
+                app.last_selected_text = Some(txt);
+            }
+            needs_redraw = false;
+        }
+
+        // Event-driven reactive polling: 80ms while background AI agent runs, 250ms when idle (0% CPU)
+        let poll_timeout = if app.agent_rx.is_some() {
+            Duration::from_millis(80)
+        } else {
+            Duration::from_millis(250)
+        };
+
+        if event::poll(poll_timeout)? {
+            needs_redraw = true;
             match event::read()? {
                 Event::Key(key) => {
                     // Global quit shortcuts
@@ -187,64 +265,7 @@ fn run_loop(
                         app.status_message = None;
                     }
 
-                    if app.show_action_palette {
-                        match key.code {
-                            KeyCode::Esc => {
-                                app.show_action_palette = false;
-                            }
-                            KeyCode::Down | KeyCode::Tab => {
-                                let actions = app.filtered_actions();
-                                if !actions.is_empty() {
-                                    app.action_palette_selected_idx = (app.action_palette_selected_idx + 1) % actions.len();
-                                }
-                            }
-                            KeyCode::Char('n') | KeyCode::Char('j') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                                let actions = app.filtered_actions();
-                                if !actions.is_empty() {
-                                    app.action_palette_selected_idx = (app.action_palette_selected_idx + 1) % actions.len();
-                                }
-                            }
-                            KeyCode::Up | KeyCode::BackTab => {
-                                let actions = app.filtered_actions();
-                                if !actions.is_empty() {
-                                    if app.action_palette_selected_idx == 0 {
-                                        app.action_palette_selected_idx = actions.len() - 1;
-                                    } else {
-                                        app.action_palette_selected_idx -= 1;
-                                    }
-                                }
-                            }
-                            KeyCode::Char('p') | KeyCode::Char('k') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                                let actions = app.filtered_actions();
-                                if !actions.is_empty() {
-                                    if app.action_palette_selected_idx == 0 {
-                                        app.action_palette_selected_idx = actions.len() - 1;
-                                    } else {
-                                        app.action_palette_selected_idx -= 1;
-                                    }
-                                }
-                            }
-                            KeyCode::Enter => {
-                                let actions = app.filtered_actions();
-                                if let Some(item) = actions.get(app.action_palette_selected_idx) {
-                                    let id = item.id;
-                                    match app.execute_action_palette_item(id, db) {
-                                        Ok(msg) => app.status_message = Some(msg),
-                                        Err(err) => app.status_message = Some(format!("Error: {}", err)),
-                                    }
-                                }
-                            }
-                            KeyCode::Backspace => {
-                                app.action_palette_query.pop();
-                                app.action_palette_selected_idx = 0;
-                            }
-                            KeyCode::Char(c) => {
-                                app.action_palette_query.push(c);
-                                app.action_palette_selected_idx = 0;
-                            }
-                            _ => {}
-                        }
-                    } else if app.show_new_directive_modal {
+                    if app.show_new_directive_modal {
                         match key.code {
                             KeyCode::Esc => {
                                 app.show_new_directive_modal = false;
@@ -418,15 +439,23 @@ fn run_loop(
                             }
                             _ => {}
                         }
-                    } else if app.active_tab == ActiveTab::Work && app.repl_active {
+                    } else if app.repl_active {
                         match key.code {
                             KeyCode::Esc => {
-                                if app.repl_input.starts_with('/') && !app.repl_input.is_empty() {
+                                if !app.repl_input.is_empty() {
                                     app.repl_input.clear();
                                     app.slash_menu_selected_idx = 0;
                                 } else {
                                     app.repl_active = false;
                                 }
+                            }
+                            KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                                app.repl_input.clear();
+                                app.slash_menu_selected_idx = 0;
+                            }
+                            KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                                app.repl_input.clear();
+                                app.slash_menu_selected_idx = 0;
                             }
                             KeyCode::Enter => {
                                 if key.modifiers.contains(KeyModifiers::SHIFT)
@@ -442,7 +471,7 @@ fn run_loop(
                                     app.repl_input.push('\n');
                                 } else {
                                     let filtered = app.filtered_slash_commands();
-                                    if app.repl_input.starts_with('/') && !filtered.is_empty() {
+                                    if app.repl_input.starts_with('/') && !filtered.is_empty() && !app.repl_input.contains(' ') {
                                         let sel = app.slash_menu_selected_idx.min(filtered.len().saturating_sub(1));
                                         let cmd = filtered[sel].name;
                                         app.execute_repl_command(cmd, db);
@@ -462,9 +491,9 @@ fn run_loop(
                             }
                             KeyCode::Tab => {
                                 let filtered = app.filtered_slash_commands();
-                                if app.repl_input.starts_with('/') && !filtered.is_empty() {
+                                if app.repl_input.starts_with('/') && !filtered.is_empty() && !app.repl_input.contains(' ') {
                                     let sel = app.slash_menu_selected_idx.min(filtered.len().saturating_sub(1));
-                                    app.repl_input = format!("/{}", filtered[sel].name);
+                                    app.repl_input = format!("/{} ", filtered[sel].name);
                                 }
                             }
                             KeyCode::BackTab => {
@@ -512,7 +541,11 @@ fn run_loop(
                                 }
                             }
                             KeyCode::Char(c) => {
-                                app.repl_input.push(c);
+                                if c == '\r' {
+                                    app.repl_input.push('\n');
+                                } else {
+                                    app.repl_input.push(c);
+                                }
                                 app.slash_menu_selected_idx = 0;
                             }
                             _ => {}
@@ -521,9 +554,9 @@ fn run_loop(
                         match key.code {
                             KeyCode::Char('q') => app.should_quit = true,
                             KeyCode::Char('p') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                                app.show_action_palette = true;
-                                app.action_palette_query.clear();
-                                app.action_palette_selected_idx = 0;
+                                app.repl_active = true;
+                                app.repl_input = "/".to_string();
+                                app.slash_menu_selected_idx = 0;
                             }
                             KeyCode::Char('o') | KeyCode::Char('O') => {
                                 match app.open_active_document_in_editor() {
@@ -532,6 +565,9 @@ fn run_loop(
                                 }
                             }
                             KeyCode::Char('?') | KeyCode::F(1) => app.toggle_help(),
+                            KeyCode::Char('h') | KeyCode::Char('H') if app.active_tab == ActiveTab::Sessions => {
+                                app.cycle_session_harness_filter();
+                            }
                             KeyCode::Char('h') if app.active_tab != ActiveTab::Settings => app.toggle_help(),
                             KeyCode::Char('y') | KeyCode::Char('Y') => {
                                 match app.copy_active_content_to_clipboard() {
@@ -573,39 +609,37 @@ fn run_loop(
                             KeyCode::Tab => app.toggle_pane(),
                             KeyCode::Down | KeyCode::Char('j') => app.next(),
                             KeyCode::Up | KeyCode::Char('k') => app.prev(),
-                            KeyCode::Left | KeyCode::Char('h') | KeyCode::Char('-') if app.active_tab == ActiveTab::Settings => {
-                                if app.focused_pane == crate::ui::app::FocusedPane::Detail {
-                                    app.focused_pane = crate::ui::app::FocusedPane::List;
-                                } else {
-                                    let old_mouse = app.mouse_capture;
-                                    app.adjust_setting(-1);
-                                    if app.mouse_capture != old_mouse {
-                                        if app.mouse_capture {
-                                            let _ = execute!(terminal.backend_mut(), EnableMouseCapture);
-                                            let _ = terminal.backend_mut().flush();
-                                        } else {
-                                            let _ = execute!(terminal.backend_mut(), DisableMouseCapture);
-                                            let _ = terminal.backend_mut().write_all(b"\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1005l\x1b[?1006l\x1b[?1015l");
-                                            let _ = terminal.backend_mut().flush();
-                                        }
+                            KeyCode::Left | KeyCode::Char('h') if app.active_tab == ActiveTab::Settings => {
+                                app.focused_pane = crate::ui::app::FocusedPane::List;
+                            }
+                            KeyCode::Right | KeyCode::Char('l') if app.active_tab == ActiveTab::Settings => {
+                                app.focused_pane = crate::ui::app::FocusedPane::Detail;
+                            }
+                            KeyCode::Char('-') if app.active_tab == ActiveTab::Settings => {
+                                let old_mouse = app.mouse_capture;
+                                app.adjust_setting(-1);
+                                if app.mouse_capture != old_mouse {
+                                    if app.mouse_capture {
+                                        let _ = execute!(terminal.backend_mut(), EnableMouseCapture);
+                                        let _ = terminal.backend_mut().flush();
+                                    } else {
+                                        let _ = execute!(terminal.backend_mut(), DisableMouseCapture);
+                                        let _ = terminal.backend_mut().write_all(b"\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1005l\x1b[?1006l\x1b[?1015l");
+                                        let _ = terminal.backend_mut().flush();
                                     }
                                 }
                             }
-                            KeyCode::Right | KeyCode::Char('l') | KeyCode::Char('+') | KeyCode::Char('=') if app.active_tab == ActiveTab::Settings => {
-                                if app.focused_pane == crate::ui::app::FocusedPane::List && (app.settings_selected_idx == 7 || app.settings_selected_idx == 6) {
-                                    app.focused_pane = crate::ui::app::FocusedPane::Detail;
-                                } else {
-                                    let old_mouse = app.mouse_capture;
-                                    app.adjust_setting(1);
-                                    if app.mouse_capture != old_mouse {
-                                        if app.mouse_capture {
-                                            let _ = execute!(terminal.backend_mut(), EnableMouseCapture);
-                                            let _ = terminal.backend_mut().flush();
-                                        } else {
-                                            let _ = execute!(terminal.backend_mut(), DisableMouseCapture);
-                                            let _ = terminal.backend_mut().write_all(b"\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1005l\x1b[?1006l\x1b[?1015l");
-                                            let _ = terminal.backend_mut().flush();
-                                        }
+                            KeyCode::Char('+') | KeyCode::Char('=') if app.active_tab == ActiveTab::Settings => {
+                                let old_mouse = app.mouse_capture;
+                                app.adjust_setting(1);
+                                if app.mouse_capture != old_mouse {
+                                    if app.mouse_capture {
+                                        let _ = execute!(terminal.backend_mut(), EnableMouseCapture);
+                                        let _ = terminal.backend_mut().flush();
+                                    } else {
+                                        let _ = execute!(terminal.backend_mut(), DisableMouseCapture);
+                                        let _ = terminal.backend_mut().write_all(b"\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1005l\x1b[?1006l\x1b[?1015l");
+                                        let _ = terminal.backend_mut().flush();
                                     }
                                 }
                             }
@@ -632,9 +666,10 @@ fn run_loop(
                                         }
                                     }
                                 } else {
-                                    app.show_action_palette = true;
-                                    app.action_palette_query.clear();
-                                    app.action_palette_selected_idx = 0;
+                                    // Unified entry to Command Dock
+                                    app.repl_active = true;
+                                    app.repl_input = "/".to_string();
+                                    app.slash_menu_selected_idx = 0;
                                 }
                             }
                             KeyCode::Enter => {
@@ -680,7 +715,11 @@ fn run_loop(
                                 } else if app.active_tab == ActiveTab::Directives {
                                     app.next_directive_category(db);
                                 } else if app.active_tab == ActiveTab::Work {
-                                    app.work_tab_mode = crate::ui::app::WorkTabMode::Console;
+                                    if app.work_tab_mode == crate::ui::app::WorkTabMode::Console {
+                                        app.work_tab_mode = crate::ui::app::WorkTabMode::Risks;
+                                    } else {
+                                        app.work_tab_mode = crate::ui::app::WorkTabMode::Console;
+                                    }
                                 }
                             }
                             KeyCode::Char('n') | KeyCode::Char('N') if app.active_tab == ActiveTab::Directives => {
@@ -725,15 +764,9 @@ fn run_loop(
                                 }
                             }
                             KeyCode::Char('/') => {
-                                if app.active_tab == ActiveTab::Work {
-                                    app.work_tab_mode = crate::ui::app::WorkTabMode::Console;
-                                    app.repl_active = true;
-                                    app.repl_input = "/".to_string();
-                                    app.slash_menu_selected_idx = 0;
-                                } else {
-                                    app.is_filtering = true;
-                                    app.filter_query.clear();
-                                }
+                                app.repl_active = true;
+                                app.repl_input = "/".to_string();
+                                app.slash_menu_selected_idx = 0;
                             }
                             _ => {}
                         }
@@ -751,57 +784,6 @@ fn run_loop(
                     let size = terminal.size()?;
                     let area = ratatui::layout::Rect::new(0, 0, size.width, size.height);
 
-                    // If Action Palette modal is open, dismiss when clicking outside or select/execute when clicking inside
-                    if app.show_action_palette {
-                        let modal = ActionPaletteModal::modal_area(area);
-                        let inside = col >= modal.x
-                            && col < modal.x + modal.width
-                            && row >= modal.y
-                            && row < modal.y + modal.height;
-
-                        match mouse.kind {
-                            MouseEventKind::Down(MouseButton::Left) => {
-                                if !inside {
-                                    app.show_action_palette = false;
-                                } else {
-                                    let list_start_y = modal.y + 5;
-                                    let actions = app.filtered_actions();
-                                    if row >= list_start_y && (row as usize) < list_start_y as usize + actions.len() {
-                                        let clicked_idx = (row - list_start_y) as usize;
-                                        if clicked_idx < actions.len() {
-                                            if app.action_palette_selected_idx == clicked_idx {
-                                                let id = actions[clicked_idx].id;
-                                                match app.execute_action_palette_item(id, db) {
-                                                    Ok(msg) => app.status_message = Some(msg),
-                                                    Err(err) => app.status_message = Some(format!("Error: {}", err)),
-                                                }
-                                            } else {
-                                                app.action_palette_selected_idx = clicked_idx;
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                            MouseEventKind::ScrollDown => {
-                                let actions = app.filtered_actions();
-                                if !actions.is_empty() {
-                                    app.action_palette_selected_idx = (app.action_palette_selected_idx + 1) % actions.len();
-                                }
-                            }
-                            MouseEventKind::ScrollUp => {
-                                let actions = app.filtered_actions();
-                                if !actions.is_empty() {
-                                    if app.action_palette_selected_idx == 0 {
-                                        app.action_palette_selected_idx = actions.len() - 1;
-                                    } else {
-                                        app.action_palette_selected_idx -= 1;
-                                    }
-                                }
-                            }
-                            _ => {}
-                        }
-                        continue;
-                    }
 
                     // If New Directive modal is open, dismiss when clicking outside
                     if app.show_new_directive_modal {
@@ -943,50 +925,57 @@ fn run_loop(
                                     app.status_message = None;
                                 }
 
-                                // 1. Header clicks (row 1: tabs, row 3: taxonomy/category filter pills)
-                                if row <= 4 {
+                                let footer_h: u16 = if area.height >= 22 { 2 } else { 1 };
+
+                                // 1. Header clicks (row 0: tabs, row 1: context sub-bar)
+                                if row <= 2 {
                                     Header::handle_click(app, db, col, row);
                                 }
-                                // 2. Main content clicks
-                                else if row >= 5 && row < area.height.saturating_sub(2) {
-                                    if app.active_tab == ActiveTab::Work && app.work_tab_mode == crate::ui::app::WorkTabMode::Console {
-                                        let input_lines = app.repl_input.lines().count().max(1);
-                                        let prompt_h = if app.repl_active {
-                                            (input_lines as u16 + 8).clamp(10, 18)
-                                        } else {
-                                            6
-                                        };
-                                        let filtered_slash = app.filtered_slash_commands();
-                                        let prompt_y = area.height.saturating_sub(2).saturating_sub(prompt_h);
-
-                                        if app.repl_active && !filtered_slash.is_empty() {
-                                            let slash_h = (filtered_slash.len() as u16 + 2).min(7);
-                                            let slash_y = prompt_y.saturating_sub(slash_h);
-
-                                            if row >= slash_y && row < prompt_y {
-                                                let rel_slash_row = row.saturating_sub(slash_y + 1) as usize;
-                                                if rel_slash_row < filtered_slash.len() {
-                                                    let cmd = filtered_slash[rel_slash_row].name;
-                                                    app.execute_repl_command(cmd, db);
-                                                }
-                                                continue;
-                                            }
-                                        }
-
-                                        if row >= prompt_y {
-                                            app.repl_active = true;
-                                        } else {
-                                            app.repl_active = false;
-                                        }
+                                // 2. Main content & Universal Command Dock clicks
+                                else if row >= 3 && row < area.height.saturating_sub(footer_h) {
+                                    let input_lines = app.repl_input.lines().count().max(1);
+                                    let prompt_h = if area.height >= 30 {
+                                        (input_lines as u16 + 5).clamp(6, 14)
                                     } else {
-                                        let list_width = match app.active_tab {
+                                        (input_lines as u16 + 4).clamp(5, 12)
+                                    };
+                                    let filtered_slash = app.filtered_slash_commands();
+                                    let slash_h = if app.repl_active && !filtered_slash.is_empty() {
+                                        (filtered_slash.len() as u16 + 2).min(7)
+                                    } else {
+                                        0
+                                    };
+                                    let prompt_y = area.height.saturating_sub(footer_h).saturating_sub(prompt_h);
+
+                                    if slash_h > 0 {
+                                        let slash_y = prompt_y.saturating_sub(slash_h);
+                                        if row >= slash_y && row < prompt_y {
+                                            let rel_slash_row = row.saturating_sub(slash_y + 1) as usize;
+                                            if rel_slash_row < filtered_slash.len() {
+                                                let cmd = filtered_slash[rel_slash_row].name;
+                                                app.execute_repl_command(cmd, db);
+                                            }
+                                            continue;
+                                        }
+                                    }
+
+                                    if row >= prompt_y {
+                                        app.repl_active = true;
+                                        continue;
+                                    }
+
+                                    if app.repl_active {
+                                        app.repl_active = false;
+                                    }
+
+                                    let list_width = match app.active_tab {
                                             ActiveTab::Work => area.width * 45 / 100,
                                             ActiveTab::Reader => 0,
                                             ActiveTab::Settings => (area.width * 40 / 100).clamp(38, 65),
                                             _ => (area.width * 38 / 100).clamp(36, 68),
                                         };
 
-                                        let rel_row = row.saturating_sub(5);
+                                        let rel_row = row.saturating_sub(3);
                                         if col < list_width {
                                             app.focused_pane = crate::ui::app::FocusedPane::List;
                                             if rel_row >= 2 {
@@ -1058,9 +1047,8 @@ fn run_loop(
                                             }
                                         }
                                     }
-                                }
                                 // 3. Footer clicks
-                                else if row >= area.height.saturating_sub(2) && col >= area.width.saturating_sub(12) {
+                                else if row >= area.height.saturating_sub(footer_h) && col >= area.width.saturating_sub(12) {
                                     app.should_quit = true;
                                 }
                             }
@@ -1097,22 +1085,24 @@ fn run_loop(
                     }
                 }
                 Event::Paste(text) => {
+                    let normalized = text.replace("\r\n", "\n").replace('\r', "\n");
                     if app.show_new_directive_modal {
                         if app.new_directive_field == 0 {
-                            app.new_directive_title.push_str(&text);
+                            app.new_directive_title.push_str(&normalized);
                         } else if app.new_directive_field == 2 {
-                            app.new_directive_scope.push_str(&text);
+                            app.new_directive_scope.push_str(&normalized);
                         } else if app.new_directive_field == 4 {
-                            app.new_directive_rule.push_str(&text);
+                            app.new_directive_rule.push_str(&normalized);
                         }
-                    } else if app.active_tab == ActiveTab::Work && app.repl_active {
-                        app.repl_input.push_str(&text);
-                        app.slash_menu_selected_idx = 0;
-                    } else if app.show_action_palette {
-                        app.action_palette_query.push_str(&text);
-                        app.action_palette_selected_idx = 0;
                     } else if app.is_filtering {
-                        app.filter_query.push_str(&text);
+                        app.filter_query.push_str(&normalized);
+                    } else {
+                        // Automatically focus the command dock on paste!
+                        app.repl_active = true;
+                        // Strip trailing newlines so that pasting text NEVER auto-submits!
+                        let clean = normalized.trim_end_matches('\n');
+                        app.repl_input.push_str(clean);
+                        app.slash_menu_selected_idx = 0;
                     }
                 }
                 _ => {}

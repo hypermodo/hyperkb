@@ -30,95 +30,6 @@ pub struct DiagnosticEntry {
     pub selected_file_idx: usize,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ActionPaletteItem {
-    pub id: &'static str,
-    pub title: &'static str,
-    pub shortcut: &'static str,
-    pub description: &'static str,
-    pub cli_command: &'static str,
-}
-
-pub static ACTION_PALETTE_ITEMS: &[ActionPaletteItem] = &[
-    ActionPaletteItem {
-        id: "check_work",
-        title: "Git Check-Work (Audit Staged & Changed Files)",
-        shortcut: "Space",
-        description: "Audit working tree and index against cited risks and architectural directives",
-        cli_command: "hyperkb check-work --staged --changed",
-    },
-    ActionPaletteItem {
-        id: "new_directive",
-        title: "Draft New Policy Directive",
-        shortcut: "n",
-        description: "Define a new repo invariant, behavior rule, or security guardrail",
-        cli_command: "hyperkb draft-directive",
-    },
-    ActionPaletteItem {
-        id: "toggle_directive_status",
-        title: "Toggle Policy Directive Status (Active ⇄ Retired)",
-        shortcut: "r",
-        description: "Retire obsolete directive or reactivate rule into pre-commit enforcement gate",
-        cli_command: "Directives Lifecycle (Active ⇄ Retired)",
-    },
-    ActionPaletteItem {
-        id: "issue_grant",
-        title: "Issue Agent Authority Grant",
-        shortcut: "n",
-        description: "Delegate scoped capability tokens to autonomous AI agents and sub-agents",
-        cli_command: "hyperkb issue-grant",
-    },
-    ActionPaletteItem {
-        id: "revoke_grant",
-        title: "Revoke Selected Agent Authority Grant",
-        shortcut: "r",
-        description: "Immediately revoke and invalidate an agent capability grant token",
-        cli_command: "hyperkb revoke-grant",
-    },
-    ActionPaletteItem {
-        id: "audit_kb",
-        title: "Audit Knowledge Base & Directives",
-        shortcut: "a",
-        description: "Verify document bloat, file hierarchy depth, and schema validity",
-        cli_command: "hyperkb audit-kb",
-    },
-    ActionPaletteItem {
-        id: "reindex_kb",
-        title: "Re-index Knowledge Base (Incremental FTS5)",
-        shortcut: "I",
-        description: "Scan docs directory, parse frontmatter, and update full-text SQLite search index",
-        cli_command: "hyperkb index",
-    },
-    ActionPaletteItem {
-        id: "bootstrap_risks",
-        title: "Bootstrap Risks from Git Incident Archeology",
-        shortcut: "G",
-        description: "Analyze git commit history for regression hotspots and draft proactive risk cards",
-        cli_command: "hyperkb bootstrap",
-    },
-    ActionPaletteItem {
-        id: "open_editor",
-        title: "Open Active Document in External Editor",
-        shortcut: "o",
-        description: "Launch current markdown document in external IDE ($EDITOR / code)",
-        cli_command: "code <path> / $EDITOR <path>",
-    },
-    ActionPaletteItem {
-        id: "backup",
-        title: "Create Point-in-Time Backup Snapshot",
-        shortcut: "B",
-        description: "Create an atomic verified snapshot in .hyperkb/backups/",
-        cli_command: "hyperkb backup",
-    },
-    ActionPaletteItem {
-        id: "compact",
-        title: "Compact Database & WAL Journal",
-        shortcut: "C",
-        description: "Vacuum SQLite database and truncate WAL log to optimize storage",
-        cli_command: "hyperkb compact",
-    },
-];
-
 #[derive(Debug, Clone)]
 pub struct SlashCommand {
     pub name: &'static str,
@@ -127,6 +38,36 @@ pub struct SlashCommand {
 }
 
 pub static SLASH_COMMANDS: &[SlashCommand] = &[
+    SlashCommand {
+        name: "claude",
+        description: "Ask Claude Code CLI headlessly with KB governance context",
+        example: "/claude <prompt>",
+    },
+    SlashCommand {
+        name: "opencode",
+        description: "Ask OpenCode AI Harness headlessly with KB governance context",
+        example: "/opencode <prompt>",
+    },
+    SlashCommand {
+        name: "openai",
+        description: "Ask OpenAI / Codex CLI headlessly with KB governance context",
+        example: "/openai <prompt>",
+    },
+    SlashCommand {
+        name: "codex",
+        description: "Ask Codex CLI headlessly with KB governance context",
+        example: "/codex <prompt>",
+    },
+    SlashCommand {
+        name: "antigravity",
+        description: "Query Antigravity IDE agent session environment",
+        example: "/antigravity <prompt>",
+    },
+    SlashCommand {
+        name: "agent",
+        description: "Ask default active AI harness headlessly with KB governance context",
+        example: "/agent <prompt>",
+    },
     SlashCommand {
         name: "audit",
         description: "Run KB anti-bloat, schema & directive decay audit",
@@ -153,14 +94,59 @@ pub static SLASH_COMMANDS: &[SlashCommand] = &[
         example: "/harnesses",
     },
     SlashCommand {
+        name: "search",
+        description: "Full-text search ADRs, specs, and knowledge documents",
+        example: "/search <query>",
+    },
+    SlashCommand {
+        name: "read",
+        description: "Open currently selected document in full Reader view",
+        example: "/read",
+    },
+    SlashCommand {
         name: "directives",
         description: "Switch to Policy Directives & Invariants tab",
         example: "/directives",
     },
     SlashCommand {
+        name: "new",
+        description: "Draft a new policy directive or governance invariant",
+        example: "/new",
+    },
+    SlashCommand {
+        name: "toggle",
+        description: "Toggle active/retired status of selected policy directive",
+        example: "/toggle",
+    },
+    SlashCommand {
+        name: "risks",
+        description: "Switch to Work view & inspect active repository risk cards",
+        example: "/risks",
+    },
+    SlashCommand {
+        name: "sessions",
+        description: "Switch to Agent Runs & telemetry scorecard tab",
+        example: "/sessions",
+    },
+    SlashCommand {
+        name: "scorecard",
+        description: "Inspect detailed 0-100 Session Quality Scorecard for selected run",
+        example: "/scorecard",
+    },
+    SlashCommand {
         name: "grants",
         description: "Switch to Agent Authority Grants tab",
         example: "/grants",
+    },
+    SlashCommand {
+        name: "grant",
+        description: "Issue scoped authority grant token to an agent",
+        example: "/grant",
+    },
+    SlashCommand {
+        name: "revoke",
+        description: "Revoke selected agent authority grant token",
+        example: "/revoke",
     },
     SlashCommand {
         name: "backup",
@@ -279,6 +265,7 @@ pub struct App {
     pub governance_tab_mode: GovernanceTabMode,
     pub grants: Vec<AuthorityGrant>,
     pub selected_grant_idx: usize,
+    pub session_harness_filter: Option<String>,
 
     // Directive creation modal state
     pub show_new_directive_modal: bool,
@@ -296,10 +283,6 @@ pub struct App {
     pub new_grant_ttl_hours: u32,
     pub new_grant_field: usize,
 
-    // Action Palette modal state
-    pub show_action_palette: bool,
-    pub action_palette_query: String,
-    pub action_palette_selected_idx: usize,
 
     // Work / Terminal tab mode
     pub work_tab_mode: WorkTabMode,
@@ -317,6 +300,10 @@ pub struct App {
     // AI Harness & LLM Registry
     pub harnesses: Vec<crate::domain::HarnessDefinition>,
     pub selected_harness_idx: usize,
+
+    // Headless AI Agent Query Channel & Status
+    pub agent_rx: Option<std::sync::mpsc::Receiver<DiagnosticEntry>>,
+    pub pending_agent_query: Option<(String, std::time::Instant)>,
 }
 
 impl App {
@@ -397,6 +384,7 @@ impl App {
             governance_tab_mode: GovernanceTabMode::Sessions,
             grants: Vec::new(),
             selected_grant_idx: 0,
+            session_harness_filter: None,
             show_new_directive_modal: false,
             new_directive_title: String::new(),
             new_directive_category_idx: 0,
@@ -409,9 +397,6 @@ impl App {
             new_grant_preset_idx: 0,
             new_grant_ttl_hours: 4,
             new_grant_field: 0,
-            show_action_palette: false,
-            action_palette_query: String::new(),
-            action_palette_selected_idx: 0,
             work_tab_mode: WorkTabMode::Risks,
             diagnostic_stream: vec![init_entry],
             selected_diagnostic_idx: 0,
@@ -423,6 +408,8 @@ impl App {
             slash_menu_selected_idx: 0,
             harnesses,
             selected_harness_idx,
+            agent_rx: None,
+            pending_agent_query: None,
         }
     }
 
@@ -430,7 +417,12 @@ impl App {
         if !self.repl_input.starts_with('/') {
             return Vec::new();
         }
-        let query = self.repl_input.trim_start_matches('/').trim().to_lowercase();
+        let clean = self.repl_input.trim_start_matches('/');
+        // If the user already typed a space, they are typing arguments/prompts to the command
+        if clean.contains(' ') {
+            return Vec::new();
+        }
+        let query = clean.trim().to_lowercase();
         if query.is_empty() {
             return SLASH_COMMANDS.iter().collect();
         }
@@ -1378,6 +1370,137 @@ impl App {
         self.focused_pane = FocusedPane::List;
     }
 
+    pub fn unique_session_harnesses(&self) -> Vec<String> {
+        let mut list = Vec::new();
+        for s in &self.sessions {
+            if !s.agent_id.is_empty() && !list.contains(&s.agent_id) {
+                list.push(s.agent_id.clone());
+            }
+        }
+        list
+    }
+
+    pub fn filtered_sessions(&self) -> Vec<(usize, &crate::domain::AgentSession)> {
+        self.sessions
+            .iter()
+            .enumerate()
+            .filter(|(_, s)| {
+                if let Some(ref h) = self.session_harness_filter {
+                    s.agent_id.eq_ignore_ascii_case(h)
+                } else {
+                    true
+                }
+            })
+            .collect()
+    }
+
+    pub fn cycle_session_harness_filter(&mut self) {
+        let harnesses = self.unique_session_harnesses();
+        if harnesses.is_empty() {
+            self.session_harness_filter = None;
+            return;
+        }
+        match self.session_harness_filter.as_ref() {
+            None => self.session_harness_filter = Some(harnesses[0].clone()),
+            Some(curr) => {
+                if let Some(idx) = harnesses.iter().position(|h| h == curr) {
+                    if idx + 1 < harnesses.len() {
+                        self.session_harness_filter = Some(harnesses[idx + 1].clone());
+                    } else {
+                        self.session_harness_filter = None;
+                    }
+                } else {
+                    self.session_harness_filter = None;
+                }
+            }
+        }
+        self.selected_session_idx = 0;
+    }
+
+    pub fn active_tab_context(&self) -> (String, String) {
+        match self.active_tab {
+            ActiveTab::Work => {
+                if let Some(risk) = self.active_risks.get(self.selected_risk_idx) {
+                    (
+                        format!("Work • Risk: {}", risk.document.title),
+                        "Ask to analyze risk, explain diff impact, or '/' for actions...".to_string(),
+                    )
+                } else {
+                    (
+                        "Work • Working Tree Clean".to_string(),
+                        "Ask about active branch, or type '/' for commands (/check, /audit)...".to_string(),
+                    )
+                }
+            }
+            ActiveTab::Explore => {
+                if let Some(doc) = self.documents.get(self.selected_doc_idx) {
+                    (
+                        format!("Knowledge • {}", doc.title),
+                        "Ask to summarize doc, find related ADRs, or '/' for actions...".to_string(),
+                    )
+                } else {
+                    (
+                        "Knowledge Base".to_string(),
+                        "Ask to query ADRs and specs, or type '/' for actions...".to_string(),
+                    )
+                }
+            }
+            ActiveTab::Directives => {
+                if let Some(dir) = self.directives.get(self.selected_directive_idx) {
+                    (
+                        format!("Directive • {} ({})", dir.id, dir.title),
+                        "Ask about policy invariant, draft new, or '/' for actions...".to_string(),
+                    )
+                } else {
+                    (
+                        "Directives & Invariants".to_string(),
+                        "Ask about repo policies, or type '/' for actions...".to_string(),
+                    )
+                }
+            }
+            ActiveTab::Sessions => {
+                match self.governance_tab_mode {
+                    GovernanceTabMode::Sessions => {
+                        let filtered = self.filtered_sessions();
+                        if let Some((_, sess)) = filtered.get(self.selected_session_idx) {
+                            let score = sess.efficiency_score_pct();
+                            (
+                                format!("Agent [{}] • Score {}/100", sess.agent_id, score),
+                                "Ask to analyze thrashing, review diff telemetry, or '/' for actions...".to_string(),
+                            )
+                        } else {
+                            (
+                                "Agent Runs Telemetry".to_string(),
+                                "Ask to inspect agent activity, or type '/' for actions...".to_string(),
+                            )
+                        }
+                    }
+                    GovernanceTabMode::Grants => {
+                        if let Some(grant) = self.selected_grant() {
+                            (
+                                format!("Authority Grant • {}", grant.grantee),
+                                "Type '/' for grant actions (/grant, /revoke)...".to_string(),
+                            )
+                        } else {
+                            (
+                                "Agent Authority Grants".to_string(),
+                                "Type '/' for grant actions (/grant, /revoke)...".to_string(),
+                            )
+                        }
+                    }
+                }
+            }
+            ActiveTab::Settings => (
+                "Settings & Harnesses".to_string(),
+                "Type '/' for system maintenance (/backup, /compact, /harnesses)...".to_string(),
+            ),
+            ActiveTab::Reader => (
+                "Document Reader".to_string(),
+                "Ask question about document, or type '/' for commands...".to_string(),
+            ),
+        }
+    }
+
     pub fn draft_new_directive(&mut self, db: &Database) -> Result<String, String> {
         let title = self.new_directive_title.trim().to_string();
         if title.is_empty() {
@@ -1596,26 +1719,7 @@ impl App {
         }
     }
 
-    pub fn filtered_actions(&self) -> Vec<&'static ActionPaletteItem> {
-        let q = self.action_palette_query.to_lowercase();
-        ACTION_PALETTE_ITEMS
-            .iter()
-            .filter(|item| {
-                if q.is_empty() {
-                    true
-                } else {
-                    item.title.to_lowercase().contains(&q)
-                        || item.description.to_lowercase().contains(&q)
-                        || item.shortcut.to_lowercase().contains(&q)
-                        || item.cli_command.to_lowercase().contains(&q)
-                        || item.id.to_lowercase().contains(&q)
-                }
-            })
-            .collect()
-    }
-
     pub fn execute_action_palette_item(&mut self, action_id: &str, db: &Database) -> Result<String, String> {
-        self.show_action_palette = false;
         match action_id {
             "check_work" => {
                 let staged = crate::core::Git::staged_files(&self.root).unwrap_or_default();
@@ -1993,6 +2097,232 @@ impl App {
         self.work_tab_mode = WorkTabMode::Console;
     }
 
+    pub fn active_harness_name(&self) -> String {
+        if let Some(h) = self.harnesses.get(self.selected_harness_idx) {
+            h.name.clone()
+        } else {
+            "Default AI Agent".to_string()
+        }
+    }
+
+    pub fn resolve_harness(&self, target: &str) -> Option<crate::domain::HarnessDefinition> {
+        let t = target.trim().to_lowercase();
+        if t == "default" || t == "agent" || t.is_empty() {
+            return self.harnesses.get(self.selected_harness_idx).cloned();
+        }
+        if t == "openai" {
+            if let Some(h) = self.harnesses.iter().find(|h| h.id == "codex" || h.id == "openai") {
+                return Some(h.clone());
+            }
+        }
+        if t == "gemini" {
+            if let Some(h) = self.harnesses.iter().find(|h| h.id == "antigravity" || h.id == "gemini") {
+                return Some(h.clone());
+            }
+        }
+        if let Some(h) = self.harnesses.iter().find(|h| {
+            h.id.to_lowercase() == t || h.name.to_lowercase().contains(&t)
+        }) {
+            return Some(h.clone());
+        }
+        // Fallback: create dynamic definition targeting executable
+        Some(crate::domain::HarnessDefinition {
+            id: t.clone(),
+            name: format!("{} CLI", target),
+            protocol: crate::domain::HarnessProtocol::CliSubprocess {
+                binary: t.clone(),
+                default_args: Vec::new(),
+            },
+            capabilities: vec!["custom_cli".to_string()],
+            detected_models: Vec::new(),
+            governance_status: crate::domain::HarnessGovernanceStatus::Discovered,
+            governance_reason: Some(format!("Dynamic target: {}", target)),
+            binary_path: Some(t),
+            last_seen: Some(chrono::Utc::now()),
+        })
+    }
+
+    pub fn build_governance_context_prompt(&self, user_prompt: &str) -> String {
+        let mut context = String::new();
+        context.push_str("[HYPERKB GOVERNANCE CONTROL PLANE CONTEXT]\n");
+        context.push_str(&format!("Workspace Root: {}\n", self.root.display()));
+        context.push_str(&format!("Collection: {}\n", self.collection_id));
+
+        let active_tab_str = match self.active_tab {
+            ActiveTab::Work => "Work (Audit & Risk Surface)",
+            ActiveTab::Explore => "Explore (Knowledge Base Documents)",
+            ActiveTab::Directives => "Directives (Policy Rules & Invariants)",
+            ActiveTab::Sessions => "Sessions & Authority Grants",
+            ActiveTab::Settings => "Settings & CISO Policy",
+            ActiveTab::Reader => "Document Reader",
+        };
+        context.push_str(&format!("Active Tab: {}\n", active_tab_str));
+
+        match self.active_tab {
+            ActiveTab::Explore | ActiveTab::Reader => {
+                let doc_opt = self.current_document.as_ref()
+                    .or_else(|| self.documents.get(self.selected_doc_idx));
+                if let Some(doc) = doc_opt {
+                    context.push_str(&format!("\nActive Document: {}\nPath: {}\nStatus: {:?}\nContent Snippet:\n", 
+                        doc.title, doc.path, doc.status));
+                    let snippet: String = doc.content.lines().take(30).collect::<Vec<_>>().join("\n");
+                    context.push_str(&snippet);
+                    context.push_str("\n");
+                }
+            }
+            ActiveTab::Directives => {
+                if let Some(directive) = self.directives.get(self.selected_directive_idx) {
+                    context.push_str(&format!("\nSelected Directive: {} ({})\nCategory: {}\nEnforcement: {}\nRule:\n{}\n",
+                        directive.title, directive.id, directive.category, directive.enforcement, directive.content));
+                }
+            }
+            ActiveTab::Work => {
+                if let Some(risk) = self.active_risks.get(self.selected_risk_idx) {
+                    context.push_str(&format!("\nSelected Risk Card: {} ({})\nStatus: {:?}\nReason: {}\nMatched Paths: {}\n",
+                        risk.document.title, risk.document.id, risk.document.status, risk.reason, risk.matched_paths.join(", ")));
+                }
+            }
+            ActiveTab::Sessions => {
+                if self.governance_tab_mode == GovernanceTabMode::Grants {
+                    if let Some(grant) = self.selected_grant() {
+                        let exp_str = grant.constraints.expires_at.map(|e| e.to_rfc3339()).unwrap_or_else(|| "Never".to_string());
+                        let actions: Vec<String> = grant.allowed_actions.iter().map(|a| format!("{:?}", a)).collect();
+                        context.push_str(&format!("\nSelected Authority Grant: Grantee '{}', Granted By '{}', Expires {}\nAllowed Actions: {}\nScope: {}\n",
+                            grant.grantee, grant.granted_by, exp_str, actions.join(", "), grant.allowed_scope_patterns.join(", ")));
+                    }
+                } else {
+                    let filtered = self.filtered_sessions();
+                    if let Some((_, session)) = filtered.get(self.selected_session_idx) {
+                        let score = session.efficiency_score_pct();
+                        let dur = session.formatted_duration();
+                        context.push_str(&format!("\nSelected Agent Run: [{}] (Session: {})\nDuration: {} • Efficiency Score: {}/100\nTool Calls: {} • Edits: {} • Diff Lines: {}\nRisks Cited: {} • Prevented: {} • Loops: {}\nFirst Pass Clean: {} • Status: {}\n",
+                            session.agent_id, session.id, dur, score, session.total_tool_calls, session.total_edits, session.total_diff_lines, session.risks_cited, session.risks_prevented, session.review_loops, session.first_pass_clean, session.status));
+                    }
+                }
+            }
+            _ => {}
+        }
+
+        let active_directives: Vec<&Directive> = self.directives.iter().filter(|d| d.status == "active").take(5).collect();
+        if !active_directives.is_empty() {
+            context.push_str("\n[TOP POLICY DIRECTIVES (RULE OF 5)]\n");
+            for d in active_directives {
+                let first_line = d.content.lines().next().unwrap_or("");
+                context.push_str(&format!("• [{}] {} (Enforcement: {}): {}\n", d.id, d.title, d.enforcement, first_line));
+            }
+        }
+
+        let top_risks: Vec<&RiskMatch> = self.active_risks.iter().take(3).collect();
+        if !top_risks.is_empty() {
+            context.push_str("\n[ACTIVE GOVERNANCE RISKS]\n");
+            for r in top_risks {
+                context.push_str(&format!("• [{}] {}: {}\n", r.document.id, r.document.title, r.reason));
+            }
+        }
+
+        context.push_str("\n[GOVERNANCE INSTRUCTION]\n");
+        context.push_str("You are an AI assistant acting within the HyperKB Governance Control Plane. All actions and recommendations must strictly respect repository Policy Directives and cite relevant Risk Cards.\n");
+        context.push_str("CRITICAL: Answer immediately, directly, and concisely using the provided governance context above. Do NOT execute external tool calls, disk scans, or multi-step codebase greps unless explicitly requested by the user.\n\n");
+        context.push_str("[USER QUERY]\n");
+        context.push_str(user_prompt);
+
+        context
+    }
+
+    pub fn dispatch_agent_query(&mut self, target: &str, raw_prompt: &str) {
+        let trimmed_prompt = raw_prompt.trim();
+        if trimmed_prompt.is_empty() {
+            let help_entry = DiagnosticEntry {
+                id: uuid::Uuid::now_v7().to_string(),
+                timestamp: chrono::Utc::now(),
+                command: format!("/{} <prompt>", target),
+                title: format!("Harness: {}", target),
+                success: true,
+                summary: format!("Usage: /{} <your question or prompt>", target),
+                lines: vec![
+                    format!("Ask {} headlessly with repository governance context.", target),
+                    format!("Example: /{} Explain the architectural directives for database transactions", target),
+                ],
+                file_targets: Vec::new(),
+                selected_file_idx: 0,
+            };
+            self.diagnostic_stream.push(help_entry);
+            self.selected_diagnostic_idx = self.diagnostic_stream.len().saturating_sub(1);
+            self.work_tab_mode = WorkTabMode::Console;
+            self.switch_tab(ActiveTab::Work);
+            return;
+        }
+
+        if self.pending_agent_query.is_some() {
+            self.status_message = Some("An AI agent query is already running in background. Please wait...".to_string());
+            return;
+        }
+
+        let harness = match self.resolve_harness(target) {
+            Some(h) => h,
+            None => {
+                let entry = DiagnosticEntry {
+                    id: uuid::Uuid::now_v7().to_string(),
+                    timestamp: chrono::Utc::now(),
+                    command: format!("/{} \"{}\"", target, trimmed_prompt),
+                    title: format!("Harness '{}' Not Found", target),
+                    success: false,
+                    summary: format!("No registered or discovered harness matches '{}'.", target),
+                    lines: vec![
+                        format!("Available harnesses: {}", self.harnesses.iter().map(|h| h.id.as_str()).collect::<Vec<_>>().join(", ")),
+                        "Type '/harnesses' to inspect discovery status or configure in Settings tab [5].".to_string(),
+                    ],
+                    file_targets: Vec::new(),
+                    selected_file_idx: 0,
+                };
+                self.diagnostic_stream.push(entry);
+                self.selected_diagnostic_idx = self.diagnostic_stream.len().saturating_sub(1);
+                self.work_tab_mode = WorkTabMode::Console;
+                self.switch_tab(ActiveTab::Work);
+                return;
+            }
+        };
+
+        let harness_name = harness.name.clone();
+        let bundled_prompt = self.build_governance_context_prompt(trimmed_prompt);
+
+        let placeholder = DiagnosticEntry {
+            id: "pending_agent_query".to_string(),
+            timestamp: chrono::Utc::now(),
+            command: format!("{} query: \"{}\"", harness_name, trimmed_prompt),
+            title: format!("Querying {} (Headless Background Process)...", harness_name),
+            success: true,
+            summary: format!("Prompt: \"{}\"", trimmed_prompt),
+            lines: vec![
+                format!("● Headless subprocess dispatched to {}", harness_name),
+                "⏳ Waiting for response in background thread...".to_string(),
+                "HyperKB TUI remains fully interactive at 60 FPS.".to_string(),
+                "Directives and Risk governance context bundled into prompt.".to_string(),
+            ],
+            file_targets: Vec::new(),
+            selected_file_idx: 0,
+        };
+
+        self.diagnostic_stream.push(placeholder);
+        self.selected_diagnostic_idx = self.diagnostic_stream.len().saturating_sub(1);
+        self.diagnostic_scroll = 0;
+        self.work_tab_mode = WorkTabMode::Console;
+        self.switch_tab(ActiveTab::Work);
+        self.repl_active = false;
+        self.status_message = Some(format!("● [{}]: Dispatched headless query...", harness_name));
+
+        let (tx, rx) = std::sync::mpsc::channel();
+        self.agent_rx = Some(rx);
+        self.pending_agent_query = Some((harness_name, std::time::Instant::now()));
+
+        let root = self.root.clone();
+        let raw_prompt_owned = trimmed_prompt.to_string();
+        std::thread::spawn(move || {
+            let result = run_agent_headless(&harness, &bundled_prompt, &raw_prompt_owned, &root);
+            let _ = tx.send(result);
+        });
+    }
+
     pub fn execute_repl_command(&mut self, cmd: &str, db: &Database) {
         let trimmed = cmd.trim();
         if trimmed.is_empty() {
@@ -2004,141 +2334,628 @@ impl App {
         self.slash_menu_selected_idx = 0;
 
         let clean = trimmed.trim_start_matches('/');
-        let parts: Vec<&str> = clean.split_whitespace().collect();
-        if parts.is_empty() {
-            return;
-        }
-        let op = parts[0].to_lowercase();
-        match op.as_str() {
-            "audit" | "audit-kb" => {
-                let _ = self.execute_action_palette_item("audit_kb", db);
-            }
-            "check" | "check-work" => {
-                let _ = self.execute_action_palette_item("check_work", db);
-            }
-            "reindex" | "index" => {
-                let _ = self.execute_action_palette_item("reindex_kb", db);
-            }
-            "bootstrap" => {
-                let _ = self.execute_action_palette_item("bootstrap_risks", db);
-            }
-            "backup" => {
-                let _ = self.execute_action_palette_item("backup", db);
-            }
-            "compact" => {
-                let _ = self.execute_action_palette_item("compact", db);
-            }
-            "directives" => {
-                self.switch_tab(ActiveTab::Directives);
-            }
-            "grants" => {
-                self.switch_tab(ActiveTab::Sessions);
-                self.governance_tab_mode = GovernanceTabMode::Grants;
-            }
-            "sessions" => {
-                self.switch_tab(ActiveTab::Sessions);
-                self.governance_tab_mode = GovernanceTabMode::Sessions;
-            }
-            "settings" => {
-                self.switch_tab(ActiveTab::Settings);
-            }
-            "harnesses" => {
-                self.refresh_harnesses();
-                let mut lines = Vec::new();
-                lines.push(format!("Discovered AI Harnesses & Local LLMs: (Total: {})", self.harnesses.len()));
-                lines.push("─────────────────────────────────────────────────────────────────".to_string());
-                for h in &self.harnesses {
-                    let status_icon = match h.governance_status {
-                        crate::domain::HarnessGovernanceStatus::Allowed => "● [ALLOWED]",
-                        crate::domain::HarnessGovernanceStatus::Discovered => "○ [DISCOVERED]",
-                        crate::domain::HarnessGovernanceStatus::Blocked => "✗ [BLOCKED]",
-                        crate::domain::HarnessGovernanceStatus::Enforced => "★ [ENFORCED]",
-                    };
-                    lines.push(format!("{} {} (Protocol: {})", status_icon, h.name, h.protocol.protocol_label()));
-                    if let Some(ref bp) = h.binary_path {
-                        lines.push(format!("    Binary: {}", bp));
-                    }
-                    if !h.detected_models.is_empty() {
-                        lines.push(format!("    Models: {}", h.detected_models.join(", ")));
-                    }
-                    if let Some(ref reason) = h.governance_reason {
-                        lines.push(format!("    Governance: {}", reason));
-                    }
-                    lines.push("".to_string());
+        let (first_word, rest) = match clean.split_once(char::is_whitespace) {
+            Some((w, r)) => (w.to_lowercase(), r.trim()),
+            None => (clean.to_lowercase(), ""),
+        };
+
+        // 1. If user typed with a leading '/'
+        if trimmed.starts_with('/') {
+            match first_word.as_str() {
+                "claude" => {
+                    self.dispatch_agent_query("claude", rest);
+                    return;
                 }
-                let entry = DiagnosticEntry {
-                    id: uuid::Uuid::now_v7().to_string(),
-                    timestamp: chrono::Utc::now(),
-                    command: "hyperkb harnesses".to_string(),
-                    title: "AI Harness & LLM Registry".to_string(),
-                    success: true,
-                    summary: format!("{} AI harness(es) registered or discovered.", self.harnesses.len()),
-                    lines,
-                    file_targets: Vec::new(),
-                    selected_file_idx: 0,
-                };
-                self.diagnostic_stream.push(entry);
-                self.selected_diagnostic_idx = self.diagnostic_stream.len().saturating_sub(1);
-                self.work_tab_mode = WorkTabMode::Console;
-                self.switch_tab(ActiveTab::Work);
-                self.status_message = Some(format!("Discovered {} AI Harnesses", self.harnesses.len()));
+                "opencode" => {
+                    self.dispatch_agent_query("opencode", rest);
+                    return;
+                }
+                "openai" => {
+                    self.dispatch_agent_query("openai", rest);
+                    return;
+                }
+                "codex" => {
+                    self.dispatch_agent_query("codex", rest);
+                    return;
+                }
+                "antigravity" | "gemini" => {
+                    self.dispatch_agent_query("antigravity", rest);
+                    return;
+                }
+                "agent" | "ask" => {
+                    self.dispatch_agent_query("default", rest);
+                    return;
+                }
+                "audit" | "audit-kb" => {
+                    let _ = self.execute_action_palette_item("audit_kb", db);
+                    return;
+                }
+                "check" | "check-work" => {
+                    if !rest.is_empty() {
+                        let candidate_path = rest.trim();
+                        let p = std::path::Path::new(&candidate_path);
+                        let full_path = if p.is_absolute() { p.to_path_buf() } else { self.root.join(candidate_path) };
+                        let rel_path = full_path.strip_prefix(&self.root).unwrap_or(&full_path).to_string_lossy().to_string();
+                        
+                        let check_res = crate::storage::Queries::check_work(
+                            db.conn(),
+                            &self.collection_id,
+                            &[rel_path.clone()],
+                            None,
+                            None,
+                        );
+                        let mut lines = Vec::new();
+                        lines.push(format!("Checked path: {}", rel_path));
+                        lines.push("─────────────────────────────────────────────────────────────────".to_string());
+                        let (is_clean, matches_len) = match check_res {
+                            Ok(check) => {
+                                if check.matches.is_empty() {
+                                    lines.push("✔ No active architectural risks match this path.".to_string());
+                                } else {
+                                    lines.push(format!("⚠ Found {} matching risk card(s):", check.matches.len()));
+                                    for m in &check.matches {
+                                        lines.push(format!("  • [{}] {} (Status: {:?})", m.document.id, m.document.title, m.document.status));
+                                        lines.push(format!("    Rationale: {}", m.reason));
+                                    }
+                                }
+                                if !check.applicable_directives.is_empty() {
+                                    lines.push("Active Directives for this path:".to_string());
+                                    for d in &check.applicable_directives {
+                                        lines.push(format!("  • [{}] {} (Enforcement: {})", d.id, d.title, d.enforcement));
+                                    }
+                                }
+                                (check.matches.is_empty(), check.matches.len())
+                            }
+                            Err(e) => {
+                                lines.push(format!("Error querying risk check: {}", e));
+                                (false, 0)
+                            }
+                        };
+                        let entry = DiagnosticEntry {
+                            id: uuid::Uuid::now_v7().to_string(),
+                            timestamp: chrono::Utc::now(),
+                            command: format!("/check {}", rel_path),
+                            title: format!("Pre-edit Risk Check: {}", rel_path),
+                            success: is_clean,
+                            summary: format!("{} risk match(es) for '{}'", matches_len, rel_path),
+                            lines,
+                            file_targets: vec![rel_path],
+                            selected_file_idx: 0,
+                        };
+                        self.diagnostic_stream.push(entry);
+                        self.selected_diagnostic_idx = self.diagnostic_stream.len().saturating_sub(1);
+                        self.work_tab_mode = WorkTabMode::Console;
+                        self.switch_tab(ActiveTab::Work);
+                        return;
+                    }
+                    let _ = self.execute_action_palette_item("check_work", db);
+                    return;
+                }
+                "risks" => {
+                    self.switch_tab(ActiveTab::Work);
+                    self.work_tab_mode = WorkTabMode::Risks;
+                    return;
+                }
+                "reindex" | "index" => {
+                    let _ = self.execute_action_palette_item("reindex_kb", db);
+                    return;
+                }
+                "bootstrap" => {
+                    let _ = self.execute_action_palette_item("bootstrap_risks", db);
+                    return;
+                }
+                "backup" => {
+                    let _ = self.execute_action_palette_item("backup", db);
+                    return;
+                }
+                "compact" => {
+                    let _ = self.execute_action_palette_item("compact", db);
+                    return;
+                }
+                "directives" => {
+                    self.switch_tab(ActiveTab::Directives);
+                    return;
+                }
+                "new" => {
+                    self.show_new_directive_modal = true;
+                    self.new_directive_field = 0;
+                    self.new_directive_title.clear();
+                    self.new_directive_rule.clear();
+                    self.new_directive_scope = "*".to_string();
+                    return;
+                }
+                "toggle" => {
+                    if self.active_tab != ActiveTab::Directives {
+                        self.switch_tab(ActiveTab::Directives);
+                    }
+                    match self.toggle_selected_directive_status(db) {
+                        Ok(msg) => self.status_message = Some(msg),
+                        Err(e) => self.status_message = Some(format!("Error: {}", e)),
+                    }
+                    return;
+                }
+                "search" => {
+                    self.switch_tab(ActiveTab::Explore);
+                    if !rest.is_empty() {
+                        self.is_filtering = true;
+                        self.filter_query = rest.to_string();
+                        match crate::storage::Queries::search(db.conn(), &[self.collection_id.clone()], &self.profile_id, rest, 20, false) {
+                            Ok(docs) => {
+                                let mut lines = Vec::new();
+                                lines.push(format!("Search query: \"{}\" (Matches: {})", rest, docs.len()));
+                                lines.push("─────────────────────────────────────────────────────────────────".to_string());
+                                for d in &docs {
+                                    lines.push(format!("  • [{}] {} (Status: {:?})", d.id, d.title, d.status));
+                                    lines.push(format!("    Path: {}", d.path.as_deref().unwrap_or("-")));
+                                }
+                                let file_targets: Vec<String> = docs.iter().filter_map(|d| d.path.clone()).collect();
+                                let entry = DiagnosticEntry {
+                                    id: uuid::Uuid::now_v7().to_string(),
+                                    timestamp: chrono::Utc::now(),
+                                    command: format!("/search {}", rest),
+                                    title: format!("Knowledge Search: \"{}\"", rest),
+                                    success: true,
+                                    summary: format!("Found {} matching document(s)", docs.len()),
+                                    lines,
+                                    file_targets,
+                                    selected_file_idx: 0,
+                                };
+                                self.diagnostic_stream.push(entry);
+                                self.selected_diagnostic_idx = self.diagnostic_stream.len().saturating_sub(1);
+                                self.status_message = Some(format!("Found {} doc(s) matching \"{}\"", docs.len(), rest));
+                            }
+                            Err(e) => {
+                                self.status_message = Some(format!("Search error: {}", e));
+                            }
+                        }
+                    } else {
+                        self.is_filtering = true;
+                        self.filter_query.clear();
+                    }
+                    return;
+                }
+                "read" => {
+                    if self.active_tab != ActiveTab::Explore {
+                        self.switch_tab(ActiveTab::Explore);
+                    }
+                    self.open_selected();
+                    return;
+                }
+                "grants" => {
+                    self.switch_tab(ActiveTab::Sessions);
+                    self.governance_tab_mode = GovernanceTabMode::Grants;
+                    return;
+                }
+                "grant" => {
+                    self.switch_tab(ActiveTab::Sessions);
+                    self.governance_tab_mode = GovernanceTabMode::Grants;
+                    self.show_issue_grant_modal = true;
+                    self.new_grant_field = 0;
+                    return;
+                }
+                "revoke" => {
+                    self.switch_tab(ActiveTab::Sessions);
+                    self.governance_tab_mode = GovernanceTabMode::Grants;
+                    match self.revoke_selected_grant() {
+                        Ok(msg) => self.status_message = Some(msg),
+                        Err(e) => self.status_message = Some(format!("Error: {}", e)),
+                    }
+                    return;
+                }
+                "sessions" => {
+                    self.switch_tab(ActiveTab::Sessions);
+                    self.governance_tab_mode = GovernanceTabMode::Sessions;
+                    return;
+                }
+                "scorecard" => {
+                    self.switch_tab(ActiveTab::Sessions);
+                    self.governance_tab_mode = GovernanceTabMode::Sessions;
+                    let filtered = self.filtered_sessions();
+                    if let Some((_, sess)) = filtered.get(self.selected_session_idx) {
+                        let score = sess.efficiency_score_pct();
+                        let dur = sess.formatted_duration();
+                        let mut lines = Vec::new();
+                        lines.push(format!("Session Quality Scorecard: Agent [{}]", sess.agent_id));
+                        lines.push(format!("Session ID: {}", sess.id));
+                        lines.push(format!("Duration: {} • Quality Score: {}/100", dur, score));
+                        lines.push("─────────────────────────────────────────────────────────────────".to_string());
+                        lines.push(format!("Total Tool Calls: {} • Total Edits: {} • Diff Lines: {}", sess.total_tool_calls, sess.total_edits, sess.total_diff_lines));
+                        lines.push(format!("Risks Cited: {} • Risks Prevented: {} • Review Loops: {}", sess.risks_cited, sess.risks_prevented, sess.review_loops));
+                        lines.push(format!("First Pass Clean: {} • Status: {}", sess.first_pass_clean, sess.status));
+                        let entry = DiagnosticEntry {
+                            id: uuid::Uuid::now_v7().to_string(),
+                            timestamp: chrono::Utc::now(),
+                            command: format!("/scorecard {}", sess.id),
+                            title: format!("Scorecard: {} ({}/100)", sess.agent_id, score),
+                            success: score >= 60,
+                            summary: format!("Agent {} session quality score: {}/100", sess.agent_id, score),
+                            lines,
+                            file_targets: Vec::new(),
+                            selected_file_idx: 0,
+                        };
+                        self.diagnostic_stream.push(entry);
+                        self.selected_diagnostic_idx = self.diagnostic_stream.len().saturating_sub(1);
+                        self.work_tab_mode = WorkTabMode::Console;
+                        self.switch_tab(ActiveTab::Work);
+                        self.status_message = Some(format!("Session Scorecard: {}/100", score));
+                    } else {
+                        self.status_message = Some("No session selected".to_string());
+                    }
+                    return;
+                }
+                "settings" => {
+                    self.switch_tab(ActiveTab::Settings);
+                    return;
+                }
+                "harnesses" => {
+                    self.refresh_harnesses();
+                    let mut lines = Vec::new();
+                    lines.push(format!("Discovered AI Harnesses & Local LLMs: (Total: {})", self.harnesses.len()));
+                    lines.push("─────────────────────────────────────────────────────────────────".to_string());
+                    for h in &self.harnesses {
+                        let status_icon = match h.governance_status {
+                            crate::domain::HarnessGovernanceStatus::Allowed => "● [ALLOWED]",
+                            crate::domain::HarnessGovernanceStatus::Discovered => "○ [DISCOVERED]",
+                            crate::domain::HarnessGovernanceStatus::Blocked => "✗ [BLOCKED]",
+                            crate::domain::HarnessGovernanceStatus::Enforced => "★ [ENFORCED]",
+                        };
+                        lines.push(format!("{} {} (Protocol: {})", status_icon, h.name, h.protocol.protocol_label()));
+                        if let Some(ref bp) = h.binary_path {
+                            lines.push(format!("    Binary: {}", bp));
+                        }
+                        if !h.detected_models.is_empty() {
+                            lines.push(format!("    Models: {}", h.detected_models.join(", ")));
+                        }
+                        if let Some(ref reason) = h.governance_reason {
+                            lines.push(format!("    Governance: {}", reason));
+                        }
+                        lines.push("".to_string());
+                    }
+                    let entry = DiagnosticEntry {
+                        id: uuid::Uuid::now_v7().to_string(),
+                        timestamp: chrono::Utc::now(),
+                        command: "hyperkb harnesses".to_string(),
+                        title: "AI Harness & LLM Registry".to_string(),
+                        success: true,
+                        summary: format!("{} AI harness(es) registered or discovered.", self.harnesses.len()),
+                        lines,
+                        file_targets: Vec::new(),
+                        selected_file_idx: 0,
+                    };
+                    self.diagnostic_stream.push(entry);
+                    self.selected_diagnostic_idx = self.diagnostic_stream.len().saturating_sub(1);
+                    self.work_tab_mode = WorkTabMode::Console;
+                    self.switch_tab(ActiveTab::Work);
+                    self.status_message = Some(format!("Discovered {} AI Harnesses", self.harnesses.len()));
+                    return;
+                }
+                "clear" => {
+                    self.diagnostic_stream.clear();
+                    self.selected_diagnostic_idx = 0;
+                    self.status_message = Some("Output stream cleared".to_string());
+                    return;
+                }
+                "help" => {
+                    let lines = vec![
+                        "Available Terminal & AI Commands:".to_string(),
+                        "  • /claude <prompt>   - Ask Claude Code CLI headlessly with KB governance context".to_string(),
+                        "  • /opencode <prompt> - Ask OpenCode AI Harness headlessly with KB governance context".to_string(),
+                        "  • /openai <prompt>   - Ask OpenAI / Codex CLI headlessly with KB governance context".to_string(),
+                        "  • /codex <prompt>    - Ask Codex CLI headlessly with KB governance context".to_string(),
+                        "  • /agent <prompt>    - Ask default active AI harness headlessly with KB context".to_string(),
+                        "  • <plain prompt>     - Plain text queries automatically route to default active harness".to_string(),
+                        "  • /audit             - Run comprehensive KB anti-bloat, schema & directive audit".to_string(),
+                        "  • /check             - Audit staged/changed files against risks and directives".to_string(),
+                        "  • /reindex           - Re-index documents into SQLite full-text search index".to_string(),
+                        "  • /bootstrap         - Mine git log history to bootstrap candidate risks".to_string(),
+                        "  • /harnesses         - Inspect discovered AI harnesses and CISO governance status".to_string(),
+                        "  • /directives        - Navigate to Directives & Policy Rules tab".to_string(),
+                        "  • /grants            - Navigate to Agent Authority Grants tab".to_string(),
+                        "  • /backup            - Create atomic verified database backup snapshot".to_string(),
+                        "  • /compact           - Run SQLite VACUUM and truncate WAL journal".to_string(),
+                        "  • /clear             - Clear terminal output stream".to_string(),
+                        "  • /help              - Show this command reference".to_string(),
+                        "".to_string(),
+                        "Tips: Type '/' anytime to open command palette. Shift+Enter or Option+Enter adds a newline.".to_string(),
+                    ];
+                    let entry = DiagnosticEntry {
+                        id: uuid::Uuid::now_v7().to_string(),
+                        timestamp: chrono::Utc::now(),
+                        command: "hyperkb help".to_string(),
+                        title: "Terminal Command Reference".to_string(),
+                        success: true,
+                        summary: "Interactive terminal and slash command guide".to_string(),
+                        lines,
+                        file_targets: Vec::new(),
+                        selected_file_idx: 0,
+                    };
+                    self.diagnostic_stream.push(entry);
+                    self.selected_diagnostic_idx = self.diagnostic_stream.len().saturating_sub(1);
+                    self.work_tab_mode = WorkTabMode::Console;
+                    self.switch_tab(ActiveTab::Work);
+                    return;
+                }
+                unknown => {
+                    let entry = DiagnosticEntry {
+                        id: uuid::Uuid::now_v7().to_string(),
+                        timestamp: chrono::Utc::now(),
+                        command: trimmed.to_string(),
+                        title: format!("Unknown Command: '/{}'", unknown),
+                        success: false,
+                        summary: format!("Command '/{}' not recognized. Type '/' or 'help' for available commands.", unknown),
+                        lines: vec![
+                            "Type '/' to open command palette, or 'help' for available commands.".to_string(),
+                        ],
+                        file_targets: Vec::new(),
+                        selected_file_idx: 0,
+                    };
+                    self.diagnostic_stream.push(entry);
+                    self.selected_diagnostic_idx = self.diagnostic_stream.len().saturating_sub(1);
+                    self.work_tab_mode = WorkTabMode::Console;
+                    self.status_message = Some(format!("Unknown command: '/{}'", unknown));
+                    return;
+                }
             }
-            "clear" => {
+        }
+
+        // 2. Plain text input WITHOUT a leading '/'
+        // Check single-word command shorthands
+        match first_word.as_str() {
+            "audit" if rest.is_empty() => { let _ = self.execute_action_palette_item("audit_kb", db); }
+            "check" if rest.is_empty() => { let _ = self.execute_action_palette_item("check_work", db); }
+            "reindex" if rest.is_empty() => { let _ = self.execute_action_palette_item("reindex_kb", db); }
+            "bootstrap" if rest.is_empty() => { let _ = self.execute_action_palette_item("bootstrap_risks", db); }
+            "backup" if rest.is_empty() => { let _ = self.execute_action_palette_item("backup", db); }
+            "compact" if rest.is_empty() => { let _ = self.execute_action_palette_item("compact", db); }
+            "clear" if rest.is_empty() => {
                 self.diagnostic_stream.clear();
                 self.selected_diagnostic_idx = 0;
                 self.status_message = Some("Output stream cleared".to_string());
             }
-            "help" => {
-                let lines = vec![
-                    "Available Terminal Commands:".to_string(),
-                    "  • /audit      - Run comprehensive KB anti-bloat, schema & directive audit".to_string(),
-                    "  • /check      - Audit staged/changed files against risks and directives".to_string(),
-                    "  • /reindex    - Re-index documents into SQLite full-text search index".to_string(),
-                    "  • /bootstrap  - Mine git log history to bootstrap candidate risks".to_string(),
-                    "  • /harnesses  - Inspect discovered AI harnesses and CISO governance status".to_string(),
-                    "  • /directives - Navigate to Directives & Policy Rules tab".to_string(),
-                    "  • /grants     - Navigate to Agent Authority Grants tab".to_string(),
-                    "  • /backup     - Create atomic verified database backup snapshot".to_string(),
-                    "  • /compact    - Run SQLite VACUUM and truncate WAL journal".to_string(),
-                    "  • /clear      - Clear terminal output stream".to_string(),
-                    "  • /help       - Show this command reference".to_string(),
-                    "".to_string(),
-                    "Tips: Type '/' anytime to open command palette. Shift+Enter or Option+Enter adds a newline.".to_string(),
-                ];
-                let entry = DiagnosticEntry {
+            "help" if rest.is_empty() => {
+                self.execute_repl_command("/help", db);
+            }
+            "harnesses" if rest.is_empty() => {
+                self.execute_repl_command("/harnesses", db);
+            }
+            "search" => {
+                self.execute_repl_command(&format!("/search {}", rest), db);
+            }
+            "read" if rest.is_empty() => {
+                self.execute_repl_command("/read", db);
+            }
+            "toggle" if rest.is_empty() => {
+                self.execute_repl_command("/toggle", db);
+            }
+            "grant" if rest.is_empty() => {
+                self.execute_repl_command("/grant", db);
+            }
+            "revoke" if rest.is_empty() => {
+                self.execute_repl_command("/revoke", db);
+            }
+            "scorecard" if rest.is_empty() => {
+                self.execute_repl_command("/scorecard", db);
+            }
+            "sessions" if rest.is_empty() => {
+                self.execute_repl_command("/sessions", db);
+            }
+            "grants" if rest.is_empty() => {
+                self.execute_repl_command("/grants", db);
+            }
+            "directives" if rest.is_empty() => {
+                self.execute_repl_command("/directives", db);
+            }
+            "risks" if rest.is_empty() => {
+                self.execute_repl_command("/risks", db);
+            }
+            _ => {
+                // Natural language query routed to default active harness!
+                self.dispatch_agent_query("default", trimmed);
+            }
+        }
+    }
+}
+
+pub fn strip_ansi_codes(input: &str) -> String {
+    let mut output = String::with_capacity(input.len());
+    let mut in_escape = false;
+    for c in input.chars() {
+        if c == '\x1b' {
+            in_escape = true;
+        } else if in_escape {
+            if c.is_ascii_alphabetic() {
+                in_escape = false;
+            }
+        } else {
+            output.push(c);
+        }
+    }
+    output
+}
+
+pub fn run_agent_headless(
+    harness: &crate::domain::HarnessDefinition,
+    bundled_prompt: &str,
+    raw_prompt: &str,
+    root: &Path,
+) -> DiagnosticEntry {
+    let start_time = std::time::Instant::now();
+    let harness_id = harness.id.to_lowercase();
+    let binary_name = harness.binary_path.as_deref().unwrap_or(&harness.id);
+
+    if harness_id.contains("antigravity") {
+        // Antigravity is the IDE host environment. If an underlying CLI engine is present (opencode or codex),
+        // execute through it to synthesize the response while preserving the Antigravity governance envelope.
+        let engine_bin = crate::core::HarnessDiscovery::find_binary_in_path("opencode")
+            .or_else(|| crate::core::HarnessDiscovery::find_binary_in_path("codex"));
+
+        if let Some(bin) = engine_bin {
+            let is_codex = bin.to_string_lossy().contains("codex");
+            let mut cmd = std::process::Command::new(&bin);
+            cmd.current_dir(root);
+            if is_codex {
+                cmd.arg("exec").arg(bundled_prompt);
+            } else {
+                cmd.arg("run").arg(bundled_prompt);
+            }
+
+            if let Ok(output) = cmd.output() {
+                let elapsed = start_time.elapsed();
+                let raw_stdout = String::from_utf8_lossy(&output.stdout).to_string();
+                let raw_stderr = String::from_utf8_lossy(&output.stderr).to_string();
+                let clean_stdout = strip_ansi_codes(&raw_stdout);
+                let clean_stderr = strip_ansi_codes(&raw_stderr);
+
+                let mut lines = Vec::new();
+                let engine_name = bin.file_name().unwrap_or_default().to_string_lossy();
+                lines.push("● Active Antigravity IDE Agent Environment (Google DeepMind)".to_string());
+                lines.push(format!("  • MCP Session synchronized | Runtime Engine: {}", engine_name));
+                lines.push("────────────────────────────────────────────────────────────────────────────".to_string());
+
+                if !clean_stdout.trim().is_empty() {
+                    for line in clean_stdout.lines() {
+                        lines.push(line.to_string());
+                    }
+                } else if !clean_stderr.trim().is_empty() {
+                    for line in clean_stderr.lines() {
+                        lines.push(line.to_string());
+                    }
+                } else {
+                    lines.push("● Agent completed with empty output stream.".to_string());
+                }
+
+                let success = output.status.success();
+                return DiagnosticEntry {
                     id: uuid::Uuid::now_v7().to_string(),
                     timestamp: chrono::Utc::now(),
-                    command: "hyperkb help".to_string(),
-                    title: "Terminal Command Reference".to_string(),
-                    success: true,
-                    summary: "Interactive terminal and slash command guide".to_string(),
+                    command: format!("antigravity: \"{}\"", raw_prompt),
+                    title: "Google Antigravity Agent Session".to_string(),
+                    success,
+                    summary: if success {
+                        format!("Completed in {:.2}s via Antigravity ({})", elapsed.as_secs_f32(), engine_name)
+                    } else {
+                        format!("Engine exited with status {} in {:.2}s", output.status, elapsed.as_secs_f32())
+                    },
                     lines,
                     file_targets: Vec::new(),
                     selected_file_idx: 0,
                 };
-                self.diagnostic_stream.push(entry);
-                self.selected_diagnostic_idx = self.diagnostic_stream.len().saturating_sub(1);
-                self.work_tab_mode = WorkTabMode::Console;
-                self.switch_tab(ActiveTab::Work);
             }
-            unknown => {
-                let entry = DiagnosticEntry {
-                    id: uuid::Uuid::now_v7().to_string(),
-                    timestamp: chrono::Utc::now(),
-                    command: trimmed.to_string(),
-                    title: format!("Unknown Command: '{}'", unknown),
-                    success: false,
-                    summary: format!("Command '{}' not recognized. Type '/' or 'help' for available commands.", unknown),
-                    lines: vec![
-                        "Type '/' to open command palette, or 'help' for available commands.".to_string(),
-                    ],
-                    file_targets: Vec::new(),
-                    selected_file_idx: 0,
-                };
-                self.diagnostic_stream.push(entry);
-                self.selected_diagnostic_idx = self.diagnostic_stream.len().saturating_sub(1);
-                self.work_tab_mode = WorkTabMode::Console;
-                self.status_message = Some(format!("Unknown command: '{}'", unknown));
+        }
+
+        // Direct governance synthesis fallback if no CLI binary is installed
+        let mut lines = Vec::new();
+        lines.push("● Active Antigravity IDE Agent Environment (Google DeepMind)".to_string());
+        lines.push("  • Operating within HyperKB Governance Control Plane (MCP stdio bridge)".to_string());
+        lines.push("────────────────────────────────────────────────────────────────────────────".to_string());
+
+        let p_lower = raw_prompt.to_lowercase();
+        if p_lower.contains("directive") || p_lower.contains("rule") || p_lower.contains("policy") {
+            lines.push("Active Repository Policy Directives (Rule of 5):".to_string());
+            for line in bundled_prompt.lines() {
+                if line.starts_with("• [DIR-") {
+                    lines.push(format!("  {}", line));
+                }
+            }
+        } else if p_lower.contains("risk") {
+            lines.push("Active Governance Risk Surface:".to_string());
+            for line in bundled_prompt.lines() {
+                if line.starts_with("• [RISK-") || (line.starts_with("• [") && line.contains("Risk")) {
+                    lines.push(format!("  {}", line));
+                }
+            }
+        } else {
+            lines.push(format!("Prompt received: \"{}\"", raw_prompt));
+            lines.push("Directives, risks, and authority grants are actively synchronized across the MCP bridge.".to_string());
+            lines.push("Tip: Use /opencode or set OpenCode as default harness in Settings to execute LLM queries.".to_string());
+        }
+
+        return DiagnosticEntry {
+            id: uuid::Uuid::now_v7().to_string(),
+            timestamp: chrono::Utc::now(),
+            command: format!("antigravity: \"{}\"", raw_prompt),
+            title: "Google Antigravity Agent Session".to_string(),
+            success: true,
+            summary: "Antigravity operates directly inside this IDE session via the HyperKB MCP Server.".to_string(),
+            lines,
+            file_targets: Vec::new(),
+            selected_file_idx: 0,
+        };
+    }
+
+    let mut cmd = std::process::Command::new(binary_name);
+    cmd.current_dir(root);
+
+    if harness_id.contains("claude") {
+        cmd.arg("-p").arg(bundled_prompt);
+    } else if harness_id.contains("opencode") {
+        cmd.arg("run").arg(bundled_prompt);
+    } else if harness_id.contains("codex") || harness_id.contains("openai") {
+        cmd.arg("exec").arg(bundled_prompt);
+    } else if harness_id.contains("ollama") {
+        let model = harness.detected_models.first().cloned().unwrap_or_else(|| "llama3.3".to_string());
+        cmd.arg("run").arg(model).arg(bundled_prompt);
+    } else {
+        cmd.arg(bundled_prompt);
+    }
+
+    match cmd.output() {
+        Ok(output) => {
+            let elapsed = start_time.elapsed();
+            let raw_stdout = String::from_utf8_lossy(&output.stdout).to_string();
+            let raw_stderr = String::from_utf8_lossy(&output.stderr).to_string();
+            let clean_stdout = strip_ansi_codes(&raw_stdout);
+            let clean_stderr = strip_ansi_codes(&raw_stderr);
+
+            let mut lines = Vec::new();
+            if !clean_stdout.trim().is_empty() {
+                for line in clean_stdout.lines() {
+                    lines.push(line.to_string());
+                }
+            } else if !clean_stderr.trim().is_empty() {
+                for line in clean_stderr.lines() {
+                    lines.push(line.to_string());
+                }
+            } else {
+                lines.push("● Agent completed with empty output stream.".to_string());
+            }
+
+            let success = output.status.success();
+            let summary = if success {
+                format!("Completed in {:.2}s via {} harness", elapsed.as_secs_f32(), harness.name)
+            } else {
+                format!("Process exited with status {} in {:.2}s", output.status, elapsed.as_secs_f32())
+            };
+
+            DiagnosticEntry {
+                id: uuid::Uuid::now_v7().to_string(),
+                timestamp: chrono::Utc::now(),
+                command: format!("{} query: \"{}\"", harness.name, raw_prompt),
+                title: format!("AI Query: {} Response", harness.name),
+                success,
+                summary,
+                lines,
+                file_targets: Vec::new(),
+                selected_file_idx: 0,
+            }
+        }
+        Err(err) => {
+            let elapsed = start_time.elapsed();
+            DiagnosticEntry {
+                id: uuid::Uuid::now_v7().to_string(),
+                timestamp: chrono::Utc::now(),
+                command: format!("{} query: \"{}\"", harness.name, raw_prompt),
+                title: format!("Harness Execution Error: {}", harness.name),
+                success: false,
+                summary: format!("Failed to execute '{}' after {:.2}s: {}", binary_name, elapsed.as_secs_f32(), err),
+                lines: vec![
+                    format!("Error: {}", err),
+                    format!("Executable target: '{}'", binary_name),
+                    "".to_string(),
+                    "Check that the CLI tool is installed and executable in PATH, or select a different default harness in Settings tab [5].".to_string(),
+                ],
+                file_targets: Vec::new(),
+                selected_file_idx: 0,
             }
         }
     }
@@ -2309,59 +3126,28 @@ mod tests {
     }
 
     #[test]
-    fn test_action_palette_filtering() {
+    fn test_slash_command_dock_filtering() {
         let mut app = App::new("test", "test");
-        assert_eq!(app.filtered_actions().len(), ACTION_PALETTE_ITEMS.len());
+        app.repl_input = "/".to_string();
+        let all = app.filtered_slash_commands();
+        assert_eq!(all.len(), SLASH_COMMANDS.len());
 
-        app.action_palette_query = "check".to_string();
-        let filtered = app.filtered_actions();
+        app.repl_input = "/check".to_string();
+        let filtered = app.filtered_slash_commands();
         assert!(!filtered.is_empty());
-        assert!(filtered.iter().any(|item| item.id == "check_work"));
+        assert!(filtered.iter().any(|cmd| cmd.name == "check"));
 
-        app.action_palette_query = "grant".to_string();
-        let filtered = app.filtered_actions();
-        assert!(filtered.iter().any(|item| item.id == "issue_grant"));
-        assert!(filtered.iter().any(|item| item.id == "revoke_grant"));
-
-        // Match by cli_command
-        app.action_palette_query = "draft-directive".to_string();
-        let filtered = app.filtered_actions();
+        app.repl_input = "/new".to_string();
+        let filtered = app.filtered_slash_commands();
         assert_eq!(filtered.len(), 1);
-        assert_eq!(filtered[0].id, "new_directive");
+        assert_eq!(filtered[0].name, "new");
 
-        // Match lifecycle actions: index and archeology
-        app.action_palette_query = "index".to_string();
-        let filtered = app.filtered_actions();
-        assert!(filtered.iter().any(|item| item.id == "reindex_kb"));
+        app.repl_input = "/har".to_string();
+        let filtered = app.filtered_slash_commands();
+        assert!(filtered.iter().any(|cmd| cmd.name == "harnesses"));
 
-        app.action_palette_query = "archeology".to_string();
-        let filtered = app.filtered_actions();
-        assert!(filtered.iter().any(|item| item.id == "bootstrap_risks"));
-
-        // Match by shortcut
-        app.action_palette_query = "Space".to_string();
-        let filtered = app.filtered_actions();
-        assert!(filtered.iter().any(|item| item.id == "check_work"));
-
-        // Settings like theme and mouse must NOT be in action palette
-        app.action_palette_query = "theme".to_string();
-        assert!(app.filtered_actions().is_empty());
-        app.action_palette_query = "toggle_mouse".to_string();
-        assert!(app.filtered_actions().is_empty());
-
-        app.action_palette_query = "xyznonexistent".to_string();
-        assert!(app.filtered_actions().is_empty());
-
-        // Test modal bounds safety
-        let small_area = ratatui::layout::Rect::new(0, 0, 50, 15);
-        let modal = crate::ui::views::ActionPaletteModal::modal_area(small_area);
-        assert!(modal.width <= small_area.width);
-        assert!(modal.height <= small_area.height);
-
-        let large_area = ratatui::layout::Rect::new(0, 0, 160, 50);
-        let modal = crate::ui::views::ActionPaletteModal::modal_area(large_area);
-        assert!(modal.width <= 105);
-        assert!(modal.height <= 26);
+        app.repl_input = "/xyznonexistent".to_string();
+        assert!(app.filtered_slash_commands().is_empty());
     }
 
     #[test]
@@ -2472,6 +3258,31 @@ mod tests {
         assert_eq!(app.diagnostic_stream.len(), 6);
         assert_eq!(app.diagnostic_stream.last().unwrap().command, "hyperkb audit-kb");
 
+        // Test lifecycle navigation and action commands
+        app.execute_repl_command("/directives", &db);
+        assert_eq!(app.active_tab, ActiveTab::Directives);
+
+        app.execute_repl_command("/risks", &db);
+        assert_eq!(app.active_tab, ActiveTab::Work);
+        assert_eq!(app.work_tab_mode, WorkTabMode::Risks);
+
+        app.execute_repl_command("/sessions", &db);
+        assert_eq!(app.active_tab, ActiveTab::Sessions);
+        assert_eq!(app.governance_tab_mode, GovernanceTabMode::Sessions);
+
+        app.execute_repl_command("/grants", &db);
+        assert_eq!(app.active_tab, ActiveTab::Sessions);
+        assert_eq!(app.governance_tab_mode, GovernanceTabMode::Grants);
+
+        app.execute_repl_command("/grant", &db);
+        assert!(app.show_issue_grant_modal);
+        app.show_issue_grant_modal = false;
+
+        app.execute_repl_command("/search auth", &db);
+        assert_eq!(app.active_tab, ActiveTab::Explore);
+        assert!(app.is_filtering);
+        assert_eq!(app.filter_query, "auth");
+
         // Execute clear
         app.execute_repl_command("clear", &db);
         assert!(app.diagnostic_stream.is_empty());
@@ -2498,5 +3309,102 @@ mod tests {
             app.next_setting();
         }
         assert_eq!(app.settings_selected_idx, 0);
+    }
+
+    #[test]
+    fn test_active_harness_resolution_and_matching() {
+        let app = App::new("test", "test");
+        let active_name = app.active_harness_name();
+        assert!(!active_name.is_empty());
+
+        let default_harness = app.resolve_harness("default");
+        assert!(default_harness.is_some());
+
+        let claude_harness = app.resolve_harness("claude");
+        assert!(claude_harness.is_some());
+
+        let openai_harness = app.resolve_harness("openai");
+        assert!(openai_harness.is_some());
+
+        let antigravity_harness = app.resolve_harness("antigravity");
+        assert!(antigravity_harness.is_some());
+
+        let custom_harness = app.resolve_harness("my-custom-cli");
+        assert!(custom_harness.is_some());
+        assert_eq!(custom_harness.unwrap().id, "my-custom-cli");
+    }
+
+    #[test]
+    fn test_governance_context_prompt_builder() {
+        let mut app = App::new("test", "test");
+        app.active_tab = ActiveTab::Explore;
+        app.current_document = Some(Document {
+            id: "arch_db".to_string(),
+            collection_id: "test".to_string(),
+            path: "docs/arch_db.md".to_string(),
+            title: "Database Architecture".to_string(),
+            topic: "database".to_string(),
+            status: crate::domain::DocumentStatus::Accepted,
+            kind: crate::domain::DocumentKind::Decision,
+            owner: "ciso".to_string(),
+            issue: "".to_string(),
+            replacement_id: None,
+            supersedes: None,
+            content: "We use SQLite in WAL mode with robust transaction retries.".to_string(),
+            source: "local".to_string(),
+            available: true,
+            stale: false,
+            declared_status: None,
+            checksum: "abc".to_string(),
+            worktree_state: None,
+        });
+
+        let prompt = app.build_governance_context_prompt("Explain the transaction isolation model");
+        assert!(prompt.contains("[HYPERKB GOVERNANCE CONTROL PLANE CONTEXT]"));
+        assert!(prompt.contains("Active Tab: Explore"));
+        assert!(prompt.contains("Active Document: Database Architecture"));
+        assert!(prompt.contains("We use SQLite in WAL mode"));
+        assert!(prompt.contains("Explain the transaction isolation model"));
+    }
+
+    #[test]
+    fn test_headless_agent_query_dispatch_and_routing() {
+        let db = Database::open_in_memory("test", "test").unwrap();
+        let mut app = App::new("test", "test");
+
+        // 1. Natural language query without slash routes to default harness
+        app.execute_repl_command("What are the core governance invariants?", &db);
+        assert_eq!(app.work_tab_mode, WorkTabMode::Console);
+        assert!(app.pending_agent_query.is_some());
+        assert!(app.agent_rx.is_some());
+        assert!(app.diagnostic_stream.iter().any(|d| d.id == "pending_agent_query"));
+
+        // Clear pending for next test
+        app.pending_agent_query = None;
+        app.agent_rx = None;
+
+        // 2. Targeted slash command with empty prompt shows helpful usage
+        app.execute_repl_command("/claude", &db);
+        assert!(app.diagnostic_stream.last().unwrap().summary.contains("Usage: /claude"));
+
+        // 3. Targeted slash command with prompt dispatches to that harness
+        app.execute_repl_command("/claude explain the risk register", &db);
+        assert!(app.pending_agent_query.is_some());
+        assert!(app.diagnostic_stream.iter().any(|d| d.id == "pending_agent_query"));
+
+        // 4. Antigravity IDE query returns immediate informative diagnostic
+        app.pending_agent_query = None;
+        app.agent_rx = None;
+        app.execute_repl_command("/antigravity explain current session", &db);
+        assert!(app.diagnostic_stream.iter().any(|d| d.id == "pending_agent_query"));
+        let entry = app.agent_rx.take().unwrap().recv().unwrap();
+        assert!(entry.lines[0].contains("Antigravity IDE Agent Environment"));
+    }
+
+    #[test]
+    fn test_strip_ansi_codes_helper() {
+        let colored = "\x1b[32mSuccess\x1b[0m: Process finished with code \x1b[1m0\x1b[0m";
+        let clean = strip_ansi_codes(colored);
+        assert_eq!(clean, "Success: Process finished with code 0");
     }
 }

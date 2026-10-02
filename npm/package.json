@@ -1,0 +1,26 @@
+{
+  "name": "@hypermodo/hyperkb",
+  "version": "0.1.0",
+  "description": "Fast, resource-efficient local developer knowledge & proactive risk engine (Native MCP and TUI)",
+  "bin": {
+    "hyperkb": "./bin/hyperkb.js"
+  },
+  "scripts": {
+    "postinstall": "node scripts/install.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/hypermodo/hyperkb.git"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "knowledge-base",
+    "ai-agents",
+    "claude",
+    "tui",
+    "governance"
+  ],
+  "author": "HyperModo",
+  "license": "Apache-2.0"
+}

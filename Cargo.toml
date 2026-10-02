@@ -1,9 +1,17 @@
 [package]
-name = "hyperkb-rs"
+name = "hyperkb"
 version = "0.1.0"
 edition = "2024"
 authors = ["HyperModo"]
 description = "Fast, resource-efficient local developer knowledge and proactive risk prevention engine"
+
+[lib]
+name = "hyperkb"
+path = "src/lib.rs"
+
+[[bin]]
+name = "hyperkb"
+path = "src/main.rs"
 
 [dependencies]
 # 1. Database & FTS5 (Statically compiled SQLite + FTS5, zero CGO/external lib requirements)

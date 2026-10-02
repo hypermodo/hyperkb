@@ -1,93 +1,95 @@
-# HyperKB (`hyperkb-rs`)
+# HyperKB
 
-> **Autonomous Knowledge Base, Governance & Architecture Telemetry Cockpit**  
-> *Engineered for Modern IDE Developers & AI-Native "Vibe Coders"*
+> **Local Architecture Invariants, Knowledge Base & AI Agent Control Plane**  
+> *Zero-overhead TUI and CLI paired with your favorite IDE and AI coding agents*
 
-HyperKB is a standalone, terminal-agnostic, zero-latency governance cockpit designed to bridge human developers and co-collaborating AI coding agents. It provides real-time invariant enforcement, standing policy directives, bounded agent authority delegation, risk verification gates, and empirical coding effectiveness telemetry.
+HyperKB is a standalone, terminal-agnostic, zero-latency control plane designed to bridge human developers and collaborating AI coding agents. It provides real-time invariant enforcement, standing policy directives, bounded agent authority delegation, risk verification gates, and transparent session quality telemetry.
 
 ---
 
 ## 🏛 Product Responsibility Boundaries
 
-HyperKB is explicitly architected with clear boundaries across the development and governance lifecycle:
+HyperKB is explicitly architected with clear boundaries across the development lifecycle:
 
 | Plane | Tool | Primary Purpose & Responsibilities |
 | :--- | :--- | :--- |
-| **Local Cockpit** | **HyperKB** | **Governance & Guardrails**: Standing directives, zero-trust agent authority grants, pre-commit risk gates (`check-work`), empirical session scoring telemetry, fast metadata lookup. Zero context switching, <5ms query response. |
+| **Local Control Plane** | **HyperKB** | **Invariants & Guardrails**: Standing directives, scoped agent authority grants, pre-commit risk gates (`check-work`), session quality telemetry, fast metadata lookup. Zero context switching, <5ms query response, 0.0% idle CPU. |
 | **Authoring Plane** | **External IDE** (`[o]`) | **Prose & Implementation**: Long-form markdown ADR drafting, architecture prose authoring, source code implementation. Pressing `[o]` inside HyperKB opens the active document in `$EDITOR` (VS Code, Cursor, Zed, Neovim). |
-| **Macro Plane** | **HyperControl** | **Enterprise Governance**: Multi-repo compliance, organizational security audit policies, SOC2/ISO guardrails, and executive CISO oversight. |
+| **Macro Plane** | **HyperControl** | **Enterprise Governance**: Multi-repo compliance, organizational security audit policies, and executive oversight. |
 
 ---
 
-## ⚡ Key Features & Workflows
+## ⚡ Core Semantic Tabs
 
-### 1. In-TUI Directive Lifecycle Management (`[3] Directives`)
-Directives enforce standing invariant rules and coding standards that autonomous agents must adhere to during task execution.
-- **Fast Inline Creation (`[n]`)**: Draft standing directives directly inside the TUI with Title, Category, Scope pattern, Enforcement level (`mandatory` vs. `advisory`), and Invariant Statement.
-- **Instant Status Toggling (`[r]`)**: Toggle directives between `● ACTIVE` and `✕ RETIRED` in real-time. Retired directives are immediately excluded from agent briefings and pre-commit checks.
-- **Taxonomy Filtering (`[c]`)**: Filter directives across core architectural categories (`architecture`, `behavior`, `deployment`, `security`).
-- **One-Key Markdown Yank (`[y]`)**: Copy complete directive markdown prompts (including YAML frontmatter) directly to your clipboard for instant agent prompt injection.
+HyperKB organizes your repo's operational state into 5 grounded, single-noun tabs:
 
-### 2. Autonomous Agent & Sub-Agent Authority Grants (`[4] Governance & Sessions`)
-HyperKB provides a harness- and LLM-agnostic delegation system. Delegate authority with mathematical and capability bounds stored as atomic JSON in `.hyperkb/grants/<id>.json`.
-- **Mode Toggle (`[g]`)**: Switch instantly between Agent Sessions Telemetry and Authority Grants Management.
-- **Issue Grant Wizard (`[n]`)**: Issue bounded authority to agent delegates (e.g. `frontend-subagent`, `code-reviewer`, `security-auditor`) with presets:
-  - *Frontend & UI Specialist* (`src/ui/**`, ProposeDecision, AutoRepair, max diff 250)
-  - *Documentation & Governance* (`docs/**`, ProposeDecision, AcceptDecision, max diff 400)
-  - *Full Workspace Autonomy* (`*`, all capabilities, max diff 500)
-  - *Conservative Reviewer* (`src/**`, ProposeDecision only, diff 200)
-- **Time-to-Live (TTL)**: Configurable expiration (1h, 4h, 8h, 24h, or permanent).
-- **Instant Revocation (`[r]`)**: Immediately revoke any grant from disk.
-- **UUID & Token Yank (`[y]`)**: Auto-copies grant token UUID or JSON specification to system clipboard.
-
-### 3. KB Lifecycle & Operations Palette (`[Space]` or `[Ctrl+P]`)
-An instant launcher modal focused strictly on the lifecycle of the knowledge base, policies, and database operations:
-- **`check-work`**: Audit git changes against active risks and standing directives.
-- **`new-directive`**: Launch inline directive creation wizard.
-- **`toggle-directive-status`**: Retire obsolete directive or reactivate rule into pre-commit enforcement gate.
-- **`issue-grant`**: Launch agent authority delegation wizard.
-- **`revoke-grant`**: Immediately revoke and invalidate an agent capability grant token.
-- **`audit-kb`**: Audit repository knowledge base for bloat, file hierarchy depth, and schema validity.
-- **`reindex-kb`**: Scan docs directory and incrementally update full-text SQLite FTS5 search index.
-- **`bootstrap-risks`**: Run Git archeology to discover incident hotspots & draft proactive risk cards.
-- **`open-editor`**: Launch external IDE (`$EDITOR` / `code`) on the currently selected document.
-- **`backup`**: Create atomic snapshot backup in `.hyperkb/backups/`.
-- **`compact`**: Run SQLite database `VACUUM` and truncate WAL journals.
-
-### 4. External Editor Jump (`[o]`)
-HyperKB keeps the cockpit lightweight and focused on governance. Press `[o]` on any decision, directive, risk, or session to spawn your preferred editor (`$VISUAL`, `$EDITOR`, or `code`) without tearing down the TUI.
-
-### 5. Universal Terminal Text Selection & OSC 52 Clipboard
-Designed to work across all terminal emulators (macOS Terminal, iTerm2, Alacritty, Kitty, Windows Terminal, tmux, SSH):
-- **Native Drag Selection (Default)**: Terminal mouse capture is OFF by default. Simply drag your mouse and copy text (`Cmd+C` / `Ctrl+Shift+C`) without holding modifier keys.
-- **In-TUI Visual Drag & Auto-Copy**: Press `[m]` to turn Mouse Mode ON. Dragging produces visual highlight boxes; releasing auto-copies snippet via universal OSC 52.
-- **Instant 1-Key Yank (`[y]`)**: Press `[y]` on any view to copy markdown content, grant tokens, scorecards, or documentation.
+1. **`[1] Work` (The Present)**: Inspect working tree diffs, stage/unstage status, pre-commit risk verification gate, and live diagnostic output stream.
+2. **`[2] Knowledge` (The Decisions & Specs)**: Architecture Decision Records (ADRs), specs, and project documentation in hierarchical Tree View (`[t]`) or flat List View.
+3. **`[3] Directives` (The Invariants)**: Standing repository policies, architectural invariants, and pre-commit guardrails. Toggle active status with `[r]` or draft a new rule with `[n]`.
+4. **`[4] Agents` (The Actors)**: Autonomous agent run telemetry, harness filters (`[h]`: `[ALL]`, `[CLAUDE]`, `[OPENCODE]`, `[CODEX]`), session quality scorecards (`[e]`), and authority grants (`[g]`).
+5. **`[5] Settings` (The Environment)**: Discovered AI harnesses, FTS5 index maintenance, database snapshot backups, and theme selection.
 
 ---
 
-## ⌨ Keyboard Shortcuts Reference
+## ⌨ Universal Command Dock & AI Integration
+
+HyperKB eliminates floating modal palettes in favor of a permanently anchored **Universal Command Dock** across all tabs:
+
+- **Quick Entry (`[/]` or `[Space]` or `Ctrl+P`)**: Focuses the dock with interactive slash command autocomplete.
+- **Context-Aware AI Dispatch**: The dock automatically injects the active tab's selected risk, document, directive, or agent run into your prompt.
+- **Slash Commands**:
+  - `/check`: Audit staged and changed files against known risks and active directives.
+  - `/audit`: Run KB anti-bloat, taxonomy consistency, and directive decay audit.
+  - `/new`: Draft a new policy directive or repo invariant.
+  - `/reindex`: Re-index markdown documents and frontmatter into SQLite full-text search.
+  - `/bootstrap`: Mine git log history to discover regression hotspots and draft risk cards.
+  - `/backup` / `/compact`: Create point-in-time database snapshot / VACUUM SQLite WAL journal.
+  - `/claude`, `/opencode`, `/openai`, `/codex`, `/agent`: Dispatch prompt to specific harness with active repo context.
+  - `/directives`, `/risks`, `/grants`, `/sessions`: Direct navigation shorthands.
+  - `/clear`, `/help`: Stream maintenance and in-app quick reference.
+- **Multi-line Prompts**: Press `Shift+Enter` (or end any line with `\`) to insert newlines without submitting.
+
+---
+
+## 📊 Session Quality Score Heuristic
+
+HyperKB replaces subjective or opaque ratings with a transparent 0–100 heuristic scoring coding agent runs:
+
+$$\text{Score} = \text{clamp}(100 - P_{\text{loops}} - P_{\text{friction}} - P_{\text{thrash}} + B_{\text{invariant}}, 5, 100)$$
+
+- **Baseline Score (100)**: Clean, first-pass execution without defect.
+- **Review Loops ($P_{\text{loops}}$, -15% each)**: Penalizes rework cycles where review rejected proposed changes.
+- **Friction ($P_{\text{friction}}$, -15%)**: Deducted if execution failed unit tests, build checks, or syntax validation.
+- **Tool Thrash ($P_{\text{thrash}}$)**: Deductions when file inspection-to-edit ratio exceeds 8:1 without making progress.
+- **Invariant Compliance ($B_{\text{invariant}}$, +10%)**: Rewarded when active repo directives prevent a known regression.
+
+---
+
+## ⌨ Keyboard Navigation Reference
 
 | Key | Context | Action |
 | :--- | :--- | :--- |
-| `[Space]` or `Ctrl+P` | Global | Open KB Lifecycle & Operations Palette |
-| `[o]` | Global | Open active document in external editor / IDE |
-| `[1] - [5]` | Global | Switch tabs (Work, Explore, Directives, Governance & Sessions, Settings) |
+| `[/]` or `[Space]` or `Ctrl+P` | Global | Focus Universal Command Dock & slash menu |
+| `[1] - [5]` | Global | Switch tabs (`Work`, `Knowledge`, `Directives`, `Agents`, `Settings`) |
 | `[Tab]` | Global | Toggle focus between List selection and Detail preview |
-| `[j]` / `[k]` or `[↑]` / `[↓]` | Global | Navigate records, tree items, or action palette |
+| `[j]` / `[k]` or `[↑]` / `[↓]` | Global | Navigate records, tree items, or settings |
 | `[PgDn]` / `[PgUp]` | Global | Scroll detailed content preview, reader, or help |
-| `[y]` | Global | Yank / Copy active content, markdown prompt, or token |
-| `[m]` | Global | Toggle Mouse Mode (ON: Click Nav / OFF: Native Selection) |
-| `[T]` | Global | Cycle visual theme (Cyberpunk, Modern, Nord, Tokyo Night, Light) |
-| `[?]` or `[F1]` | Global | Open System Documentation modal |
-| `[Esc]` | Global | Dismiss modal, exit search, or return to list view |
-| `[n]` | Tab 3 (Directives) | Draft new directive wizard |
-| `[r]` | Tab 3 (Directives) | Toggle directive status (`● ACTIVE` ↔ `✕ RETIRED`) |
-| `[c]` | Tab 3 (Directives) | Cycle directive taxonomy category |
-| `[g]` | Tab 4 (Sessions) | Toggle between Sessions Telemetry and Authority Grants |
-| `[n]` | Tab 4 (Grants) | Issue new agent authority grant wizard |
-| `[r]` | Tab 4 (Grants) | Revoke selected authority grant |
-| `[t]` | Tab 2 (Explore) | Toggle directory Tree View vs flat List View |
-| `[/]` | Tab 2 (Explore) | Real-time full-text search across knowledge base |
+| `[Enter]` | Global | Open selected item in Reader or drill down |
+| `[o]` | Global | Open active document or directive in external editor (`$EDITOR` / VS Code / Cursor) |
+| `[y]` | Global | Yank / Copy active document, directive markdown, or session scorecard |
+| `[m]` | Global | Toggle Mouse Mode (ON: Click Nav / OFF: Native Terminal Drag-Select) |
+| `[T]` | Global | Cycle visual theme (`Cyberpunk`, `Modern`, `Nord`, `Tokyo Night`, `Light`) |
+| `[?]` or `[F1]` | Global | Open Quick Reference modal (`Esc` to close) |
+| `[Esc]` | Global | Unfocus dock, dismiss modal, or return to list view |
+| `[h]` | Tab 4 (Agents) | Cycle harness filter: `[ALL]` → `[CLAUDE]` → `[OPENCODE]` → `[CODEX]` → `[OTHER]` |
+| `[e]` | Tab 4 (Agents) | Toggle Session Quality Score breakdown |
+| `[g]` | Tab 4 (Agents) | Toggle between Agent Sessions and Authority Grants |
+| `[n]` | Tab 3 / Tab 4 | Draft New Directive (Tab 3) or Issue Authority Grant (Tab 4) |
+| `[r]` | Tab 3 / Tab 4 | Toggle Directive status (`● ACTIVE` ↔ `✕ RETIRED`) or Revoke Grant |
+| `[c]` | Tab 2 / Tab 3 | Cycle taxonomy category filter pills |
+| `[t]` | Tab 2 (Knowledge) | Toggle hierarchical Tree View vs flat List View |
+| `[v]` | Reader View | Toggle formatted Markdown preview vs Raw text view |
+| `[q]` or `Ctrl+C` | Global | Exit HyperKB cleanly, restoring terminal state |
 
 ---
 
@@ -121,9 +123,9 @@ hyperkb mcp
 
 ---
 
-## 🤖 MCP Server Integration
+## 🤖 Model Context Protocol (MCP) Integration
 
-HyperKB includes a native Model Context Protocol (MCP) stdio server. Configure it in Claude Desktop, Cursor, or Antigravity:
+HyperKB includes a native MCP stdio server. Configure it in Claude Desktop, Cursor, or Antigravity:
 
 ```json
 {
@@ -148,7 +150,7 @@ HyperKB includes a native Model Context Protocol (MCP) stdio server. Configure i
 # Check code hygiene and compilation
 cargo check
 
-# Run complete test suite (72+ tests)
+# Run complete test suite (81 tests)
 cargo test
 
 # Build optimized production binary (< 3.2 MB)

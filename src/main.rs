@@ -1,13 +1,13 @@
 use chrono::Utc;
 use clap::{Parser, Subcommand};
-use hyperkb_rs::core::{
+use hyperkb::core::{
     Archeology, DecisionWorkflow, DirectiveWorkflow, Git, GrantStore, KbLinter,
     MaintenanceManager, RiskWorkflow, Scanner, SessionManager,
 };
-use hyperkb_rs::domain::{ActionKind, Actor, BrowseOptions, GrantConstraints, RepoManifest};
-use hyperkb_rs::storage::{Database, Queries};
-use hyperkb_rs::transport::McpServer;
-use hyperkb_rs::ui;
+use hyperkb::domain::{ActionKind, Actor, BrowseOptions, GrantConstraints, RepoManifest};
+use hyperkb::storage::{Database, Queries};
+use hyperkb::transport::McpServer;
+use hyperkb::ui;
 use std::path::PathBuf;
 use uuid::Uuid;
 
@@ -530,9 +530,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             "[SUPPRESSED]"
                         } else {
                             match m.applicability {
-                                hyperkb_rs::domain::RiskApplicability::Applies => "[APPLIES]",
-                                hyperkb_rs::domain::RiskApplicability::Unknown => "[UNKNOWN]",
-                                hyperkb_rs::domain::RiskApplicability::NotApplicable => "[N/A]",
+                                hyperkb::domain::RiskApplicability::Applies => "[APPLIES]",
+                                hyperkb::domain::RiskApplicability::Unknown => "[UNKNOWN]",
+                                hyperkb::domain::RiskApplicability::NotApplicable => "[N/A]",
                             }
                         };
                         println!(
@@ -1268,10 +1268,10 @@ fn print_docs(section: Option<&str>) {
         println!("     'hyperkb check' runs during git pre-commit to evaluate modified files against");
         println!("     active architectural invariants and unacknowledged risks. Violations block git commit.");
         println!();
-        println!("  3. Defensible Scientific Telemetry");
+        println!("  3. Session Quality Telemetry");
         println!("     Every agent coding session records tool calls, edits, diff volume, and review oscillations.");
-        println!("     Effectiveness is grounded in an exact mathematical formula decomposed into quantifiable");
-        println!("     penalties and bonuses rather than arbitrary sentiment.");
+        println!("     Run quality is tracked using an honest 0–100 heuristic scoring review loops, tool friction,");
+        println!("     and directive compliance without hype or buzzwords.");
         println!();
     }
 
@@ -1280,15 +1280,15 @@ fn print_docs(section: Option<&str>) {
         println!("  HyperKB TUI Navigation & Shortcuts Reference                                 ");
         println!("================================================================================");
         println!("GLOBAL SHORTCUTS:");
-        println!("  [1] - [5]         Switch between tabs (Work, Explore, Directives, Sessions, Settings)");
+        println!("  [1] - [5]         Switch between tabs (Work, Knowledge, Directives, Agents, Settings)");
+        println!("  [/] / [Space]     Open anchored Universal Command Dock (slash commands & AI prompts)");
         println!("  [Tab]             Toggle focus between Left (List/Tree) and Right (Detail/Scorecard) pane");
         println!("  [↑] / [↓] / [j/k] Navigate through items, trees, or settings");
         println!("  [PgDn] / [PgUp]   Page through documents or long lists (Space also advances Reader)");
         println!("  [Ctrl+d/Ctrl+u]   Half-page scroll down / up");
         println!("  [m]               Toggle Mouse Mode: ON (TUI clicks) vs OFF (Terminal text selection)");
         println!("  [T]               Cycle Color Theme (Cyberpunk, Modern, Nord, TokyoNight, Light)");
-        println!("  [?] / [h] / [F1]  Open interactive in-app help modal (Esc / q to close)");
-        println!("  [/]               Open instant real-time search filter (Esc to clear)");
+        println!("  [?] / [F1]        Open interactive in-app quick reference modal (Esc / q to close)");
         println!("  [q] / [Ctrl+c]    Quit HyperKB cleanly, restoring terminal state");
         println!();
         println!("TERMINAL COPY / PASTE SELECTION:");
@@ -1299,20 +1299,20 @@ fn print_docs(section: Option<&str>) {
         println!("  • Linux / iTerm:  Hold Shift while dragging to bypass terminal mouse capture.");
         println!();
         println!("VIEW-SPECIFIC CONTROLS:");
-        println!("  [Explore]         [t] Toggle Tree / List view | [c] Cycle category filter | [Enter] Open reader");
+        println!("  [Knowledge]       [t] Toggle Tree / List view | [c] Cycle category filter | [Enter] Open reader");
         println!("  [Directives]      [c] Cycle policy taxonomy   | [r] Retire selected directive | [Enter] Read rule");
-        println!("  [Sessions]        [e] Toggle Mathematical Scoring Specification & Proof modal");
+        println!("  [Agents]          [h] Cycle harness filter    | [e] Toggle Scorecard breakdown | [g] Toggle Grants");
         println!("  [Settings]        [←] / [→] / [h/l] / [-/+] Adjust knob value | [Enter] Save to hyperkb.json");
-        println!("  [Reader]          [v] Toggle Raw Markdown / Formatted view | [Esc] Return to Explore list");
+        println!("  [Reader]          [v] Toggle Raw Markdown / Formatted view | [Esc] Return to Knowledge list");
         println!();
     }
 
     if s == "all" || s == "math" || s == "validation" {
         println!("================================================================================");
-        println!("  Coding Effectiveness Scoring: Mathematical Specification & Proof              ");
+        println!("  Session Quality Score: Heuristic Specification & Breakdown                    ");
         println!("================================================================================");
         println!("HyperKB does not rely on opaque LLM ratings or subjective scores. Every session");
-        println!("effectiveness rating is derived from a deterministic formulation:");
+        println!("quality rating is derived from a transparent, pragmatic heuristic:");
         println!();
         println!("FORMULA:");
         println!("  S = clamp(100% - P_loops - P_friction - P_thrash + B_hazard, 5%, 100%)");

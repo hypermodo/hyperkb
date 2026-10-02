@@ -60,6 +60,21 @@ impl AgentSession {
         (end - start).num_seconds().max(0)
     }
 
+    pub fn efficiency_score_pct(&self) -> u32 {
+        let edit_ratio = if self.total_edits == 0 {
+            self.total_tool_calls as f64
+        } else {
+            self.total_tool_calls as f64 / self.total_edits as f64
+        };
+        let loop_penalty = (self.review_loops as f64 * 0.15).min(0.45);
+        let first_pass_penalty = if !self.first_pass_clean { 0.15 } else { 0.0 };
+        let thrash_penalty = if edit_ratio > 10.0 { 0.20 } else if edit_ratio > 6.0 { 0.10 } else { 0.0 };
+        let hazard_bonus = if self.risks_prevented > 0 { 0.10 } else { 0.0 };
+        let mut score = 1.0f64 - loop_penalty - first_pass_penalty - thrash_penalty + hazard_bonus;
+        score = score.clamp(0.05, 1.0);
+        (score * 100.0).round() as u32
+    }
+
     pub fn formatted_duration(&self) -> String {
         let start = DateTime::parse_from_rfc3339(&self.started_at)
             .map(|dt| dt.with_timezone(&Utc));

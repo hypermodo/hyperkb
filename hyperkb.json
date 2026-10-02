@@ -1,6 +1,6 @@
 {
-  "collection_id": "hyperkb-rs",
-  "name": "HyperKB Rust Core",
+  "collection_id": "hyperkb",
+  "name": "HyperKB",
   "version": "0.1.0",
   "default_profile": "default_profile",
   "docs_root": "docs",
@@ -31,6 +31,12 @@
         "description": "Authentication, secrets, external API calls, and autonomy bounds"
       }
     ]
+  },
+  "harnesses": {
+    "auto_discovery": true,
+    "active_harness_id": "opencode",
+    "registered": [],
+    "hypercontrol": null
   },
   "settings": {
     "max_briefing_directives": 5,

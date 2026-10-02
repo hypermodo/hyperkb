@@ -95,10 +95,20 @@ impl HarnessDiscovery {
         results
     }
 
-    /// Check if an executable exists in PATH
+    /// Check if an executable exists in PATH or standard system directories
     pub fn find_binary_in_path(binary_name: &str) -> Option<PathBuf> {
-        let path_var = env::var_os("PATH")?;
-        for dir in env::split_paths(&path_var) {
+        let mut search_dirs = Vec::new();
+        if let Some(path_var) = env::var_os("PATH") {
+            search_dirs.extend(env::split_paths(&path_var));
+        }
+        // Standard fallbacks on Unix/macOS
+        search_dirs.push(PathBuf::from("/opt/homebrew/bin"));
+        search_dirs.push(PathBuf::from("/usr/local/bin"));
+        if let Ok(home) = env::var("HOME") {
+            search_dirs.push(PathBuf::from(home).join(".local/bin"));
+        }
+
+        for dir in search_dirs {
             let candidate = dir.join(binary_name);
             if candidate.is_file() {
                 #[cfg(unix)]

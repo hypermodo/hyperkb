@@ -171,20 +171,22 @@ impl SettingsView {
             text.push(Line::from(Span::styled("────── Harness Selection Controls ───────────────────────────", Style::default().fg(t.border()))));
             text.push(Line::from(""));
             text.push(Line::from(vec![
-                Span::styled("  Use ", Style::default().fg(t.text_primary())),
+                Span::styled("  Press ", Style::default().fg(t.text_primary())),
                 Span::styled("[Tab]", t.key_badge()),
                 Span::styled(" or ", Style::default().fg(t.text_primary())),
                 Span::styled("[→]", t.key_badge()),
-                Span::styled(" to focus list, then ", Style::default().fg(t.text_primary())),
+                Span::styled(" to enter list, then use ", Style::default().fg(t.text_primary())),
                 Span::styled("[↑] / [↓]", t.key_badge()),
                 Span::styled(" or ", Style::default().fg(t.text_primary())),
                 Span::styled("[j] / [k]", t.key_badge()),
-                Span::styled(" to navigate the vertical list of harnesses.", Style::default().fg(t.text_primary())),
+                Span::styled(" to navigate harnesses.", Style::default().fg(t.text_primary())),
             ]));
             text.push(Line::from(vec![
-                Span::styled("  (Tip: ", Style::default().fg(t.text_muted())),
-                Span::styled("[←] / [→]", t.key_badge()),
-                Span::styled(" or mouse click also selects harness directly)", Style::default().fg(t.text_muted())),
+                Span::styled("  Press ", Style::default().fg(t.text_primary())),
+                Span::styled("[Esc]", t.key_badge()),
+                Span::styled(" or ", Style::default().fg(t.text_primary())),
+                Span::styled("[←]", t.key_badge()),
+                Span::styled(" to return to settings list (or click any harness to select directly).", Style::default().fg(t.text_muted())),
             ]));
             text.push(Line::from(vec![
                 Span::styled("  Press ", Style::default().fg(t.text_primary())),

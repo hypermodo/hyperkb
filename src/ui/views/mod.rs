@@ -1,4 +1,4 @@
-pub mod action_palette;
+pub mod command_dock;
 pub mod directives;
 pub mod explore;
 pub mod help;
@@ -9,7 +9,7 @@ pub mod sessions;
 pub mod settings;
 pub mod work;
 
-pub use action_palette::ActionPaletteModal;
+pub use command_dock::CommandDock;
 pub use directives::DirectivesView;
 pub use explore::ExploreView;
 pub use help::HelpModal;

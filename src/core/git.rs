@@ -239,6 +239,8 @@ impl Git {
 
 if command -v hyperkb >/dev/null 2>&1; then
     hyperkb check-work --staged || exit 1
+elif [ -x "./target/release/hyperkb" ]; then
+    ./target/release/hyperkb check-work --staged || exit 1
 elif command -v hyperkb-rs >/dev/null 2>&1; then
     hyperkb-rs check-work --staged || exit 1
 elif [ -x "./target/release/hyperkb-rs" ]; then
