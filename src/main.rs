@@ -161,6 +161,9 @@ enum Commands {
         /// Optional LLM model identifier (e.g. 'claude-3-7-sonnet', 'gpt-4o')
         #[arg(long)]
         model: Option<String>,
+        /// Optional target project identifier (e.g. 'platform-shell')
+        #[arg(long)]
+        project: Option<String>,
     },
     /// Remember a private local note
     Remember {
@@ -871,7 +874,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!("  Paths:  {}", draft.paths.join(", "));
             println!("\nIndexed and active for pre-edit interception.");
         }
-        Some(Commands::Mcp { agent, model }) => {
+        Some(Commands::Mcp { agent, model, project }) => {
+            let effective_project = project.or(auto_project);
             let _ = Scanner::index_workspace(db.conn(), &effective_root, &manifest);
             McpServer::run_stdio_with_agent(
                 &effective_root,
@@ -880,6 +884,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 profile_id,
                 agent.as_deref(),
                 model.as_deref(),
+                effective_project.as_deref(),
             )?;
         }
         Some(Commands::DraftDecision {

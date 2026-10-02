@@ -9,6 +9,7 @@ pub struct AgentSession {
     pub profile_id: String,
     pub agent_id: String,
     pub grant_id: Option<String>,
+    pub project: Option<String>,
     pub started_at: String,
     pub ended_at: Option<String>,
     pub total_tool_calls: u32,
@@ -35,6 +36,7 @@ impl AgentSession {
             profile_id: profile_id.into(),
             agent_id: agent_id.into(),
             grant_id,
+            project: None,
             started_at: Utc::now().to_rfc3339(),
             ended_at: None,
             total_tool_calls: 0,
@@ -46,6 +48,11 @@ impl AgentSession {
             first_pass_clean: true,
             status: "active".to_string(),
         }
+    }
+
+    pub fn with_project(mut self, project: Option<String>) -> Self {
+        self.project = project;
+        self
     }
 
     pub fn duration_seconds(&self) -> i64 {

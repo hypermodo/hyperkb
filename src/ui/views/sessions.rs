@@ -47,6 +47,12 @@ impl SessionsView {
                 let is_selected = filtered_idx == app.selected_session_idx;
                 let is_stale = sess.is_stale();
 
+                let cursor_span = if is_selected {
+                    Span::styled("▶ ", t.badge_accepted().add_modifier(Modifier::BOLD))
+                } else {
+                    Span::styled("  ", Style::default().fg(t.text_muted()))
+                };
+
                 let (badge_text, badge_style) = match sess.status.as_str() {
                     "active" if is_stale => ("⏸ IDLE ", Style::default().fg(t.text_muted())),
                     "active" => ("● ACTIVE ", t.badge_accepted()),
@@ -54,6 +60,15 @@ impl SessionsView {
                     "completed" => ("✔ DONE ", t.badge_resolved()),
                     "failed" => ("✕ FAILED ", t.badge_risk()),
                     _ => ("· SESS ", Style::default().fg(t.status_unknown())),
+                };
+
+                let project_tag = if let Some(ref proj) = sess.project {
+                    Span::styled(
+                        format!("[{}] ", proj.to_uppercase()),
+                        Style::default().fg(t.accent()).add_modifier(Modifier::BOLD),
+                    )
+                } else {
+                    Span::styled("[UNSCOPED] ", Style::default().fg(t.text_muted()))
                 };
 
                 let (harness_name, model_opt) = sess.parse_agent_taxonomy();
@@ -98,17 +113,24 @@ impl SessionsView {
                 let score_tag = Span::styled(format!(" Score: {}/100", score), score_style);
 
                 let model_str = model_opt.unwrap_or("standard");
+                let proj_str = sess.project.as_deref().unwrap_or("unscoped");
                 let sub_info = Span::styled(
                     format!(
-                        "   Harness: {} | Model: {} | dur: {} | edits: {} | tools: {}",
-                        harness_name, model_str, sess.formatted_duration(), sess.total_edits, sess.total_tool_calls
+                        "   proj: {} | harness: {} | model: {} | dur: {} | edits: {} | tools: {}",
+                        proj_str, harness_name, model_str, sess.formatted_duration(), sess.total_edits, sess.total_tool_calls
                     ),
-                    Style::default().fg(t.text_muted()),
+                    if is_selected {
+                        Style::default().fg(t.text_primary())
+                    } else {
+                        Style::default().fg(t.text_muted())
+                    },
                 );
 
-                ListItem::new(vec![
+                let item = ListItem::new(vec![
                     Line::from(vec![
+                        cursor_span,
                         Span::styled(badge_text, badge_style),
+                        project_tag,
                         harness_tag,
                         model_tag,
                         title,
@@ -116,11 +138,22 @@ impl SessionsView {
                     ]),
                     Line::from(sub_info),
                     Line::from(""),
-                ])
+                ]);
+
+                if is_selected {
+                    item.style(t.selected_row())
+                } else {
+                    item
+                }
             })
             .collect();
 
-        let list_title = format!(" Agent Runs [Harness: {}] ({}) ", filter_label.to_uppercase(), filtered.len());
+        let sel_count = if filtered.is_empty() {
+            "0 runs".to_string()
+        } else {
+            format!("{} of {} selected", app.selected_session_idx + 1, filtered.len())
+        };
+        let list_title = format!(" Agent Runs [{}] [{}] ", filter_label.to_uppercase(), sel_count);
         let list_block = Block::default()
             .borders(Borders::ALL)
             .border_style(Style::default().fg(border_color))
@@ -296,10 +329,18 @@ impl SessionsView {
                 other => other,
             };
 
-            let text = vec![
+            let mut text = vec![
                 Line::from(vec![
-                    Span::styled("Session ID:  ", Style::default().fg(t.text_muted()).add_modifier(Modifier::BOLD)),
+                    Span::styled("Session ID:     ", Style::default().fg(t.text_muted()).add_modifier(Modifier::BOLD)),
                     Span::styled(&sess.id, Style::default().fg(t.accent()).add_modifier(Modifier::BOLD)),
+                ]),
+                Line::from(""),
+                Line::from(vec![
+                    Span::styled("Target Project: ", Style::default().fg(t.text_muted()).add_modifier(Modifier::BOLD)),
+                    Span::styled(
+                        sess.project.as_deref().unwrap_or("Unscoped (Global / Multi-project Root)"),
+                        Style::default().fg(t.accent()).add_modifier(Modifier::BOLD),
+                    ),
                 ]),
                 Line::from(""),
                 Line::from(vec![
@@ -448,6 +489,52 @@ impl SessionsView {
                     ),
                 ]),
             ];
+
+            text.push(Line::from(""));
+            text.push(Line::from(Span::styled(
+                "────── Chronological Action Ledger & Tool Execution Timeline ─────",
+                Style::default().fg(t.border()),
+            )));
+            text.push(Line::from(""));
+
+            if app.selected_session_events.is_empty() {
+                text.push(Line::from(Span::styled(
+                    "  No tool calls or audit events recorded yet for this session.",
+                    Style::default().fg(t.text_muted()),
+                )));
+            } else {
+                for ev in &app.selected_session_events {
+                    let ts = if ev.timestamp.len() >= 19 {
+                        &ev.timestamp[11..19]
+                    } else {
+                        &ev.timestamp
+                    };
+                    let (kind_color, kind_str) = match ev.event_kind.as_str() {
+                        "session_start" => (t.status_accepted(), "START   "),
+                        "agent_identified" => (t.accent(), "IDENT   "),
+                        "project_scoped" => (t.accent(), "PROJECT "),
+                        "tool_call" => (t.status_proposed(), "TOOL    "),
+                        "risk_cited" => (t.status_risk(), "CITED   "),
+                        "risk_prevented" => (t.status_accepted(), "RESOLVED"),
+                        "file_edit" => (t.accent(), "EDIT    "),
+                        _ => (t.text_muted(), "EVENT   "),
+                    };
+                    let mut spans = vec![
+                        Span::styled(format!("  [{}] ", ts), Style::default().fg(t.text_muted())),
+                        Span::styled(format!("{:<8} ", kind_str), Style::default().fg(kind_color).add_modifier(Modifier::BOLD)),
+                    ];
+                    if !ev.query_or_tool.is_empty() {
+                        spans.push(Span::styled(format!("{} ", ev.query_or_tool), Style::default().fg(t.text_primary()).add_modifier(Modifier::BOLD)));
+                    }
+                    if !ev.target_path.is_empty() {
+                        spans.push(Span::styled(format!("→ {} ", ev.target_path), Style::default().fg(t.accent())));
+                    }
+                    if ev.detail_json != "{}" && !ev.detail_json.is_empty() {
+                        spans.push(Span::styled(format!("{} ", ev.detail_json), Style::default().fg(t.text_muted())));
+                    }
+                    text.push(Line::from(spans));
+                }
+            }
 
             let paragraph = Paragraph::new(text)
                 .block(block)

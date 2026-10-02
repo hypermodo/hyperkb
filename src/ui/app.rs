@@ -246,6 +246,7 @@ pub struct App {
     pub sessions: Vec<AgentSession>,
     pub selected_session_idx: usize,
     pub session_preview_scroll: usize,
+    pub selected_session_events: Vec<crate::domain::SessionEventRecord>,
 
     // Work / Risk state
     pub active_risks: Vec<RiskMatch>,
@@ -384,6 +385,7 @@ impl App {
             sessions: Vec::new(),
             selected_session_idx: 0,
             session_preview_scroll: 0,
+            selected_session_events: Vec::new(),
             active_risks: Vec::new(),
             selected_risk_idx: 0,
             current_document: None,
@@ -587,8 +589,17 @@ impl App {
 
         if let Ok(sess) = Queries::list_sessions(db.conn(), &self.collection_id, 20) {
             self.sessions = sess;
-            if self.selected_session_idx >= self.sessions.len() && !self.sessions.is_empty() {
-                self.selected_session_idx = self.sessions.len() - 1;
+            let flen = self.filtered_sessions().len();
+            if self.selected_session_idx >= flen && flen > 0 {
+                self.selected_session_idx = flen - 1;
+            }
+            let selected_id = self.filtered_sessions().get(self.selected_session_idx).map(|(_, s)| s.id.clone());
+            if let Some(sess_id) = selected_id {
+                if let Ok(evs) = Queries::get_session_events(db.conn(), &sess_id) {
+                    self.selected_session_events = evs;
+                }
+            } else {
+                self.selected_session_events.clear();
             }
         }
 
@@ -898,10 +909,11 @@ impl App {
             ActiveTab::Sessions => {
                 match self.governance_tab_mode {
                     GovernanceTabMode::Sessions => {
+                        let flen = self.filtered_sessions().len();
                         if self.focused_pane == FocusedPane::Detail {
                             self.session_preview_scroll += 2;
-                        } else if !self.sessions.is_empty() {
-                            self.selected_session_idx = (self.selected_session_idx + 1) % self.sessions.len();
+                        } else if flen > 0 {
+                            self.selected_session_idx = (self.selected_session_idx + 1) % flen;
                             self.session_preview_scroll = 0;
                         }
                     }
@@ -1023,11 +1035,12 @@ impl App {
             ActiveTab::Sessions => {
                 match self.governance_tab_mode {
                     GovernanceTabMode::Sessions => {
+                        let flen = self.filtered_sessions().len();
                         if self.focused_pane == FocusedPane::Detail {
                             self.session_preview_scroll = self.session_preview_scroll.saturating_sub(2);
-                        } else if !self.sessions.is_empty() {
+                        } else if flen > 0 {
                             if self.selected_session_idx == 0 {
-                                self.selected_session_idx = self.sessions.len() - 1;
+                                self.selected_session_idx = flen - 1;
                             } else {
                                 self.selected_session_idx -= 1;
                             }
@@ -1104,10 +1117,11 @@ impl App {
             ActiveTab::Sessions => {
                 match self.governance_tab_mode {
                     GovernanceTabMode::Sessions => {
+                        let flen = self.filtered_sessions().len();
                         if self.focused_pane == FocusedPane::Detail {
                             self.session_preview_scroll += 15;
-                        } else if !self.sessions.is_empty() {
-                            self.selected_session_idx = (self.selected_session_idx + 8).min(self.sessions.len() - 1);
+                        } else if flen > 0 {
+                            self.selected_session_idx = (self.selected_session_idx + 8).min(flen - 1);
                             self.session_preview_scroll = 0;
                         }
                     }
@@ -1165,9 +1179,10 @@ impl App {
             ActiveTab::Sessions => {
                 match self.governance_tab_mode {
                     GovernanceTabMode::Sessions => {
+                        let flen = self.filtered_sessions().len();
                         if self.focused_pane == FocusedPane::Detail {
                             self.session_preview_scroll = self.session_preview_scroll.saturating_sub(15);
-                        } else if !self.sessions.is_empty() {
+                        } else if flen > 0 {
                             self.selected_session_idx = self.selected_session_idx.saturating_sub(8);
                             self.session_preview_scroll = 0;
                         }
@@ -1506,7 +1521,8 @@ impl App {
     }
 
     pub fn selected_session(&self) -> Option<&AgentSession> {
-        self.sessions.get(self.selected_session_idx)
+        let filtered = self.filtered_sessions();
+        filtered.get(self.selected_session_idx).map(|(_, s)| *s)
     }
 
     pub fn selected_risk(&self) -> Option<&RiskMatch> {

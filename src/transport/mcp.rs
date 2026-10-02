@@ -46,6 +46,17 @@ impl<'a> Drop for SessionGuard<'a> {
     }
 }
 
+fn detect_project_from_path(path: &str) -> Option<String> {
+    let clean = path.trim_start_matches("./").trim_start_matches('/');
+    if let Some(rest) = clean.strip_prefix("projects/") {
+        let seg = rest.split('/').next()?;
+        if !seg.is_empty() {
+            return Some(seg.to_string());
+        }
+    }
+    None
+}
+
 impl McpServer {
     /// Runs the stdio MCP server loop, processing JSON-RPC 2.0 messages from stdin and replying on stdout.
     pub fn run_stdio<P: AsRef<Path>>(
@@ -54,7 +65,7 @@ impl McpServer {
         collection_id: &str,
         profile_id: &str,
     ) -> std::io::Result<()> {
-        Self::run_stdio_with_agent(root, conn, collection_id, profile_id, None, None)
+        Self::run_stdio_with_agent(root, conn, collection_id, profile_id, None, None, None)
     }
 
     pub fn run_stdio_with_agent<P: AsRef<Path>>(
@@ -64,6 +75,7 @@ impl McpServer {
         profile_id: &str,
         cli_agent: Option<&str>,
         cli_model: Option<&str>,
+        cli_project: Option<&str>,
     ) -> std::io::Result<()> {
         let root = root.as_ref();
         let stdin = std::io::stdin();
@@ -79,6 +91,7 @@ impl McpServer {
             profile_id,
             &initial_agent,
             None,
+            cli_project.map(|s| s.to_string()),
         ).ok();
         let active_session_id = active_session.as_ref().map(|s| s.id.clone());
 
@@ -690,7 +703,7 @@ impl McpServer {
                 return Some(active.id);
             }
         }
-        SessionManager::start_session(conn, collection_id, profile_id, "agent_mcp", None)
+        SessionManager::start_session(conn, collection_id, profile_id, "agent_mcp", None, None)
             .map(|s| s.id)
             .ok()
     }
@@ -800,6 +813,9 @@ impl McpServer {
 
                 if let Some(ref sess_id) = current_sess_id {
                     let first_file = files.first().map(|s| s.as_str()).unwrap_or("");
+                    if let Some(proj) = files.iter().find_map(|f| detect_project_from_path(f)) {
+                        let _ = SessionManager::set_project(conn, sess_id, &proj);
+                    }
                     let _ = SessionManager::record_tool_call(conn, sess_id, "check_work", first_file, "{}");
                     for m in &check.matches {
                         if !m.suppressed {
@@ -1303,6 +1319,9 @@ impl McpServer {
 
                 if let Some(ref sess_id) = current_sess_id {
                     let _ = SessionManager::record_tool_call(conn, sess_id, "get_session_briefing", "", "{}");
+                    if let Some(project) = args.get("project").and_then(|v| v.as_str()) {
+                        let _ = SessionManager::set_project(conn, sess_id, project);
+                    }
                     if let Some(model) = args.get("model").and_then(|v| v.as_str()) {
                         if let Ok(Some(existing)) = Queries::get_session(conn, sess_id) {
                             let (harness, _) = existing.parse_agent_taxonomy();
@@ -1366,6 +1385,10 @@ impl McpServer {
                 let sess_id = current_sess_id
                     .as_deref()
                     .ok_or_else(|| "No active session available to record metrics".to_string())?;
+
+                if let Some(proj) = detect_project_from_path(path) {
+                    let _ = SessionManager::set_project(conn, sess_id, &proj);
+                }
 
                 let is_loop = SessionManager::record_file_edit(conn, sess_id, path, diff_lines)
                     .map_err(|e| format!("Failed to record file edit: {}", e))?;
@@ -1654,6 +1677,7 @@ impl McpServer {
                     .ok_or_else(|| "Missing required argument 'project'".to_string())?;
 
                 if let Some(ref sess_id) = current_sess_id {
+                    let _ = SessionManager::set_project(conn, sess_id, project);
                     let _ = SessionManager::record_tool_call(
                         conn,
                         sess_id,
@@ -1695,6 +1719,7 @@ impl McpServer {
                 let severity = args.get("severity").and_then(|v| v.as_str());
 
                 if let Some(ref sess_id) = current_sess_id {
+                    let _ = SessionManager::set_project(conn, sess_id, project);
                     let _ = SessionManager::record_tool_call(
                         conn,
                         sess_id,
@@ -1731,6 +1756,7 @@ impl McpServer {
                     .ok_or_else(|| "Missing required argument 'project'".to_string())?;
 
                 if let Some(ref sess_id) = current_sess_id {
+                    let _ = SessionManager::set_project(conn, sess_id, project);
                     let _ = SessionManager::record_tool_call(
                         conn,
                         sess_id,

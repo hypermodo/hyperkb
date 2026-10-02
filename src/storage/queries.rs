@@ -690,16 +690,17 @@ impl Queries {
     pub fn create_session(conn: &Connection, session: &AgentSession) -> Result<()> {
         conn.execute(
             "INSERT INTO agent_sessions (
-                id, collection_id, profile_id, agent_id, grant_id, started_at,
+                id, collection_id, profile_id, agent_id, grant_id, project, started_at,
                 ended_at, total_tool_calls, total_edits, total_diff_lines,
                 risks_cited, risks_prevented, review_loops, first_pass_clean, status
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15);",
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16);",
             params![
                 session.id,
                 session.collection_id,
                 session.profile_id,
                 session.agent_id,
                 session.grant_id,
+                session.project,
                 session.started_at,
                 session.ended_at,
                 session.total_tool_calls,
@@ -726,7 +727,8 @@ impl Queries {
                 risks_prevented = ?7,
                 review_loops = ?8,
                 first_pass_clean = ?9,
-                status = ?10
+                status = ?10,
+                project = ?11
              WHERE id = ?1;",
             params![
                 session.id,
@@ -739,6 +741,7 @@ impl Queries {
                 session.review_loops,
                 if session.first_pass_clean { 1 } else { 0 },
                 session.status,
+                session.project,
             ],
         )?;
         Ok(())
@@ -765,7 +768,7 @@ impl Queries {
         let mut stmt = conn.prepare(
             "SELECT id, collection_id, profile_id, agent_id, grant_id, started_at, ended_at,
                     total_tool_calls, total_edits, total_diff_lines, risks_cited, risks_prevented,
-                    review_loops, first_pass_clean, status
+                    review_loops, first_pass_clean, status, project
              FROM agent_sessions WHERE id = ?1;",
         )?;
         let mut rows = stmt.query([session_id])?;
@@ -787,6 +790,7 @@ impl Queries {
                 review_loops: row.get(12)?,
                 first_pass_clean: first_pass_clean_int == 1,
                 status: row.get(14)?,
+                project: row.get(15)?,
             }))
         } else {
             Ok(None)
@@ -797,6 +801,14 @@ impl Queries {
         conn.execute(
             "UPDATE agent_sessions SET agent_id = ?1 WHERE id = ?2;",
             params![agent_id, session_id],
+        )?;
+        Ok(())
+    }
+
+    pub fn update_session_project(conn: &Connection, session_id: &str, project: &str) -> Result<()> {
+        conn.execute(
+            "UPDATE agent_sessions SET project = ?1 WHERE id = ?2;",
+            params![project, session_id],
         )?;
         Ok(())
     }
@@ -832,7 +844,7 @@ impl Queries {
         let mut stmt = conn.prepare(
             "SELECT id, collection_id, profile_id, agent_id, grant_id, started_at, ended_at,
                     total_tool_calls, total_edits, total_diff_lines, risks_cited, risks_prevented,
-                    review_loops, first_pass_clean, status
+                    review_loops, first_pass_clean, status, project
              FROM agent_sessions
              WHERE collection_id = ?1
              ORDER BY started_at DESC
@@ -856,6 +868,7 @@ impl Queries {
                 review_loops: row.get(12)?,
                 first_pass_clean: first_pass_clean_int == 1,
                 status: row.get(14)?,
+                project: row.get(15)?,
             })
         })?;
 

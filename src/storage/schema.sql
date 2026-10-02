@@ -213,6 +213,7 @@ CREATE TABLE IF NOT EXISTS agent_sessions (
   profile_id TEXT NOT NULL REFERENCES profiles(id),
   agent_id TEXT NOT NULL,
   grant_id TEXT,
+  project TEXT,
   started_at TEXT NOT NULL,
   ended_at TEXT,
   total_tool_calls INTEGER NOT NULL DEFAULT 0,

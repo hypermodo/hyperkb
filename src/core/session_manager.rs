@@ -13,15 +13,18 @@ impl SessionManager {
         profile_id: &str,
         agent_id: &str,
         grant_id: Option<String>,
+        project: Option<String>,
     ) -> Result<AgentSession, String> {
         let id = format!("sess_{}", Uuid::now_v7());
-        let session = AgentSession::new(&id, collection_id, profile_id, agent_id, grant_id.clone());
+        let mut session = AgentSession::new(&id, collection_id, profile_id, agent_id, grant_id.clone());
+        session.project = project.clone();
         Queries::create_session(conn, &session)
             .map_err(|e| format!("Failed to create session: {}", e))?;
 
         let detail = serde_json::json!({
             "agent_id": agent_id,
-            "grant_id": grant_id
+            "grant_id": grant_id,
+            "project": project
         })
         .to_string();
 
@@ -40,6 +43,18 @@ impl SessionManager {
             .map_err(|e| format!("Failed to update agent_id: {}", e))?;
         let detail = serde_json::json!({ "agent_id": agent_id }).to_string();
         let _ = Queries::record_session_event(conn, session_id, "agent_identified", "", agent_id, &detail);
+        Ok(())
+    }
+
+    pub fn set_project(
+        conn: &Connection,
+        session_id: &str,
+        project: &str,
+    ) -> Result<(), String> {
+        Queries::update_session_project(conn, session_id, project)
+            .map_err(|e| format!("Failed to update project: {}", e))?;
+        let detail = serde_json::json!({ "project": project }).to_string();
+        let _ = Queries::record_session_event(conn, session_id, "project_scoped", "", project, &detail);
         Ok(())
     }
 
@@ -440,11 +455,13 @@ mod tests {
             "prof_mgr",
             "agent_007",
             Some("grant_xyz".into()),
+            Some("platform-shell".into()),
         )
         .expect("session starts");
 
         assert!(session.id.starts_with("sess_"));
         assert_eq!(session.agent_id, "agent_007");
+        assert_eq!(session.project.as_deref(), Some("platform-shell"));
 
         SessionManager::record_tool_call(db.conn(), &session.id, "check_work", "src/auth.rs", "{}")
             .expect("record tool call");

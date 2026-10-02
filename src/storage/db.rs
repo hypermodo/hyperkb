@@ -117,6 +117,7 @@ impl Database {
 
     fn ensure_identities(&self, collection_id: &str, profile_id: &str) -> Result<()> {
         let _ = self.conn.execute("ALTER TABLE documents ADD COLUMN is_tombstone INTEGER NOT NULL DEFAULT 0;", []);
+        let _ = self.conn.execute("ALTER TABLE agent_sessions ADD COLUMN project TEXT;", []);
         let _ = self.conn.execute(
             "UPDATE documents SET is_tombstone = 1 \
              WHERE is_tombstone = 0 \

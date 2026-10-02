@@ -84,8 +84,17 @@ fn run_loop(
     db: &Database,
 ) -> io::Result<()> {
     let mut needs_redraw = true;
+    let mut last_periodic_refresh = std::time::Instant::now();
 
     while !app.should_quit {
+        // Periodic background database refresh (every 1.5s)
+        // Keeps agent runs, action ledger, telemetry, and documents streaming in live
+        if last_periodic_refresh.elapsed() >= std::time::Duration::from_millis(1500) {
+            app.refresh_data(db);
+            last_periodic_refresh = std::time::Instant::now();
+            needs_redraw = true;
+        }
+
         // Poll background AI agent thread non-blocking
         if let Some(ref rx) = app.agent_rx {
             match rx.try_recv() {
