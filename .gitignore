@@ -4,4 +4,5 @@
 *.sqlite
 *.sqlite-*
 .hyperkb/
+.agents/
 .DS_Store
