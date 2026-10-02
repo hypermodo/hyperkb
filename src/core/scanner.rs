@@ -17,6 +17,52 @@ impl Scanner {
         hex::encode(hasher.finalize())
     }
 
+    pub fn is_tombstone(rel_str: &str, meta: &RecordMeta, raw_content: &str) -> bool {
+        let lower_path = rel_str.to_ascii_lowercase();
+        if lower_path.contains("/_archive/")
+            || lower_path.starts_with("_archive/")
+            || lower_path.contains("/_draft/")
+            || lower_path.starts_with("_draft/")
+            || lower_path.contains("/_archived/")
+            || lower_path.starts_with("_archived/")
+            || lower_path.contains("/refuted/")
+            || lower_path.starts_with("refuted/")
+            || lower_path.contains("/_trash/")
+            || lower_path.starts_with("_trash/")
+        {
+            return true;
+        }
+
+        let lower_status = meta.status.to_ascii_lowercase();
+        if lower_status == "archived"
+            || lower_status == "refuted"
+            || lower_status == "tombstoned"
+            || lower_status == "tombstone"
+        {
+            return true;
+        }
+
+        if meta.kind.eq_ignore_ascii_case("plan")
+            && (lower_status == "completed"
+                || lower_status == "done"
+                || lower_status == "abandoned")
+        {
+            return true;
+        }
+
+        // Check frontmatter for explicit tombstone: true or archived: true
+        if raw_content.starts_with("---") {
+            if let Some(end) = raw_content[3..].find("---") {
+                let fm = &raw_content[3..3 + end];
+                if fm.contains("tombstone: true") || fm.contains("archived: true") {
+                    return true;
+                }
+            }
+        }
+
+        false
+    }
+
     pub fn discover_markdown<P: AsRef<Path>>(root: P) -> Vec<PathBuf> {
         let mut results = Vec::new();
         Self::walk_dir(root.as_ref(), root.as_ref(), &mut results);
@@ -183,11 +229,11 @@ impl Scanner {
             let checksum = Self::checksum(content.as_bytes());
             let rel_str = rel_path.to_string_lossy().replace('\\', "/");
 
-            let existing_checksum: Result<Option<String>, _> = conn
+            let existing_doc: Result<Option<(String, bool)>, _> = conn
                 .query_row(
-                    "SELECT checksum FROM documents WHERE collection_id = ?1 AND path = ?2;",
+                    "SELECT checksum, is_tombstone FROM documents WHERE collection_id = ?1 AND path = ?2;",
                     [collection_id, &rel_str],
-                    |row| row.get(0),
+                    |row| Ok((row.get(0)?, row.get::<_, i64>(1)? != 0)),
                 )
                 .map(Some)
                 .or_else(|e| match e {
@@ -195,8 +241,20 @@ impl Scanner {
                     err => Err(err),
                 });
 
-            match existing_checksum {
-                Ok(Some(old_sum)) if old_sum == checksum => {
+            match existing_doc {
+                Ok(Some((ref old_sum, old_tomb))) if old_sum == &checksum => {
+                    let path_tomb = rel_str.contains("/_archive/")
+                        || rel_str.contains("/_draft/")
+                        || rel_str.contains("/refuted/")
+                        || rel_str.contains("/_trash/")
+                        || rel_str.starts_with("_archive/")
+                        || rel_str.starts_with("_draft/");
+                    if path_tomb != old_tomb {
+                        let _ = conn.execute(
+                            "UPDATE documents SET is_tombstone = ?1 WHERE collection_id = ?2 AND path = ?3;",
+                            rusqlite::params![if path_tomb { 1 } else { 0 }, collection_id, &rel_str],
+                        );
+                    }
                     report.unchanged += 1;
                     continue;
                 }
@@ -253,6 +311,7 @@ impl Scanner {
                 .unwrap_or_else(|| "General".into());
 
             let search_text = format!("{} {}", parsed.title, parsed.body);
+            let is_tomb = Self::is_tombstone(&rel_str, &meta, &content);
 
             Queries::upsert_document(
                 conn,
@@ -265,6 +324,7 @@ impl Scanner {
                 &search_text,
                 &meta,
                 &checksum,
+                is_tomb,
             )?;
         }
 
@@ -338,11 +398,11 @@ impl Scanner {
             let checksum = Self::checksum(content.as_bytes());
             let rel_str = rel_path.to_string_lossy().replace('\\', "/");
 
-            let existing_checksum: Result<Option<String>, _> = conn
+            let existing_doc: Result<Option<(String, bool)>, _> = conn
                 .query_row(
-                    "SELECT checksum FROM documents WHERE collection_id = ?1 AND path = ?2;",
+                    "SELECT checksum, is_tombstone FROM documents WHERE collection_id = ?1 AND path = ?2;",
                     [collection_id, &rel_str],
-                    |row| row.get(0),
+                    |row| Ok((row.get(0)?, row.get::<_, i64>(1)? != 0)),
                 )
                 .map(Some)
                 .or_else(|e| match e {
@@ -350,8 +410,20 @@ impl Scanner {
                     err => Err(err),
                 });
 
-            match existing_checksum {
-                Ok(Some(old_sum)) if old_sum == checksum => {
+            match existing_doc {
+                Ok(Some((ref old_sum, old_tomb))) if old_sum == &checksum => {
+                    let path_tomb = rel_str.contains("/_archive/")
+                        || rel_str.contains("/_draft/")
+                        || rel_str.contains("/refuted/")
+                        || rel_str.contains("/_trash/")
+                        || rel_str.starts_with("_archive/")
+                        || rel_str.starts_with("_draft/");
+                    if path_tomb != old_tomb {
+                        let _ = conn.execute(
+                            "UPDATE documents SET is_tombstone = ?1 WHERE collection_id = ?2 AND path = ?3;",
+                            rusqlite::params![if path_tomb { 1 } else { 0 }, collection_id, &rel_str],
+                        );
+                    }
                     report.unchanged += 1;
                     continue;
                 }
@@ -408,6 +480,7 @@ impl Scanner {
                 .unwrap_or_else(|| "General".into());
 
             let search_text = format!("{} {}", parsed.title, parsed.body);
+            let is_tomb = Self::is_tombstone(&rel_str, &meta, &content);
 
             Queries::upsert_document(
                 conn,
@@ -420,6 +493,7 @@ impl Scanner {
                 &search_text,
                 &meta,
                 &checksum,
+                is_tomb,
             )?;
         }
 

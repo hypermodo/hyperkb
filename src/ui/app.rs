@@ -591,7 +591,7 @@ impl App {
             }
         }
 
-        if let Ok(projects) = Queries::list_projects(db.conn(), &self.collection_id) {
+        if let Ok(projects) = Queries::list_projects(db.conn(), &self.collection_id, false) {
             self.projects = projects;
             if self.selected_project_idx >= self.projects.len() && !self.projects.is_empty() {
                 self.selected_project_idx = self.projects.len() - 1;
@@ -1176,6 +1176,7 @@ impl App {
                     declared_status: Some(dir.status.clone()),
                     checksum: String::new(),
                     worktree_state: None,
+                    is_tombstone: false,
                 };
                 self.current_document = Some(doc);
                 self.active_tab = ActiveTab::Reader;
@@ -1209,6 +1210,7 @@ impl App {
                         declared_status: Some("active".to_string()),
                         checksum: String::new(),
                         worktree_state: None,
+                        is_tombstone: false,
                     };
                     self.current_document = Some(doc);
                     self.active_tab = ActiveTab::Reader;
@@ -2622,7 +2624,7 @@ impl App {
                     if !rest.is_empty() {
                         self.is_filtering = true;
                         self.filter_query = rest.to_string();
-                        match crate::storage::Queries::search(db.conn(), &[self.collection_id.clone()], &self.profile_id, rest, 20, false) {
+                        match crate::storage::Queries::search(db.conn(), &[self.collection_id.clone()], &self.profile_id, rest, 20, false, false) {
                             Ok(docs) => {
                                 let mut lines = Vec::new();
                                 lines.push(format!("Search query: \"{}\" (Matches: {})", rest, docs.len()));
@@ -3154,6 +3156,7 @@ mod tests {
             declared_status: None,
             checksum: "abc".to_string(),
             worktree_state: None,
+            is_tombstone: false,
         }
     }
 
@@ -3554,6 +3557,7 @@ mod tests {
             declared_status: None,
             checksum: "abc".to_string(),
             worktree_state: None,
+            is_tombstone: false,
         });
 
         let prompt = app.build_governance_context_prompt("Explain the transaction isolation model");

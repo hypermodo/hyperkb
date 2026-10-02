@@ -32,6 +32,7 @@ impl MarkdownFormatter {
             DocumentStatus::Resolved => ("✔ RESOLVED", theme.badge_resolved()),
             DocumentStatus::Superseded => ("✕ SUPERSEDED", Style::default().fg(theme.status_superseded())),
             DocumentStatus::Conflict => ("! CONFLICT", theme.badge_conflict()),
+            DocumentStatus::Archived => ("🗄 ARCHIVED", Style::default().fg(theme.status_superseded())),
             DocumentStatus::Unknown => ("· UNKNOWN", Style::default().fg(theme.status_unknown())),
         };
 
@@ -948,6 +949,7 @@ This is **important** and uses `rustc`.
             declared_status: Some("accepted".to_string()),
             checksum: "hash123".to_string(),
             worktree_state: None,
+            is_tombstone: false,
         };
 
         let card_lines = MarkdownFormatter::format_metadata_card(&doc);

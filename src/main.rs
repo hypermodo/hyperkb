@@ -45,6 +45,9 @@ enum Commands {
         limit: usize,
         #[arg(long)]
         include_private: bool,
+        /// Include archived documents and tombstoned content
+        #[arg(long, default_value_t = false)]
+        include_archived: bool,
     },
     /// Browse indexed documents by category or project
     Browse {
@@ -58,12 +61,18 @@ enum Commands {
         status: Option<String>,
         #[arg(short, long)]
         kind: Option<String>,
+        /// Include archived documents and tombstoned content
+        #[arg(long, default_value_t = false)]
+        include_archived: bool,
     },
     /// List segregated projects and their task, risk, and decision status breakdown
     Projects {
         /// Output project summaries as JSON
         #[arg(long)]
         json: bool,
+        /// Include archived projects (e.g. projects/_archive/*)
+        #[arg(long, default_value_t = false)]
+        include_archived: bool,
     },
     /// Initialize or generate thin pointer files for AI harnesses (AGENTS.md, CLAUDE.md, GEMINI.md, etc.)
     #[command(alias = "init_harness", alias = "harness-init")]
@@ -418,6 +427,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             query,
             limit,
             include_private,
+            include_archived,
         }) => {
             let hits = Queries::search(
                 db.conn(),
@@ -426,6 +436,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 &query,
                 limit,
                 include_private,
+                include_archived,
             )?;
             println!("Found {} results for '{}':", hits.len(), query);
             for hit in hits {
@@ -444,6 +455,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             topic,
             status,
             kind,
+            include_archived,
         }) => {
             let opts = BrowseOptions {
                 category,
@@ -451,6 +463,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 topic,
                 status,
                 kind,
+                include_archived,
                 ..Default::default()
             };
             let (docs, total) = Queries::browse(db.conn(), &[collection_id.clone()], &opts)?;
@@ -459,9 +472,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 println!("- [{}] {} ({})", doc.status.as_str(), doc.title, doc.path);
             }
         }
-        Some(Commands::Projects { json }) => {
+        Some(Commands::Projects { json, include_archived }) => {
             let _ = Scanner::index_workspace(db.conn(), &effective_root, &manifest);
-            let summaries = Queries::list_projects(db.conn(), &collection_id)?;
+            let summaries = Queries::list_projects(db.conn(), &collection_id, include_archived)?;
             if json {
                 println!("{}", serde_json::to_string_pretty(&summaries).unwrap());
             } else if summaries.is_empty() {

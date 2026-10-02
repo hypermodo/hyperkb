@@ -3,7 +3,7 @@ use std::fs::OpenOptions;
 use std::path::Path;
 
 const SCHEMA_SQL: &str = include_str!("schema.sql");
-pub const CURRENT_SCHEMA_VERSION: i32 = 6;
+pub const CURRENT_SCHEMA_VERSION: i32 = 7;
 
 pub struct Database {
     conn: Connection,
@@ -112,7 +112,17 @@ impl Database {
     }
 
     fn ensure_identities(&self, collection_id: &str, profile_id: &str) -> Result<()> {
+        let _ = self.conn.execute("ALTER TABLE documents ADD COLUMN is_tombstone INTEGER NOT NULL DEFAULT 0;", []);
+        let _ = self.conn.execute(
+            "UPDATE documents SET is_tombstone = 1 \
+             WHERE is_tombstone = 0 \
+               AND (path LIKE '%/_archive/%' OR path LIKE '%/_draft/%' OR path LIKE '%/refuted/%' OR path LIKE '%/_trash/%' \
+                    OR path LIKE '_archive/%' OR path LIKE '_draft/%' \
+                    OR status IN ('archived', 'refuted', 'tombstoned'));",
+            [],
+        );
         self.conn.execute_batch(SCHEMA_SQL)?;
+        let _ = self.conn.execute("CREATE INDEX IF NOT EXISTS documents_tombstone ON documents(collection_id, is_tombstone);", []);
         self.conn.execute(
             "INSERT INTO collections (id) VALUES (?1) ON CONFLICT(id) DO NOTHING;",
             [collection_id],
@@ -121,6 +131,10 @@ impl Database {
             "INSERT INTO profiles (id) VALUES (?1) ON CONFLICT(id) DO NOTHING;",
             [profile_id],
         )?;
+        let _ = self.conn.execute(
+            &format!("PRAGMA user_version = {};", CURRENT_SCHEMA_VERSION),
+            [],
+        );
         Ok(())
     }
 

@@ -211,6 +211,10 @@ impl McpServer {
                         "limit": {
                             "type": "integer",
                             "description": "Maximum number of results to return (default: 10)"
+                        },
+                        "include_archived": {
+                            "type": "boolean",
+                            "description": "Include tombstoned and archived documents (default: false)"
                         }
                     },
                     "required": ["query"]
@@ -249,6 +253,10 @@ impl McpServer {
                         "offset": {
                             "type": "integer",
                             "description": "Offset for pagination (default: 0)"
+                        },
+                        "include_archived": {
+                            "type": "boolean",
+                            "description": "Include tombstoned and archived documents (default: false)"
                         }
                     }
                 }
@@ -258,7 +266,12 @@ impl McpServer {
                 "description": "List all segregated projects in the repository with health, task counts, open risks, and status documentation coverage.",
                 "inputSchema": {
                     "type": "object",
-                    "properties": {}
+                    "properties": {
+                        "include_archived": {
+                            "type": "boolean",
+                            "description": "Include archived projects and tombstoned directories (default: false)"
+                        }
+                    }
                 }
             }),
             json!({
@@ -639,6 +652,8 @@ impl McpServer {
                     .map(|u| u as usize)
                     .unwrap_or(10);
 
+                let include_archived = args.get("include_archived").and_then(|v| v.as_bool()).unwrap_or(false);
+
                 // Note: include_private = false strictly withholds private memory from agents!
                 let hits = Queries::search(
                     conn,
@@ -647,6 +662,7 @@ impl McpServer {
                     query,
                     limit,
                     false,
+                    include_archived,
                 )
                 .map_err(|e| format!("Failed to search: {}", e))?;
 
@@ -677,6 +693,7 @@ impl McpServer {
                 let topic = args.get("topic").and_then(|v| v.as_str()).map(String::from);
                 let limit = args.get("limit").and_then(|v| v.as_u64()).map(|n| n as usize).unwrap_or(20);
                 let offset = args.get("offset").and_then(|v| v.as_u64()).map(|n| n as usize).unwrap_or(0);
+                let include_archived = args.get("include_archived").and_then(|v| v.as_bool()).unwrap_or(false);
 
                 if let Some(ref sess_id) = current_sess_id {
                     let log_param = project.as_deref().unwrap_or(&category);
@@ -693,6 +710,7 @@ impl McpServer {
                     recent: false,
                     limit,
                     offset,
+                    include_archived,
                 };
 
                 let (docs, total) = Queries::browse(conn, &[collection_id.to_string()], &opts)
@@ -718,11 +736,13 @@ impl McpServer {
             }
 
             "list_projects" => {
+                let include_archived = args.get("include_archived").and_then(|v| v.as_bool()).unwrap_or(false);
+
                 if let Some(ref sess_id) = current_sess_id {
                     let _ = SessionManager::record_tool_call(conn, sess_id, "list_projects", "", "");
                 }
 
-                let projects = Queries::list_projects(conn, collection_id)
+                let projects = Queries::list_projects(conn, collection_id, include_archived)
                     .map_err(|e| format!("Failed to list projects: {}", e))?;
 
                 let serialized = serde_json::to_string_pretty(&projects)
@@ -1807,6 +1827,7 @@ mod tests {
             "Task content",
             &meta,
             "chk-1",
+            false,
         ).unwrap();
         db.conn().execute(
             "UPDATE documents SET kind = 'task', status = 'pending' WHERE source_id = 'doc-proj-1';",
@@ -1824,6 +1845,7 @@ mod tests {
             "Status content",
             &meta,
             "chk-2",
+            false,
         ).unwrap();
 
         let list_proj_req = JsonRpcRequest {

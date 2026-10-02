@@ -27,6 +27,7 @@ impl Queries {
         search_text: &str,
         meta: &RecordMeta,
         checksum: &str,
+        is_tombstone: bool,
     ) -> Result<()> {
         let risk_paths = serde_json::to_string(&meta.paths).unwrap_or_else(|_| "[]".into());
         let risk_versions = serde_json::to_string(&meta.versions).unwrap_or_else(|_| "[]".into());
@@ -50,8 +51,8 @@ impl Queries {
             "INSERT INTO documents (
                 source_id, collection_id, path, topic, title, content, search_text,
                 status, kind, owner, issue, risk_paths, risk_versions, risk_environments,
-                supersedes, checksum, indexed_at
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)
+                supersedes, checksum, indexed_at, is_tombstone
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)
              ON CONFLICT(source_id) DO UPDATE SET
                 collection_id=excluded.collection_id,
                 path=excluded.path,
@@ -68,7 +69,8 @@ impl Queries {
                 risk_environments=excluded.risk_environments,
                 supersedes=excluded.supersedes,
                 checksum=excluded.checksum,
-                indexed_at=excluded.indexed_at;",
+                indexed_at=excluded.indexed_at,
+                is_tombstone=excluded.is_tombstone;",
             params![
                 source_id,
                 collection_id,
@@ -86,7 +88,8 @@ impl Queries {
                 risk_environments,
                 supersedes,
                 checksum,
-                now
+                now,
+                if is_tombstone { 1 } else { 0 }
             ],
         )?;
         Ok(())
@@ -96,7 +99,8 @@ impl Queries {
         let mut stmt = conn.prepare(
             "SELECT d.source_id, d.collection_id, d.path, d.title, d.topic,
                     e.effective_status, d.kind, d.owner, d.issue,
-                    e.replacement_id, d.supersedes, d.content, d.checksum
+                    e.replacement_id, d.supersedes, d.content, d.checksum,
+                    d.is_tombstone
              FROM effective_documents e
              JOIN documents d ON d.id = e.id
              WHERE d.source_id = ?1 OR d.path = ?1;",
@@ -108,6 +112,7 @@ impl Queries {
             let kind_str: String = row.get(6)?;
             let replacement: String = row.get(9)?;
             let supersedes_val: String = row.get(10)?;
+            let is_tombstone_num: i64 = row.get(13).unwrap_or(0);
 
             Ok(Some(Document {
                 id: row.get(0)?,
@@ -136,6 +141,7 @@ impl Queries {
                 declared_status: Some(status_str),
                 checksum: row.get(12)?,
                 worktree_state: None,
+                is_tombstone: is_tombstone_num > 0,
             }))
         } else {
             Ok(None)
@@ -149,6 +155,7 @@ impl Queries {
         query: &str,
         limit: usize,
         include_private: bool,
+        include_archived: bool,
     ) -> Result<Vec<Hit>> {
         let (and_expr, or_expr) = crate::core::QueryExpander::expand(query);
         if and_expr.is_empty() || collection_ids.is_empty() {
@@ -162,6 +169,7 @@ impl Queries {
             &and_expr,
             limit,
             include_private,
+            include_archived,
             false,
         )?;
 
@@ -174,6 +182,7 @@ impl Queries {
                     or_str,
                     limit,
                     include_private,
+                    include_archived,
                     true,
                 )?;
             }
@@ -189,6 +198,7 @@ impl Queries {
         match_expr: &str,
         limit: usize,
         include_private: bool,
+        include_archived: bool,
         broadened: bool,
     ) -> Result<Vec<Hit>> {
         let placeholders = collection_ids
@@ -197,18 +207,24 @@ impl Queries {
             .collect::<Vec<_>>()
             .join(",");
 
+        let tombstone_filter = if include_archived {
+            ""
+        } else {
+            "AND d.is_tombstone = 0"
+        };
+
         let sql = format!(
             "SELECT d.source_id, d.collection_id, d.path, d.title, d.topic,
                     e.effective_status, d.kind, e.replacement_id, d.supersedes,
                     d.checksum, snippet(documents_fts, 2, '[', ']', '…', 24),
-                    bm25(documents_fts)
+                    bm25(documents_fts), d.is_tombstone
              FROM documents_fts
              JOIN documents d ON d.id = documents_fts.rowid
              JOIN effective_documents e ON e.id = d.id
-             WHERE d.collection_id IN ({}) AND documents_fts MATCH ?
+             WHERE d.collection_id IN ({}) AND documents_fts MATCH ? {}
              ORDER BY bm25(documents_fts)
              LIMIT ?;",
-            placeholders
+            placeholders, tombstone_filter
         );
 
         let mut params: Vec<rusqlite::types::Value> = collection_ids
@@ -224,6 +240,7 @@ impl Queries {
             let kind_str: String = row.get(6)?;
             let replacement: String = row.get(7)?;
             let supersedes_val: String = row.get(8)?;
+            let is_tombstone_val: i64 = row.get(12).unwrap_or(0);
 
             Ok(Hit {
                 id: row.get(0)?,
@@ -251,6 +268,7 @@ impl Queries {
                 declared_status: Some(status_str),
                 worktree_state: None,
                 broadened,
+                is_tombstone: is_tombstone_val > 0,
             })
         })?;
 
@@ -299,6 +317,7 @@ impl Queries {
                         declared_status: None,
                         worktree_state: None,
                         broadened,
+                        is_tombstone: false,
                     })
                 },
             )?;
@@ -380,6 +399,10 @@ impl Queries {
             params.push(rusqlite::types::Value::Text(topic.clone()));
         }
 
+        if !opts.include_archived {
+            where_clauses.push("d.is_tombstone = 0".into());
+        }
+
         let where_sql = where_clauses.join(" AND ");
 
         let count_sql = format!(
@@ -403,7 +426,8 @@ impl Queries {
         let fetch_sql = format!(
             "SELECT d.source_id, d.collection_id, d.path, d.title, d.topic,
                     e.effective_status, d.kind, d.owner, d.issue,
-                    e.replacement_id, d.supersedes, d.content, d.checksum
+                    e.replacement_id, d.supersedes, d.content, d.checksum,
+                    d.is_tombstone
              FROM documents d
              JOIN effective_documents e ON e.id = d.id
              WHERE {}
@@ -422,6 +446,7 @@ impl Queries {
             let kind_str: String = row.get(6)?;
             let replacement: String = row.get(9)?;
             let supersedes_val: String = row.get(10)?;
+            let is_tombstone_num: i64 = row.get(13).unwrap_or(0);
 
             Ok(Document {
                 id: row.get(0)?,
@@ -450,6 +475,7 @@ impl Queries {
                 declared_status: Some(status_str),
                 checksum: row.get(12)?,
                 worktree_state: None,
+                is_tombstone: is_tombstone_num > 0,
             })
         })?;
 
@@ -464,8 +490,15 @@ impl Queries {
     pub fn list_projects(
         conn: &Connection,
         collection_id: &str,
+        include_archived: bool,
     ) -> Result<Vec<crate::domain::ProjectSummary>> {
-        let mut stmt = conn.prepare(
+        let filter = if include_archived {
+            ""
+        } else {
+            "AND is_tombstone = 0 AND substr(path, 10, instr(substr(path, 10), '/') - 1) NOT IN ('_archive', '_draft', '_archived')"
+        };
+
+        let sql = format!(
             "SELECT
                 substr(path, 10, instr(substr(path, 10), '/') - 1) AS proj_name,
                 count(*) AS total_docs,
@@ -477,12 +510,14 @@ impl Queries {
                 count(CASE WHEN kind = 'decision' THEN 1 END) AS decisions_count,
                 max(CASE WHEN lower(path) = 'projects/' || lower(substr(path, 10, instr(substr(path, 10), '/') - 1)) || '/status.md' THEN 1 ELSE 0 END) AS has_status
              FROM documents
-             WHERE collection_id = ?1 AND path LIKE 'projects/%/%'
+             WHERE collection_id = ?1 AND path LIKE 'projects/%/%' {}
              GROUP BY proj_name
              HAVING length(proj_name) > 0
              ORDER BY proj_name ASC;",
-        )?;
+            filter
+        );
 
+        let mut stmt = conn.prepare(&sql)?;
         let mut rows = stmt.query([collection_id])?;
         let mut summaries = Vec::new();
 
@@ -581,7 +616,7 @@ impl Queries {
                     d.risk_paths, d.risk_versions, d.risk_environments
              FROM effective_documents e
              JOIN documents d ON d.id = e.id
-             WHERE d.collection_id = ?1 AND d.kind = 'risk' AND e.effective_status NOT IN ('superseded', 'resolved');",
+             WHERE d.collection_id = ?1 AND d.kind = 'risk' AND e.effective_status NOT IN ('superseded', 'resolved') AND d.is_tombstone = 0;",
         )?;
 
         let mut rows = stmt.query([collection_id])?;
@@ -615,6 +650,7 @@ impl Queries {
                 declared_status: Some(status_str),
                 checksum: row.get(12)?,
                 worktree_state: None,
+                is_tombstone: false,
             };
 
             let paths: Vec<String> = serde_json::from_str(&paths_json).unwrap_or_default();
@@ -903,7 +939,7 @@ impl Queries {
         let mut stmt = conn.prepare(
             "SELECT d.title, d.topic FROM documents d
              JOIN effective_documents e ON e.id = d.id
-             WHERE d.collection_id = ?1 AND d.kind = 'decision' AND e.effective_status = 'accepted'
+             WHERE d.collection_id = ?1 AND d.kind = 'decision' AND e.effective_status = 'accepted' AND d.is_tombstone = 0
              ORDER BY d.id DESC LIMIT ?2;",
         )?;
         let rows = stmt.query_map(params![collection_id, limit as i64], |row| {
@@ -1093,6 +1129,7 @@ mod tests {
             "Zero-Cost Rust Architecture This decision replaces Go with high-performance Rust.",
             &meta,
             "abc123hash",
+            false,
         )?;
 
         let hits = Queries::search(
@@ -1101,6 +1138,7 @@ mod tests {
             "prof_1",
             "architecture",
             10,
+            false,
             false,
         )?;
         assert_eq!(hits.len(), 1);
@@ -1114,6 +1152,7 @@ mod tests {
             "prof_1",
             "architecture missingword",
             10,
+            false,
             false,
         )?;
         assert_eq!(hits_broadened.len(), 1);
@@ -1141,6 +1180,7 @@ mod tests {
             "token expiration",
             10,
             true,
+            false,
         )?;
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].id, "mem_001");
@@ -1152,6 +1192,7 @@ mod tests {
             "prof_1",
             "token expiration",
             10,
+            false,
             false,
         )?;
         assert_eq!(hits_agent.len(), 0);
@@ -1186,6 +1227,7 @@ mod tests {
             "JWT Session Invalidation Flaw Editing auth tokens without revoking sessions causes CVE regression.",
             &meta,
             "hash999",
+            false,
         )?;
 
         let check = Queries::check_work(
@@ -1239,6 +1281,7 @@ mod tests {
             "Relational Storage Engine We are standardizing our database layer with WAL journal mode and busy timeouts.",
             &meta1,
             "hash_db_1",
+            false,
         )?;
 
         let meta2 = RecordMeta {
@@ -1265,6 +1308,7 @@ mod tests {
             "Session Invalidation All user credentials and tokens must be verified before granting access.",
             &meta2,
             "hash_auth_1",
+            false,
         )?;
 
         // Search for shorthand "db" should find the document that only mentions "database"
@@ -1274,6 +1318,7 @@ mod tests {
             "prof_syn",
             "db",
             10,
+            false,
             false,
         )?;
         assert_eq!(db_hits.len(), 1);
@@ -1287,6 +1332,7 @@ mod tests {
             "auth",
             10,
             false,
+            false,
         )?;
         assert_eq!(auth_hits.len(), 1);
         assert_eq!(auth_hits[0].id, "doc_auth");
@@ -1298,6 +1344,7 @@ mod tests {
             "prof_syn",
             r#""database layer""#,
             10,
+            false,
             false,
         )?;
         assert_eq!(phrase_hits.len(), 1);
@@ -1440,6 +1487,7 @@ mod tests {
             "Pending task",
             &meta_task,
             "chk1",
+            false,
         )?;
         db.conn().execute(
             "UPDATE documents SET kind = 'task', status = 'pending' WHERE source_id = 'doc-1';",
@@ -1457,6 +1505,7 @@ mod tests {
             "In progress task",
             &meta_task,
             "chk2",
+            false,
         )?;
         db.conn().execute(
             "UPDATE documents SET kind = 'task', status = 'in_progress' WHERE source_id = 'doc-2';",
@@ -1474,6 +1523,7 @@ mod tests {
             "Open risk",
             &meta_task,
             "chk3",
+            false,
         )?;
         db.conn().execute(
             "UPDATE documents SET kind = 'risk', status = 'open' WHERE source_id = 'doc-3';",
@@ -1491,6 +1541,7 @@ mod tests {
             "Current status",
             &meta_task,
             "chk4",
+            false,
         )?;
 
         Queries::upsert_document(
@@ -1504,13 +1555,14 @@ mod tests {
             "Completed task",
             &meta_task,
             "chk5",
+            false,
         )?;
         db.conn().execute(
             "UPDATE documents SET kind = 'task', status = 'completed' WHERE source_id = 'doc-5';",
             [],
         )?;
 
-        let projects = Queries::list_projects(db.conn(), "coll_proj")?;
+        let projects = Queries::list_projects(db.conn(), "coll_proj", false)?;
         assert_eq!(projects.len(), 2);
 
         let alpha = &projects[0];
@@ -1529,6 +1581,90 @@ mod tests {
         assert_eq!(beta.total_documents, 1);
         assert_eq!(beta.tasks_completed, 1);
         assert!(!beta.has_status_doc);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_tombstone_filtering() -> Result<()> {
+        let db = Database::open_in_memory("coll_tomb", "prof_tomb")?;
+        let meta = RecordMeta::default();
+
+        // 1. Active document
+        Queries::upsert_document(
+            db.conn(),
+            "doc_active",
+            "coll_tomb",
+            "projects/api/specs/auth.md",
+            "specs",
+            "Auth Specification",
+            "Active auth specification details",
+            "Auth Specification Active auth specification details",
+            &meta,
+            "chk_act",
+            false,
+        )?;
+
+        // 2. Tombstoned document (e.g. archived plan)
+        Queries::upsert_document(
+            db.conn(),
+            "doc_archived",
+            "coll_tomb",
+            "projects/api/plans/old_plan.md",
+            "plans",
+            "Old Auth Plan",
+            "Obsolete implementation plan for auth",
+            "Old Auth Plan Obsolete implementation plan for auth",
+            &meta,
+            "chk_arc",
+            true,
+        )?;
+
+        // Default search: tombstones excluded
+        let search_clean = Queries::search(
+            db.conn(),
+            &["coll_tomb".into()],
+            "prof_tomb",
+            "auth",
+            10,
+            false,
+            false,
+        )?;
+        assert_eq!(search_clean.len(), 1);
+        assert_eq!(search_clean[0].id, "doc_active");
+
+        // Search with include_archived: both returned
+        let search_all = Queries::search(
+            db.conn(),
+            &["coll_tomb".into()],
+            "prof_tomb",
+            "auth",
+            10,
+            false,
+            true,
+        )?;
+        assert_eq!(search_all.len(), 2);
+
+        // Default browse: tombstones excluded
+        let opts_default = BrowseOptions {
+            collection_id: Some("coll_tomb".into()),
+            include_archived: false,
+            ..Default::default()
+        };
+        let (browse_clean, total_clean) = Queries::browse(db.conn(), &["coll_tomb".into()], &opts_default)?;
+        assert_eq!(total_clean, 1);
+        assert_eq!(browse_clean.len(), 1);
+        assert_eq!(browse_clean[0].id, "doc_active");
+
+        // Browse with include_archived: both returned
+        let opts_all = BrowseOptions {
+            collection_id: Some("coll_tomb".into()),
+            include_archived: true,
+            ..Default::default()
+        };
+        let (browse_all, total_all) = Queries::browse(db.conn(), &["coll_tomb".into()], &opts_all)?;
+        assert_eq!(total_all, 2);
+        assert_eq!(browse_all.len(), 2);
 
         Ok(())
     }

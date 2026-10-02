@@ -13,6 +13,7 @@ pub enum DocumentStatus {
     InProgress,
     Completed,
     Blocked,
+    Archived,
     Unknown,
     Conflict,
 }
@@ -36,6 +37,7 @@ impl DocumentStatus {
             DocumentStatus::InProgress => "in_progress",
             DocumentStatus::Completed => "completed",
             DocumentStatus::Blocked => "blocked",
+            DocumentStatus::Archived => "archived",
             DocumentStatus::Unknown => "unknown",
             DocumentStatus::Conflict => "conflict",
         }
@@ -53,6 +55,7 @@ impl DocumentStatus {
             "in_progress" | "inprogress" | "active" => DocumentStatus::InProgress,
             "completed" | "done" => DocumentStatus::Completed,
             "blocked" => DocumentStatus::Blocked,
+            "archived" => DocumentStatus::Archived,
             "conflict" => DocumentStatus::Conflict,
             _ => DocumentStatus::Unknown,
         }
@@ -123,6 +126,8 @@ pub struct Document {
     pub declared_status: Option<String>,
     pub checksum: String,
     pub worktree_state: Option<String>,
+    #[serde(default)]
+    pub is_tombstone: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -144,6 +149,8 @@ pub struct Hit {
     pub declared_status: Option<String>,
     pub worktree_state: Option<String>,
     pub broadened: bool,
+    #[serde(default)]
+    pub is_tombstone: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -197,6 +204,8 @@ pub struct BrowseOptions {
     pub recent: bool,
     pub limit: usize,
     pub offset: usize,
+    #[serde(default)]
+    pub include_archived: bool,
 }
 
 impl Default for BrowseOptions {
@@ -211,6 +220,7 @@ impl Default for BrowseOptions {
             recent: false,
             limit: 20,
             offset: 0,
+            include_archived: false,
         }
     }
 }

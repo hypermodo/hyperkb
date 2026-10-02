@@ -59,6 +59,9 @@ impl ExploreView {
                     DocumentStatus::Conflict => {
                         ("! CONFLICT ", t.badge_conflict())
                     }
+                    DocumentStatus::Archived => {
+                        ("🗄 ARCHIVED ", Style::default().fg(t.status_superseded()))
+                    }
                     DocumentStatus::Unknown => {
                         if doc.kind == DocumentKind::Risk {
                             ("▲ RISK ", t.badge_risk())

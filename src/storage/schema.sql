@@ -35,12 +35,14 @@ CREATE TABLE IF NOT EXISTS documents (
   supersedes TEXT NOT NULL DEFAULT '',
   checksum TEXT NOT NULL,
   indexed_at TEXT NOT NULL,
+  is_tombstone INTEGER NOT NULL DEFAULT 0,
   UNIQUE(collection_id, path)
 );
 
 CREATE INDEX IF NOT EXISTS documents_collection_path ON documents(collection_id, path);
 CREATE INDEX IF NOT EXISTS documents_collection_topic ON documents(collection_id, topic);
 CREATE INDEX IF NOT EXISTS documents_supersedes ON documents(collection_id, supersedes, status);
+CREATE INDEX IF NOT EXISTS documents_tombstone ON documents(collection_id, is_tombstone);
 
 CREATE VIEW IF NOT EXISTS effective_documents AS
 SELECT d.*,
