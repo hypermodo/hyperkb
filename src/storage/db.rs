@@ -67,6 +67,10 @@ impl Database {
         } else {
             if let Some(parent) = path.parent() {
                 let _ = std::fs::create_dir_all(parent);
+                let gi = parent.join(".gitignore");
+                if !gi.exists() {
+                    let _ = std::fs::write(&gi, "*\n");
+                }
             }
             Self::create(path, collection_id, profile_id)
         }

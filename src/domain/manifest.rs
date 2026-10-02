@@ -270,6 +270,11 @@ impl RepoManifest {
             start_path.to_path_buf()
         };
 
+        // If target doesn't exist, do not attempt to search parent or sibling paths
+        if !target.exists() {
+            return (target, None);
+        }
+
         // 1. Check if target directly contains hyperkb.json or .hyperkb/
         if target.join(Self::FILE_NAME).exists() || target.join(".hyperkb").exists() {
             return (target, None);
@@ -281,7 +286,7 @@ impl RepoManifest {
 
         // 2. Check parent directory directly
         if let Some(parent) = target.parent() {
-            if parent.join(Self::FILE_NAME).exists() || parent.join(".hyperkb").exists() {
+            if !parent.as_os_str().is_empty() && (parent.join(Self::FILE_NAME).exists() || parent.join(".hyperkb").exists()) {
                 return (parent.to_path_buf(), curr_name);
             }
 
@@ -322,7 +327,7 @@ impl RepoManifest {
         let mut ancestor = target.parent();
         for _ in 0..4 {
             if let Some(p) = ancestor {
-                if p.join(Self::FILE_NAME).exists() || p.join(".hyperkb").exists() {
+                if !p.as_os_str().is_empty() && (p.join(Self::FILE_NAME).exists() || p.join(".hyperkb").exists()) {
                     return (p.to_path_buf(), curr_name);
                 }
                 ancestor = p.parent();

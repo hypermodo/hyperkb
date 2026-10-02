@@ -378,11 +378,22 @@ impl SessionManager {
                                 |row| row.get::<_, String>(0),
                             ).unwrap_or_else(|_| format!("Task {}", active_task_id));
 
+                            let is_blocked = status_doc.health == crate::domain::HealthState::Blocked;
+                            let constraint = if is_blocked {
+                                let blk_desc = status_doc.blockers.iter()
+                                    .find(|b| !b.resolved)
+                                    .map(|b| b.description.as_str())
+                                    .unwrap_or("Active blocker reported");
+                                format!("TASK IS CURRENTLY BLOCKED: {}. Do not thrash codebase; escalate or switch critical path to fix the blocker.", blk_desc)
+                            } else {
+                                "You are prohibited from refactoring other files or addressing adjacent bugs until this task passes verification.".to_string()
+                            };
+
                             return Some(CriticalPathLock {
                                 project,
                                 task_id: active_task_id,
                                 task_title,
-                                constraint: "You are prohibited from refactoring other files or addressing adjacent bugs until this task passes verification.".to_string(),
+                                constraint,
                             });
                         }
                     }

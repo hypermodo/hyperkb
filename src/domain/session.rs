@@ -271,7 +271,11 @@ impl SessionBriefing {
         }
 
         if let Some(lock) = locked_critical_path {
-            out.push_str("### 🔒 LOCKED CRITICAL PATH\n");
+            if lock.constraint.starts_with("TASK IS CURRENTLY BLOCKED") {
+                out.push_str("### ⚠️ BLOCKED CRITICAL PATH\n");
+            } else {
+                out.push_str("### 🔒 LOCKED CRITICAL PATH\n");
+            }
             out.push_str(&format!("- **Task**: `{}` ({}) [Project: `{}`]\n", lock.task_id, lock.task_title, lock.project));
             out.push_str(&format!("- **Constraint**: {}\n\n", lock.constraint));
         }

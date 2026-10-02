@@ -1743,7 +1743,18 @@ mod tests {
     fn test_mcp_check_work_auto_diff() {
         let db = Database::open_in_memory("coll_test", "prof_test").unwrap();
 
-        // 1. In active repo with modified files, check_work with no files auto-detects diffs
+        // 1. In a repo with modified files, check_work with no files auto-detects diffs
+        let temp_git = std::env::temp_dir().join(format!("hyperkb-git-diff-{}", uuid::Uuid::now_v7()));
+        let _ = std::fs::create_dir_all(&temp_git);
+        let _ = std::process::Command::new("git").arg("init").current_dir(&temp_git).output();
+        let _ = std::process::Command::new("git").args(["config", "user.name", "Test"]).current_dir(&temp_git).output();
+        let _ = std::process::Command::new("git").args(["config", "user.email", "test@test.com"]).current_dir(&temp_git).output();
+        let dummy_file = temp_git.join("modified.txt");
+        let _ = std::fs::write(&dummy_file, "initial content\n");
+        let _ = std::process::Command::new("git").args(["add", "."]).current_dir(&temp_git).output();
+        let _ = std::process::Command::new("git").args(["commit", "-m", "initial"]).current_dir(&temp_git).output();
+        let _ = std::fs::write(&dummy_file, "modified content\n");
+
         let call_req = JsonRpcRequest {
             jsonrpc: "2.0".into(),
             id: Some(json!(31)),
@@ -1754,9 +1765,10 @@ mod tests {
             })),
         };
 
-        let call_resp = McpServer::handle_request(".", db.conn(), "coll_test", "prof_test", call_req.clone()).unwrap();
+        let call_resp = McpServer::handle_request(&temp_git, db.conn(), "coll_test", "prof_test", call_req.clone()).unwrap();
         let content_text = call_resp.result.unwrap()["content"][0]["text"].as_str().unwrap().to_string();
         assert!(content_text.contains("checked_paths"));
+        let _ = std::fs::remove_dir_all(&temp_git);
 
         // 2. In a clean directory with no git changes, check_work returns clean message
         let temp_clean = std::env::temp_dir().join(format!("hyperkb-clean-{}", uuid::Uuid::now_v7()));

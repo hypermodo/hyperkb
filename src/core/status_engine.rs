@@ -194,7 +194,7 @@ impl StatusEngine {
             Ok(())
         })?;
 
-        // Sync with status.md active_task critical path
+        // Sync with status.md active_task critical path and blockers
         if let Ok(status_path) = Self::ensure_status_file(&project_dir, project) {
             let _ = FrontmatterSplicer::splice_file(&status_path, |val| {
                 if let Some(map) = val.as_mapping_mut() {
@@ -205,6 +205,27 @@ impl StatusEngine {
                         if let Some(curr) = map.get(&active_key) {
                             if curr.as_str() == Some(task_id) {
                                 map.remove(&active_key);
+                            }
+                        }
+                    } else if to_state == TaskState::Blocked {
+                        map.insert(
+                            serde_yaml::Value::String("health".to_string()),
+                            serde_yaml::Value::String("blocked".to_string()),
+                        );
+                        map.insert(
+                            serde_yaml::Value::String("status".to_string()),
+                            serde_yaml::Value::String("blocked".to_string()),
+                        );
+                        if let Some(r) = reason {
+                            let blk_key = serde_yaml::Value::String("blockers".to_string());
+                            let blockers_seq = map.entry(blk_key).or_insert_with(|| serde_yaml::Value::Sequence(Vec::new()));
+                            if let Some(seq) = blockers_seq.as_sequence_mut() {
+                                let mut item_map = serde_yaml::Mapping::new();
+                                let short_id = format!("blk-{}", &uuid::Uuid::now_v7().to_string()[..8]);
+                                item_map.insert(serde_yaml::Value::String("id".to_string()), serde_yaml::Value::String(short_id));
+                                item_map.insert(serde_yaml::Value::String("description".to_string()), serde_yaml::Value::String(format!("{}: {}", task_id, r)));
+                                item_map.insert(serde_yaml::Value::String("resolved".to_string()), serde_yaml::Value::Bool(false));
+                                seq.push(serde_yaml::Value::Mapping(item_map));
                             }
                         }
                     }
@@ -277,6 +298,32 @@ impl StatusEngine {
                 return trimmed["Goal:".len()..].trim().to_string();
             }
         }
+
+        // Fallback: extract the first non-header, non-table descriptive paragraph
+        let mut in_table = false;
+        for line in body.lines() {
+            let trimmed = line.trim();
+            if trimmed.starts_with('#') || trimmed.is_empty() {
+                continue;
+            }
+            if trimmed.starts_with('|') {
+                in_table = true;
+                continue;
+            }
+            if in_table && trimmed.starts_with('|') {
+                continue;
+            }
+            in_table = false;
+            if trimmed.len() > 15 && !trimmed.starts_with("---") {
+                let snippet = if trimmed.len() > 120 {
+                    format!("{}...", &trimmed[..117])
+                } else {
+                    trimmed.to_string()
+                };
+                return snippet;
+            }
+        }
+
         "No goal specified".to_string()
     }
 
@@ -469,6 +516,23 @@ mod tests {
         let status_after_complete = StatusEngine::get_project_status(&temp_dir, project_name)
             .expect("should read status");
         assert_eq!(status_after_complete.active_task, None);
+
+        // 4. Verify transitioning task to Blocked automatically updates status.md health and blockers
+        let blocked_task = StatusEngine::transition_task(
+            &temp_dir,
+            project_name,
+            "task-43",
+            TaskState::Blocked,
+            Some("Upstream dependency broken"),
+        ).expect("should block task");
+        assert_eq!(blocked_task.status, TaskState::Blocked);
+
+        let status_after_block = StatusEngine::get_project_status(&temp_dir, project_name)
+            .expect("should read status");
+        assert_eq!(status_after_block.health, HealthState::Blocked);
+        assert_eq!(status_after_block.status, StatusState::Blocked);
+        assert!(!status_after_block.blockers.is_empty());
+        assert!(status_after_block.blockers.iter().any(|b| b.description.contains("Upstream dependency broken")));
 
         let _ = fs::remove_dir_all(&temp_dir);
     }

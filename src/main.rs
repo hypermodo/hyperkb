@@ -470,7 +470,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         RepoManifest::resolve_root(&cli.root)
     };
 
-    if effective_root != cli.root && !matches!(cli.command, Some(Commands::Mcp)) {
+    if !effective_root.exists() && !matches!(cli.command, Some(Commands::Init { .. })) {
+        eprintln!("Error: Root path '{}' does not exist.", cli.root.display());
+        std::process::exit(1);
+    }
+
+    let is_same_target = cli.root.canonicalize().ok() == effective_root.canonicalize().ok();
+    if !is_same_target && !matches!(cli.command, Some(Commands::Mcp)) {
         eprintln!(
             "ℹ Discovered sibling knowledge hub: {}{}",
             effective_root.display(),
@@ -633,14 +639,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             let mut auto_detected = false;
             if files.is_empty() && !staged && !changed {
-                if let Ok(auto_files) = Git::get_modified_and_untracked_files(&cli.root) {
+                if let Ok(auto_files) = Git::get_modified_and_untracked_files(&effective_root) {
                     files.extend(auto_files);
                     auto_detected = true;
                 }
             }
             files = files
                 .into_iter()
-                .map(|f| hyperkb::core::RiskEngine::normalize_path(&f, Some(&cli.root)))
+                .map(|f| hyperkb::core::RiskEngine::normalize_path(&f, Some(&effective_root)))
                 .filter(|f| !f.is_empty())
                 .collect();
             files.sort();

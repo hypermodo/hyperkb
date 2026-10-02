@@ -252,6 +252,14 @@ impl Git {
         if let Ok(untracked) = Self::untracked_files(root) {
             files.extend(untracked);
         }
+        files.retain(|f| {
+            !f.starts_with(".hyperkb") &&
+            !f.starts_with(".git") &&
+            !f.ends_with(".DS_Store") &&
+            !f.ends_with(".db-wal") &&
+            !f.ends_with(".db-shm") &&
+            !f.ends_with(".db")
+        });
         files.sort();
         files.dedup();
         Ok(files)
