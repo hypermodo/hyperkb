@@ -31,7 +31,7 @@ pub use schema::{
     HealthState, MilestoneItem, PlanDocument, SpecDocument, StatusDocument, StatusState,
     TaskDocument, TaskState, ViolationItem,
 };
-pub use session::{AgentSession, SessionBriefing, SessionEventRecord, SessionScorecard};
+pub use session::{AgentSession, CriticalPathLock, SessionBriefing, SessionEventRecord, SessionScorecard};
 
 
 

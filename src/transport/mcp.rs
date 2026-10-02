@@ -570,6 +570,31 @@ impl McpServer {
                     "required": ["project"]
                 }
             }),
+            json!({
+                "name": "defer_finding",
+                "description": "Divert an adjacent bug, technical debt, or side-quest finding into the project's BACKLOG.md to prevent context thrashing and stay on the Critical Path.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "project": { "type": "string", "description": "Project name (e.g. data-load-throughput)" },
+                        "title": { "type": "string", "description": "Title of the deferred finding or technical debt" },
+                        "details": { "type": "string", "description": "Specific details or code citations" },
+                        "severity": { "type": "string", "description": "Optional severity: low, medium, high, debt (default: debt)" }
+                    },
+                    "required": ["project", "title", "details"]
+                }
+            }),
+            json!({
+                "name": "verify_exit_criteria",
+                "description": "Execute the project's exit criteria command and automatically transition the project to completed if exit code matches.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "project": { "type": "string", "description": "Project name" }
+                    },
+                    "required": ["project"]
+                }
+            }),
         ]
     }
 
@@ -1528,6 +1553,87 @@ impl McpServer {
                 }
             }
 
+            "defer_finding" => {
+                let project = args
+                    .get("project")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| "Missing required argument 'project'".to_string())?;
+                let title = args
+                    .get("title")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| "Missing required argument 'title'".to_string())?;
+                let details = args
+                    .get("details")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| "Missing required argument 'details'".to_string())?;
+                let severity = args.get("severity").and_then(|v| v.as_str());
+
+                if let Some(ref sess_id) = current_sess_id {
+                    let _ = SessionManager::record_tool_call(
+                        conn,
+                        sess_id,
+                        "defer_finding",
+                        &format!("projects/{}/BACKLOG.md", project),
+                        title,
+                    );
+                }
+
+                match crate::core::StatusEngine::defer_finding(root, project, title, details, severity) {
+                    Ok(finding_id) => {
+                        let reply = json!({
+                            "finding_id": finding_id,
+                            "project": project,
+                            "file": format!("projects/{}/BACKLOG.md", project),
+                            "instruction": "Finding recorded to project backlog. You are strictly prohibited from addressing this now. Return immediately to the active Critical Path task."
+                        });
+                        Ok(json!({
+                            "content": [{ "type": "text", "text": serde_json::to_string_pretty(&reply).unwrap_or_default() }],
+                            "isError": false
+                        }))
+                    }
+                    Err(err) => Ok(json!({
+                        "content": [{ "type": "text", "text": format!("Error deferring finding: {}", err) }],
+                        "isError": true
+                    })),
+                }
+            }
+
+            "verify_exit_criteria" => {
+                let project = args
+                    .get("project")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| "Missing required argument 'project'".to_string())?;
+
+                if let Some(ref sess_id) = current_sess_id {
+                    let _ = SessionManager::record_tool_call(
+                        conn,
+                        sess_id,
+                        "verify_exit_criteria",
+                        &format!("projects/{}/status.md", project),
+                        "",
+                    );
+                }
+
+                match crate::core::StatusEngine::verify_exit_criteria(root, project) {
+                    Ok(res) => {
+                        if res.passed {
+                            let manifest = crate::domain::RepoManifest::load_or_default(root);
+                            let _ = crate::core::Scanner::index_workspace(conn, root, &manifest);
+                        }
+                        let serialized = serde_json::to_string_pretty(&res)
+                            .map_err(|e| format!("Serialization error: {}", e))?;
+                        Ok(json!({
+                            "content": [{ "type": "text", "text": serialized }],
+                            "isError": !res.passed
+                        }))
+                    }
+                    Err(err) => Ok(json!({
+                        "content": [{ "type": "text", "text": format!("Error verifying exit criteria: {}", err) }],
+                        "isError": true
+                    })),
+                }
+            }
+
             _ => Err(format!("Unknown tool '{}'", tool_name)),
         }
     }
@@ -2122,6 +2228,58 @@ mod tests {
         let get_resp = McpServer::handle_request(root_str, db.conn(), "coll_test", "prof_test", get_status_req).unwrap();
         let get_val: Value = serde_json::from_str(get_resp.result.unwrap()["content"][0]["text"].as_str().unwrap()).unwrap();
         assert_eq!(get_val["active_task"], "task-01");
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_mcp_defer_finding_and_verify_exit_criteria() {
+        let temp_dir = std::env::temp_dir().join(format!("hyperkb_test_mcp_exit_{}", uuid::Uuid::now_v7()));
+        let db = Database::open_in_memory("coll_test", "prof_test").unwrap();
+        let root_str = temp_dir.to_str().unwrap();
+
+        // 1. defer_finding tool
+        let defer_req = JsonRpcRequest {
+            jsonrpc: "2.0".into(),
+            id: Some(json!(70)),
+            method: "tools/call".into(),
+            params: Some(json!({
+                "name": "defer_finding",
+                "arguments": {
+                    "project": "core-engine",
+                    "title": "Audit OpenSSL Bindings",
+                    "details": "Static analysis memory safety check",
+                    "severity": "medium"
+                }
+            })),
+        };
+
+        let defer_resp = McpServer::handle_request(root_str, db.conn(), "coll_test", "prof_test", defer_req).unwrap();
+        let defer_val: Value = serde_json::from_str(defer_resp.result.unwrap()["content"][0]["text"].as_str().unwrap()).unwrap();
+        assert!(defer_val["instruction"].as_str().unwrap().contains("prohibited"));
+        assert!(temp_dir.join("projects/core-engine/BACKLOG.md").exists());
+
+        // 2. verify_exit_criteria tool
+        let project_dir = temp_dir.join("projects/core-engine");
+        let status_md = "---\nid: status-core-engine\nstatus: active\nhealth: healthy\nexit_criteria:\n  command: \"echo exit_ok\"\n  expected_exit_code: 0\n---\n# Status\n";
+        std::fs::write(project_dir.join("status.md"), status_md).unwrap();
+
+        let verify_req = JsonRpcRequest {
+            jsonrpc: "2.0".into(),
+            id: Some(json!(71)),
+            method: "tools/call".into(),
+            params: Some(json!({
+                "name": "verify_exit_criteria",
+                "arguments": {
+                    "project": "core-engine"
+                }
+            })),
+        };
+
+        let verify_resp = McpServer::handle_request(root_str, db.conn(), "coll_test", "prof_test", verify_req).unwrap();
+        let verify_val: Value = serde_json::from_str(verify_resp.result.unwrap()["content"][0]["text"].as_str().unwrap()).unwrap();
+        assert_eq!(verify_val["passed"], true);
+        assert_eq!(verify_val["exit_code"], 0);
 
         let _ = std::fs::remove_dir_all(&temp_dir);
     }

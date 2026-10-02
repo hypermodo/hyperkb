@@ -1,4 +1,4 @@
-use crate::domain::{AgentSession, SessionBriefing, SessionScorecard};
+use crate::domain::{AgentSession, CriticalPathLock, SessionBriefing, SessionScorecard};
 use crate::storage::Queries;
 use chrono::Utc;
 use rusqlite::Connection;
@@ -285,6 +285,8 @@ impl SessionManager {
         let knowledge_debt =
             Queries::get_recent_zero_hit_queries(conn, collection_id, 5).unwrap_or_default();
 
+        let locked_critical_path = Self::resolve_locked_critical_path(conn, collection_id, grant_scope);
+
         let formatted_markdown = SessionBriefing::render_markdown(
             collection_id,
             &active_directives,
@@ -294,6 +296,7 @@ impl SessionManager {
             &friction_warnings,
             &knowledge_debt,
             grant_scope,
+            locked_critical_path.as_ref(),
         );
 
         Ok(SessionBriefing {
@@ -305,8 +308,98 @@ impl SessionManager {
             friction_warnings,
             knowledge_debt,
             grant_scope: grant_scope.map(|s| s.to_string()),
+            locked_critical_path,
             formatted_markdown,
         })
+    }
+
+    pub fn resolve_locked_critical_path(
+        conn: &Connection,
+        collection_id: &str,
+        grant_scope: Option<&str>,
+    ) -> Option<CriticalPathLock> {
+        let mut query = "SELECT d.path, d.title FROM documents d \
+                         WHERE d.collection_id = ?1 AND d.kind = 'task' AND d.status = 'in_progress' AND d.is_tombstone = 0".to_string();
+        if let Some(scope) = grant_scope {
+            if scope.contains("projects/") {
+                query.push_str(" AND d.path LIKE ?2");
+            }
+        }
+        query.push_str(" ORDER BY d.id ASC LIMIT 1;");
+
+        let lock: Option<(String, String)> = if let Some(scope) = grant_scope {
+            if scope.contains("projects/") {
+                let pattern = format!("%{}%", scope.trim_matches('*'));
+                conn.query_row(&query, rusqlite::params![collection_id, pattern], |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+                }).ok()
+            } else {
+                conn.query_row(&query, rusqlite::params![collection_id], |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+                }).ok()
+            }
+        } else {
+            conn.query_row(&query, rusqlite::params![collection_id], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            }).ok()
+        };
+
+        if let Some((path, title)) = lock {
+            let project = Self::extract_project_from_path(&path);
+            let task_id = std::path::Path::new(&path)
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("task")
+                .to_string();
+
+            return Some(CriticalPathLock {
+                project,
+                task_id,
+                task_title: title,
+                constraint: "You are prohibited from refactoring other files or addressing adjacent bugs until this task passes verification.".to_string(),
+            });
+        }
+
+        let status_query = "SELECT d.path, d.content FROM documents d \
+                            WHERE d.collection_id = ?1 AND (d.path LIKE 'projects/%/status.md' OR d.path LIKE 'projects/%/STATUS.md') \
+                              AND d.is_tombstone = 0 LIMIT 10;";
+        if let Ok(mut stmt) = conn.prepare(status_query) {
+            if let Ok(rows) = stmt.query_map([collection_id], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            }) {
+                for r in rows.flatten() {
+                    let (path, content) = r;
+                    let project = Self::extract_project_from_path(&path);
+                    if let Ok((Some(status_doc), _)) = crate::domain::FrontmatterSplicer::parse::<crate::domain::StatusDocument>(&content) {
+                        if let Some(active_task_id) = status_doc.active_task {
+                            let task_title = conn.query_row(
+                                "SELECT title FROM documents WHERE collection_id = ?1 AND (path LIKE ?2 OR source_id = ?3) LIMIT 1;",
+                                rusqlite::params![collection_id, format!("%{}%", active_task_id), active_task_id],
+                                |row| row.get::<_, String>(0),
+                            ).unwrap_or_else(|_| format!("Task {}", active_task_id));
+
+                            return Some(CriticalPathLock {
+                                project,
+                                task_id: active_task_id,
+                                task_title,
+                                constraint: "You are prohibited from refactoring other files or addressing adjacent bugs until this task passes verification.".to_string(),
+                            });
+                        }
+                    }
+                }
+            }
+        }
+
+        None
+    }
+
+    fn extract_project_from_path(path: &str) -> String {
+        let parts: Vec<&str> = path.split('/').collect();
+        if parts.len() >= 2 && parts[0] == "projects" {
+            parts[1].to_string()
+        } else {
+            "default".to_string()
+        }
     }
 }
 

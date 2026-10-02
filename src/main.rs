@@ -267,6 +267,14 @@ enum Commands {
         #[command(subcommand)]
         command: TaskCommands,
     },
+    /// Execute exit criteria command for a project and transition it to completed upon success
+    VerifyExit {
+        /// Project name (directory name under projects/)
+        project: String,
+        /// Output result as JSON
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -1489,6 +1497,38 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         eprintln!("Error transitioning task: {}", err);
                         std::process::exit(1);
                     }
+                }
+            }
+        },
+        Some(Commands::VerifyExit { project, json }) => {
+            match StatusEngine::verify_exit_criteria(&effective_root, &project) {
+                Ok(res) => {
+                    if res.passed {
+                        let _ = Scanner::index_workspace(db.conn(), &effective_root, &manifest);
+                    }
+                    if json {
+                        println!("{}", serde_json::to_string_pretty(&res)?);
+                    } else if res.passed {
+                        println!("✓ Exit criteria passed for project '{}'!", project);
+                        println!("  Command:        {}", res.command);
+                        println!("  Exit Code:      {} (expected: {})", res.exit_code, res.expected_exit_code);
+                        println!("  Project Status: COMPLETED");
+                    } else {
+                        eprintln!("✖ Exit criteria verification failed for project '{}':", project);
+                        eprintln!("  Command:   {}", res.command);
+                        eprintln!("  Exit Code: {} (expected: {})", res.exit_code, res.expected_exit_code);
+                        if !res.stdout.is_empty() {
+                            eprintln!("  Stdout:    {}", res.stdout.trim());
+                        }
+                        if !res.stderr.is_empty() {
+                            eprintln!("  Stderr:    {}", res.stderr.trim());
+                        }
+                        std::process::exit(1);
+                    }
+                }
+                Err(err) => {
+                    eprintln!("Error verifying exit criteria: {}", err);
+                    std::process::exit(1);
                 }
             }
         },

@@ -279,6 +279,130 @@ impl StatusEngine {
         }
         "No goal specified".to_string()
     }
+
+    pub fn defer_finding(
+        root: &Path,
+        project: &str,
+        title: &str,
+        details: &str,
+        severity: Option<&str>,
+    ) -> Result<String, String> {
+        let project_dir = root.join("projects").join(project);
+        fs::create_dir_all(&project_dir)
+            .map_err(|e| format!("Failed to create project directory: {}", e))?;
+
+        let backlog_path = project_dir.join("BACKLOG.md");
+        let sev = severity.unwrap_or("debt").to_lowercase();
+        let timestamp = Utc::now().format("%Y-%m-%d").to_string();
+        let short_id = format!("fnd-{}", &uuid::Uuid::now_v7().to_string()[..8]);
+
+        let entry = format!(
+            "\n### [{sev}] {title} (`{short_id}`)\n- **Recorded**: {timestamp}\n- **Severity**: {sev}\n- **Details**: {details}\n",
+            sev = sev.to_uppercase(),
+            title = title,
+            short_id = short_id,
+            timestamp = timestamp,
+            details = details.trim(),
+        );
+
+        if !backlog_path.exists() {
+            let initial = format!(
+                "# {} Backlog & Deferred Findings\n\nSide-quests and adjacent findings deferred during active sprints to prevent context churn.\n{}",
+                project, entry
+            );
+            fs::write(&backlog_path, initial)
+                .map_err(|e| format!("Failed to create BACKLOG.md: {}", e))?;
+        } else {
+            use std::io::Write;
+            let mut file = fs::OpenOptions::new()
+                .append(true)
+                .open(&backlog_path)
+                .map_err(|e| format!("Failed to open BACKLOG.md: {}", e))?;
+            file.write_all(entry.as_bytes())
+                .map_err(|e| format!("Failed to append to BACKLOG.md: {}", e))?;
+        }
+
+        Ok(short_id)
+    }
+
+    pub fn verify_exit_criteria(
+        root: &Path,
+        project: &str,
+    ) -> Result<ExitVerificationResult, String> {
+        let status_doc = Self::get_project_status(root, project)?;
+        let exit_crit = status_doc
+            .exit_criteria
+            .ok_or_else(|| format!("No exit criteria defined in status.md for project '{}'", project))?;
+
+        let project_dir = root.join("projects").join(project);
+        let working_dir = if project_dir.is_dir() { &project_dir } else { root };
+
+        let output = std::process::Command::new("sh")
+            .arg("-c")
+            .arg(&exit_crit.command)
+            .current_dir(working_dir)
+            .output()
+            .map_err(|e| format!("Failed to execute exit verification command '{}': {}", exit_crit.command, e))?;
+
+        let exit_code = output.status.code().unwrap_or(-1);
+        let passed = exit_code == exit_crit.expected_exit_code;
+        let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+
+        if passed {
+            let status_path = Self::find_status_file(&project_dir)
+                .ok_or_else(|| "Status file not found".to_string())?;
+
+            let now = Utc::now().to_rfc3339();
+            FrontmatterSplicer::splice_file(&status_path, |val| {
+                let map = val.as_mapping_mut()
+                    .ok_or_else(|| "Frontmatter is not a mapping".to_string())?;
+                map.insert(
+                    serde_yaml::Value::String("status".to_string()),
+                    serde_yaml::Value::String("completed".to_string()),
+                );
+                map.insert(
+                    serde_yaml::Value::String("health".to_string()),
+                    serde_yaml::Value::String("healthy".to_string()),
+                );
+                let crit_key = serde_yaml::Value::String("exit_criteria".to_string());
+                if let Some(crit_val) = map.get_mut(&crit_key) {
+                    if let Some(crit_map) = crit_val.as_mapping_mut() {
+                        crit_map.insert(
+                            serde_yaml::Value::String("verified_at".to_string()),
+                            serde_yaml::Value::String(now.clone()),
+                        );
+                    }
+                }
+                map.insert(
+                    serde_yaml::Value::String("last_updated".to_string()),
+                    serde_yaml::Value::String(now),
+                );
+                Ok(())
+            })?;
+        }
+
+        Ok(ExitVerificationResult {
+            project: project.to_string(),
+            command: exit_crit.command,
+            exit_code,
+            expected_exit_code: exit_crit.expected_exit_code,
+            passed,
+            stdout,
+            stderr,
+        })
+    }
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+pub struct ExitVerificationResult {
+    pub project: String,
+    pub command: String,
+    pub exit_code: i32,
+    pub expected_exit_code: i32,
+    pub passed: bool,
+    pub stdout: String,
+    pub stderr: String,
 }
 
 #[cfg(test)]
@@ -345,6 +469,53 @@ mod tests {
         let status_after_complete = StatusEngine::get_project_status(&temp_dir, project_name)
             .expect("should read status");
         assert_eq!(status_after_complete.active_task, None);
+
+        let _ = fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_status_engine_defer_finding() {
+        let temp_dir = std::env::temp_dir().join(format!("hyperkb_test_defer_{}", uuid::Uuid::now_v7()));
+        let project = "auth-service";
+
+        let finding_id = StatusEngine::defer_finding(
+            &temp_dir,
+            project,
+            "Refactor Legacy JWT Parser",
+            "Observed during login bugfix; token validation allocates unnecessarily.",
+            Some("medium"),
+        ).expect("should defer finding");
+
+        assert!(finding_id.starts_with("fnd-"));
+        let backlog_path = temp_dir.join("projects").join(project).join("BACKLOG.md");
+        assert!(backlog_path.exists());
+        let content = fs::read_to_string(&backlog_path).expect("read backlog");
+        assert!(content.contains("[MEDIUM] Refactor Legacy JWT Parser"));
+        assert!(content.contains(&finding_id));
+
+        let _ = fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_status_engine_verify_exit_criteria() {
+        let temp_dir = std::env::temp_dir().join(format!("hyperkb_test_exit_{}", uuid::Uuid::now_v7()));
+        let project = "cli-tool";
+        let project_dir = temp_dir.join("projects").join(project);
+        fs::create_dir_all(&project_dir).unwrap();
+
+        let status_md = format!(
+            "---\nid: status-{proj}\nstatus: active\nhealth: healthy\ngoal: \"Make CLI fast\"\nexit_criteria:\n  command: \"echo exit_test_ok\"\n  expected_exit_code: 0\n---\n# CLI Status\n",
+            proj = project
+        );
+        fs::write(project_dir.join("status.md"), status_md).unwrap();
+
+        let res = StatusEngine::verify_exit_criteria(&temp_dir, project).expect("should verify exit criteria");
+        assert!(res.passed);
+        assert_eq!(res.exit_code, 0);
+
+        let updated_status = StatusEngine::get_project_status(&temp_dir, project).unwrap();
+        assert_eq!(updated_status.status, StatusState::Completed);
+        assert!(updated_status.exit_criteria.unwrap().verified_at.is_some());
 
         let _ = fs::remove_dir_all(&temp_dir);
     }

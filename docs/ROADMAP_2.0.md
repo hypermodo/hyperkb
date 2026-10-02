@@ -89,23 +89,22 @@ From direct sampling of `ZDP-SYSTEM-KB`, four systemic failure modes were identi
 ### Phase 8: Anti-Churn Control Plane (Critical Path & Side-Quest Jail)
 **Goal**: Prevent agent yak-shaving by locking context to a single critical path item, capturing side-quests into a backlog, and providing executable exit criteria.
 
-- [ ] **Single-Slot Critical Path in Briefings (`src/core/queries.rs`)**:
-  - Extract active unblocked milestone item from project's `status.md`.
-  - Format `get_session_briefing` with a hard anti-churn directive:
-    ```
-    LOCKED CRITICAL PATH: Task #<id> (<title>)
-    CONSTRAINT: You are prohibited from refactoring other files or addressing 
-                adjacent bugs until Task #<id> passes verification.
-    ```
-- [ ] **Side-Quest Jail (`src/transport/mcp.rs`)**:
+- [x] **Single-Slot Critical Path in Briefings (`src/core/session_manager.rs`)**:
+  - Extract active unblocked milestone item or in_progress task from project's `status.md`.
+  - Format `get_session_briefing` with a hard anti-churn directive (`🔒 LOCKED CRITICAL PATH`), respecting the strict 48-line briefing ceiling.
+- [x] **Side-Quest Jail (`src/transport/mcp.rs`, `src/core/status_engine.rs`)**:
   - Implement MCP tool `defer_finding(project, title, details, severity)`.
-  - Writes to `projects/<project>/BACKLOG.md` or SQLite `findings` table.
-  - Returns strict instruction: *"Finding recorded to project backlog. Return immediately to the active Critical Path task."*
-- [ ] **Executable Exit Criteria**:
-  - Add `exit_criteria: { command: "...", expected_exit_code: 0 }` to `StatusDocument`.
-  - Add CLI command: `hyperkb verify-exit <project>` to execute verification and transition project to `completed` upon success.
-- [ ] **Verification**:
-  - Verify `get_session_briefing` strictly locks critical path; verify `defer_finding` safely diverts tangential work.
+  - Atomically appends finding to `projects/<project>/BACKLOG.md` without interrupting active workflow.
+  - Returns strict anti-churn instruction: *"Finding recorded to project backlog. You are strictly prohibited from addressing this now. Return immediately to the active Critical Path task."*
+- [x] **Executable Exit Criteria (`src/core/status_engine.rs`, `src/main.rs`, `src/transport/mcp.rs`)**:
+  - Typed `ExitCriteria { command, expected_exit_code, verified_at }` in `StatusDocument`.
+  - CLI command `hyperkb verify-exit <project>` executes command via `sh -c` inside project directory and atomically transitions project to `completed` and `healthy` on exit code match.
+  - MCP tool `verify_exit_criteria(project)` for autonomous agent verification and project closure.
+- [x] **Verification**:
+  - Verified `get_session_briefing` cleanly locks critical path slot.
+  - Verified `defer_finding` diverts tangential findings safely to `BACKLOG.md`.
+  - Verified `verify-exit` executes command and transitions project health and status cleanly.
+  - All 99 unit/integration tests passing.
 
 ---
 

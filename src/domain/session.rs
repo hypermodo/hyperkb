@@ -228,6 +228,14 @@ impl SessionScorecard {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CriticalPathLock {
+    pub project: String,
+    pub task_id: String,
+    pub task_title: String,
+    pub constraint: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SessionBriefing {
     pub collection_id: String,
     #[serde(default)]
@@ -238,6 +246,8 @@ pub struct SessionBriefing {
     pub friction_warnings: Vec<String>,
     pub knowledge_debt: Vec<String>,
     pub grant_scope: Option<String>,
+    #[serde(default)]
+    pub locked_critical_path: Option<CriticalPathLock>,
     pub formatted_markdown: String,
 }
 
@@ -251,12 +261,19 @@ impl SessionBriefing {
         friction_warnings: &[String],
         knowledge_debt: &[String],
         grant_scope: Option<&str>,
+        locked_critical_path: Option<&CriticalPathLock>,
     ) -> String {
         let mut out = String::new();
         out.push_str(&format!("# HyperKB Session Briefing: `{}`\n", collection_id));
 
         if let Some(scope) = grant_scope {
             out.push_str(&format!("**Authorized Scope:** `{}`\n\n", scope));
+        }
+
+        if let Some(lock) = locked_critical_path {
+            out.push_str("### 🔒 LOCKED CRITICAL PATH\n");
+            out.push_str(&format!("- **Task**: `{}` ({}) [Project: `{}`]\n", lock.task_id, lock.task_title, lock.project));
+            out.push_str(&format!("- **Constraint**: {}\n\n", lock.constraint));
         }
 
         if !active_directives.is_empty() {
@@ -416,10 +433,18 @@ pub mod tests {
             &["src/core/git.rs was rewritten 3 times recently".to_string()],
             &["tokio runtime".to_string()],
             Some("src/core/**"),
+            Some(&CriticalPathLock {
+                project: "hyper-engine".to_string(),
+                task_id: "task-01".to_string(),
+                task_title: "Build Zero Async Engine".to_string(),
+                constraint: "Do not touch adjacent files.".to_string(),
+            }),
         );
 
         assert!(md.contains("# HyperKB Session Briefing: `HyperModo`"));
         assert!(md.contains("**Authorized Scope:** `src/core/**`"));
+        assert!(md.contains("LOCKED CRITICAL PATH"));
+        assert!(md.contains("task-01"));
         assert!(md.contains("Standing Directives (Rule of 5)"));
         assert!(md.contains("Zero Code Comments"));
         assert!(md.contains("Friction Hotspots & Review Warnings"));
@@ -463,6 +488,7 @@ pub mod tests {
             &many_frictions,
             &many_debts,
             Some("src/**"),
+            None,
         );
 
         let line_count = md.lines().count();
