@@ -111,7 +111,17 @@ enum Commands {
         json: bool,
     },
     /// Install a pre-commit risk interception hook into .git/hooks/pre-commit
-    InstallHook,
+    #[command(alias = "hook-install")]
+    InstallHook {
+        /// Install hook across all sibling git repositories in parent directory
+        #[arg(long)]
+        all_siblings: bool,
+    },
+    /// Manage git hooks
+    Hook {
+        #[command(subcommand)]
+        action: HookAction,
+    },
     /// Discover historical incident hotspots and draft proactive risk cards from Git history
     Bootstrap {
         /// Maximum number of candidate risk cards to draft
@@ -377,6 +387,16 @@ enum TaskCommands {
     },
 }
 
+#[derive(Subcommand, Debug)]
+enum HookAction {
+    /// Install pre-commit risk interception hook
+    Install {
+        /// Install hook across all sibling git repositories in parent directory
+        #[arg(long)]
+        all_siblings: bool,
+    },
+}
+
 #[derive(Subcommand)]
 enum TaxonomyCommands {
     /// List configured taxonomy categories
@@ -611,6 +631,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let changed_files = Git::changed_files(&cli.root)?;
                 files.extend(changed_files);
             }
+            let mut auto_detected = false;
+            if files.is_empty() && !staged && !changed {
+                if let Ok(auto_files) = Git::get_modified_and_untracked_files(&cli.root) {
+                    files.extend(auto_files);
+                    auto_detected = true;
+                }
+            }
             files = files
                 .into_iter()
                 .map(|f| hyperkb::core::RiskEngine::normalize_path(&f, Some(&cli.root)))
@@ -621,7 +648,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             if files.is_empty() {
                 if !json {
-                    println!("No files provided or changed to check.");
+                    println!("No files provided and no modified, staged, or untracked files detected in Git working tree.");
                 }
                 return Ok(());
             }
@@ -635,7 +662,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             )?;
 
             // Diff-Aware Risk Suppression & Comment Hygiene Check
-            if staged || changed {
+            if staged || changed || auto_detected {
                 for m in &mut check.matches {
                     if !m.acknowledged {
                         let all_trivial = m.matched_paths.iter().all(|path| {
@@ -739,10 +766,26 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
         }
-        Some(Commands::InstallHook) => {
-            let path = Git::install_pre_commit_hook(&cli.root)?;
-            println!("✓ Pre-commit risk interception hook installed successfully at:");
-            println!("  {}", path.display());
+        Some(Commands::InstallHook { all_siblings })
+        | Some(Commands::Hook {
+            action: HookAction::Install { all_siblings },
+        }) => {
+            let report = Git::install_hooks_all(&cli.root, all_siblings)?;
+            println!(
+                "✓ Pre-commit risk interception hook installed across {} repository(ies):",
+                report.installed.len()
+            );
+            for (repo, hook) in &report.installed {
+                let name = repo.file_name().and_then(|n| n.to_str()).unwrap_or_default();
+                println!("  • {} -> {}", name, hook.display());
+            }
+            if !report.skipped.is_empty() {
+                println!("\nSkipped {} directory(ies):", report.skipped.len());
+                for (repo, err) in &report.skipped {
+                    let name = repo.file_name().and_then(|n| n.to_str()).unwrap_or_default();
+                    println!("  • {}: {}", name, err);
+                }
+            }
             println!("\nAll staged commits will now be evaluated against cited open risks.");
         }
         Some(Commands::Bootstrap {

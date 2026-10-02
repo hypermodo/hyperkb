@@ -219,6 +219,44 @@ impl Git {
         }))
     }
 
+    /// Discovers untracked files in the working directory using `git ls-files --others --exclude-standard -z`.
+    pub fn untracked_files<P: AsRef<Path>>(root: P) -> Result<Vec<String>, String> {
+        let root = root.as_ref();
+        let output = Command::new("git")
+            .arg("ls-files")
+            .arg("--others")
+            .arg("--exclude-standard")
+            .arg("-z")
+            .current_dir(root)
+            .output()
+            .map_err(|e| format!("failed to execute git: {}", e))?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(format!("git ls-files failed: {}", stderr.trim()));
+        }
+
+        Self::parse_null_terminated(&output.stdout)
+    }
+
+    /// Discovers all staged, modified, and untracked files in the repository working tree.
+    pub fn get_modified_and_untracked_files<P: AsRef<Path>>(root: P) -> Result<Vec<String>, String> {
+        let root = root.as_ref();
+        let mut files = Vec::new();
+        if let Ok(staged) = Self::staged_files(root) {
+            files.extend(staged);
+        }
+        if let Ok(changed) = Self::changed_files(root) {
+            files.extend(changed);
+        }
+        if let Ok(untracked) = Self::untracked_files(root) {
+            files.extend(untracked);
+        }
+        files.sort();
+        files.dedup();
+        Ok(files)
+    }
+
     /// Installs a pre-commit risk interception hook into `.git/hooks/pre-commit`.
     pub fn install_pre_commit_hook<P: AsRef<Path>>(root: P) -> Result<PathBuf, String> {
         let root = root.as_ref();
@@ -233,7 +271,18 @@ impl Git {
 
         let hook_path = hooks_dir.join("pre-commit");
 
-        let script = r#"#!/bin/sh
+        // Determine current exe if available for seamless fallback across sibling repos
+        let current_exe_snippet = if let Ok(exe_p) = std::env::current_exe() {
+            if let Ok(canon) = exe_p.canonicalize() {
+                format!("\nelif [ -x \"{}\" ]; then\n    \"{}\" -r \"$REPO_ROOT\" check-work --staged || exit 1", canon.display(), canon.display())
+            } else {
+                format!("\nelif [ -x \"{}\" ]; then\n    \"{}\" -r \"$REPO_ROOT\" check-work --staged || exit 1", exe_p.display(), exe_p.display())
+            }
+        } else {
+            String::new()
+        };
+
+        let script = format!(r#"#!/bin/sh
 # HyperKB Pre-Commit Risk Interception Hook
 # Ensures both human developers and AI agents verify cited open risks before committing code.
 
@@ -246,9 +295,9 @@ elif [ -x "$REPO_ROOT/target/release/hyperkb" ]; then
 elif command -v hyperkb-rs >/dev/null 2>&1; then
     hyperkb-rs -r "$REPO_ROOT" check-work --staged || exit 1
 elif [ -x "$REPO_ROOT/target/release/hyperkb-rs" ]; then
-    "$REPO_ROOT/target/release/hyperkb-rs" -r "$REPO_ROOT" check-work --staged || exit 1
+    "$REPO_ROOT/target/release/hyperkb-rs" -r "$REPO_ROOT" check-work --staged || exit 1{}
 fi
-"#;
+"#, current_exe_snippet);
 
         fs::write(&hook_path, script.as_bytes())
             .map_err(|e| format!("failed to write pre-commit hook: {}", e))?;
@@ -266,6 +315,54 @@ fi
 
         Ok(hook_path)
     }
+
+    /// Installs pre-commit hooks across the current repository and optionally all sibling git repositories.
+    pub fn install_hooks_all<P: AsRef<Path>>(
+        root: P,
+        all_siblings: bool,
+    ) -> Result<HookInstallReport, String> {
+        let root = root.as_ref();
+        let abs_root = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
+        let mut installed = Vec::new();
+        let mut skipped = Vec::new();
+
+        // 1. Current repository
+        match Self::install_pre_commit_hook(&abs_root) {
+            Ok(p) => installed.push((abs_root.clone(), p)),
+            Err(e) => skipped.push((abs_root.clone(), e)),
+        }
+
+        // 2. Siblings if requested
+        if all_siblings {
+            if let Some(parent) = abs_root.parent() {
+                if let Ok(entries) = fs::read_dir(parent) {
+                    let mut dirs: Vec<PathBuf> = entries
+                        .flatten()
+                        .map(|e| e.path())
+                        .filter(|p| p.is_dir() && p != &abs_root)
+                        .collect();
+                    dirs.sort();
+
+                    for dir in dirs {
+                        if dir.join(".git").exists() {
+                            match Self::install_pre_commit_hook(&dir) {
+                                Ok(p) => installed.push((dir, p)),
+                                Err(e) => skipped.push((dir, e)),
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(HookInstallReport { installed, skipped })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct HookInstallReport {
+    pub installed: Vec<(PathBuf, PathBuf)>,
+    pub skipped: Vec<(PathBuf, String)>,
 }
 
 #[cfg(test)]
@@ -326,5 +423,33 @@ diff --git a/src/auth.rs b/src/auth.rs
         assert_eq!(comments, 6);
         let ratio = comments as f64 / added as f64;
         assert!(ratio > 0.70);
+    }
+
+    #[test]
+    fn test_install_hooks_all_siblings() {
+        let temp_dir = std::env::temp_dir().join(format!("hyperkb-hook-test-{}", uuid::Uuid::now_v7()));
+        let repo_a = temp_dir.join("repo-a");
+        let repo_b = temp_dir.join("repo-b");
+        let non_git = temp_dir.join("non-git");
+
+        fs::create_dir_all(repo_a.join(".git")).unwrap();
+        fs::create_dir_all(repo_b.join(".git")).unwrap();
+        fs::create_dir_all(&non_git).unwrap();
+
+        let report = Git::install_hooks_all(&repo_a, true).unwrap();
+        assert_eq!(report.installed.len(), 2);
+
+        let hook_a = repo_a.join(".git/hooks/pre-commit");
+        let hook_b = repo_b.join(".git/hooks/pre-commit");
+        assert!(hook_a.exists());
+        assert!(hook_b.exists());
+
+        let content_a = fs::read_to_string(&hook_a).unwrap();
+        assert!(content_a.contains("check-work --staged"));
+        let content_b = fs::read_to_string(&hook_b).unwrap();
+        assert!(content_b.contains("check-work --staged"));
+
+        // Clean up
+        let _ = fs::remove_dir_all(&temp_dir);
     }
 }

@@ -7,7 +7,7 @@ use serde_json::{json, Value};
 use std::io::{BufRead, Write};
 use std::path::Path;
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct JsonRpcRequest {
     pub jsonrpc: String,
     pub id: Option<Value>,
@@ -177,14 +177,14 @@ impl McpServer {
         vec![
             json!({
                 "name": "check_work",
-                "description": "Before editing or proposing changes, check planned files against cited open risks and architectural boundaries. Incomplete coverage is never safe.",
+                "description": "Before editing or proposing changes, check planned files against cited open risks and architectural boundaries. If 'files' is omitted or empty, HyperKB automatically inspects modified, staged, and untracked files via Git diff and status.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
                         "files": {
                             "type": "array",
                             "items": { "type": "string" },
-                            "description": "Root-relative file paths the agent plans to edit or inspect"
+                            "description": "Optional list of root-relative file paths to check. If omitted or empty, automatically inspects modified, staged, and untracked files in the Git working tree."
                         },
                         "version": {
                             "type": "string",
@@ -194,8 +194,7 @@ impl McpServer {
                             "type": "string",
                             "description": "Optional target deployment environment (e.g. production, staging)"
                         }
-                    },
-                    "required": ["files"]
+                    }
                 }
             }),
             json!({
@@ -635,7 +634,7 @@ impl McpServer {
 
         match tool_name {
             "check_work" => {
-                let files: Vec<String> = args
+                let mut files: Vec<String> = args
                     .get("files")
                     .and_then(|v| v.as_array())
                     .map(|arr| {
@@ -648,8 +647,31 @@ impl McpServer {
                     })
                     .unwrap_or_default();
 
+                let mut auto_detected = false;
                 if files.is_empty() {
-                    return Err("Missing required argument 'files' for check_work".into());
+                    // Auto-diff: automatically query git for modified, staged, and untracked files
+                    if let Ok(git_files) = Git::get_modified_and_untracked_files(root) {
+                        files = git_files
+                            .into_iter()
+                            .map(|f| crate::core::RiskEngine::normalize_path(&f, Some(root)))
+                            .filter(|f| !f.is_empty())
+                            .collect();
+                        files.sort();
+                        files.dedup();
+                        auto_detected = true;
+                    }
+                }
+
+                if files.is_empty() {
+                    return Ok(json!({
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": "{\"clean\": true, \"message\": \"No files provided and no modified, staged, or untracked files detected in Git working tree.\", \"applicable_directives\": [], \"matches\": [], \"hygiene_warnings\": []}"
+                            }
+                        ],
+                        "isError": false
+                    }));
                 }
 
                 let version = args.get("version").and_then(|v| v.as_str());
@@ -657,6 +679,22 @@ impl McpServer {
 
                 let mut check = Queries::check_work(conn, collection_id, &files, version, env)
                     .map_err(|e| format!("Failed to check work: {}", e))?;
+
+                if auto_detected {
+                    for m in &mut check.matches {
+                        if !m.acknowledged {
+                            let all_trivial = m.matched_paths.iter().all(|path| {
+                                Git::file_diff_is_trivial(root, path, false).unwrap_or(false)
+                            });
+                            if all_trivial && !m.matched_paths.is_empty() {
+                                m.suppressed = true;
+                                m.suppression_reason = Some(
+                                    "Diff contains only comments or whitespace (suppressed to prevent alert fatigue)".to_string(),
+                                );
+                            }
+                        }
+                    }
+                }
 
                 let manifest = crate::domain::RepoManifest::load_or_default(root);
                 let docs_dir = root.join(manifest.docs_root());
@@ -1699,6 +1737,34 @@ mod tests {
         let content_text = call_resp.result.unwrap()["content"][0]["text"].as_str().unwrap().to_string();
         assert!(content_text.contains("checked_paths"));
         assert!(content_text.contains("src/main.rs"));
+    }
+
+    #[test]
+    fn test_mcp_check_work_auto_diff() {
+        let db = Database::open_in_memory("coll_test", "prof_test").unwrap();
+
+        // 1. In active repo with modified files, check_work with no files auto-detects diffs
+        let call_req = JsonRpcRequest {
+            jsonrpc: "2.0".into(),
+            id: Some(json!(31)),
+            method: "tools/call".into(),
+            params: Some(json!({
+                "name": "check_work",
+                "arguments": {}
+            })),
+        };
+
+        let call_resp = McpServer::handle_request(".", db.conn(), "coll_test", "prof_test", call_req.clone()).unwrap();
+        let content_text = call_resp.result.unwrap()["content"][0]["text"].as_str().unwrap().to_string();
+        assert!(content_text.contains("checked_paths"));
+
+        // 2. In a clean directory with no git changes, check_work returns clean message
+        let temp_clean = std::env::temp_dir().join(format!("hyperkb-clean-{}", uuid::Uuid::now_v7()));
+        let _ = std::fs::create_dir_all(&temp_clean);
+        let call_resp_clean = McpServer::handle_request(&temp_clean, db.conn(), "coll_test", "prof_test", call_req).unwrap();
+        let content_clean = call_resp_clean.result.unwrap()["content"][0]["text"].as_str().unwrap().to_string();
+        assert!(content_clean.contains("No files provided"));
+        let _ = std::fs::remove_dir_all(&temp_clean);
     }
 
     #[test]

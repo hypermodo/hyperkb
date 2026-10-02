@@ -111,14 +111,17 @@ From direct sampling of `ZDP-SYSTEM-KB`, four systemic failure modes were identi
 ### Phase 9: Multi-Repo Sibling Hook Propagation & Auto-Diff
 **Goal**: Automate pre-commit hook deployment across 62 sibling repositories and enable auto-diff inspection in MCP.
 
-- [ ] **Sibling Hook Installer (`src/commands/hook.rs`)**:
-  - Command: `hyperkb hook install [--all-siblings]`.
-  - Resolves sibling root directories (`../*`), identifies `.git/` directories, and installs/updates `.git/hooks/pre-commit` to call `hyperkb check-work -r "$REPO_ROOT"`.
-- [ ] **Auto-Diff Aware MCP `check_work` (`src/transport/mcp.rs`)**:
-  - Make `files` parameter optional.
-  - When omitted/empty, HyperKB automatically queries `git status --porcelain` and `git diff --name-only` inside the active repository.
-- [ ] **Verification**:
-  - Run `hyperkb hook install --all-siblings`; verify hooks are active in sibling repositories.
+- [x] **Sibling Hook Installer (`src/core/git.rs`, `src/main.rs`)**:
+  - Commands: `hyperkb install-hook [--all-siblings]` and `hyperkb hook install [--all-siblings]`.
+  - Resolves sibling root directories (`../*`), identifies `.git/` directories, and installs/updates `.git/hooks/pre-commit` to call `hyperkb check-work -r "$REPO_ROOT" --staged` with embedded binary fallback.
+- [x] **Auto-Diff Aware MCP `check_work` (`src/transport/mcp.rs`, `src/main.rs`)**:
+  - Made `files` parameter optional in MCP schema and CLI command.
+  - When omitted/empty, HyperKB automatically queries Git staged, modified, and untracked files via `Git::get_modified_and_untracked_files`.
+  - Returns clean message when working tree has no changes; evaluates open risks and comment hygiene on detected files.
+- [x] **Verification**:
+  - Ran `hyperkb install-hook --all-siblings`; verified hooks deployed cleanly across repositories (`hyperkb`, `hypercontrol`).
+  - Ran `hyperkb check-work` with no arguments; verified automatic detection and validation of changed working tree files.
+  - All 101 tests passing.
 
 ---
 
