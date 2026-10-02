@@ -64,6 +64,11 @@ impl Header {
         // Line 1: Context Sub-Header (Quiet, clean text tabs)
         let sub_spans = match app.active_tab {
             ActiveTab::Work => {
+                let proj_span = if app.work_tab_mode == crate::ui::app::WorkTabMode::Projects {
+                    Span::styled("● Projects [p]", Style::default().fg(t.text_primary()).add_modifier(Modifier::BOLD))
+                } else {
+                    Span::styled("Projects [p]", Style::default().fg(t.text_muted()))
+                };
                 let risks_span = if app.work_tab_mode == crate::ui::app::WorkTabMode::Risks {
                     Span::styled("● Risks [w]", Style::default().fg(t.text_primary()).add_modifier(Modifier::BOLD))
                 } else {
@@ -76,9 +81,12 @@ impl Header {
                 };
                 vec![
                     Span::styled("  View:  ", Style::default().fg(t.text_muted())),
+                    proj_span,
+                    Span::styled("   •   ", Style::default().fg(t.border())),
                     risks_span,
                     Span::styled("   •   ", Style::default().fg(t.border())),
                     logs_span,
+                    Span::styled(format!("   |   {} projects", app.projects.len()), Style::default().fg(t.status_proposed()).add_modifier(Modifier::BOLD)),
                 ]
             }
             ActiveTab::Explore => {
@@ -188,10 +196,13 @@ impl Header {
         } else if row == 1 {
             match app.active_tab {
                 ActiveTab::Work => {
-                    if col >= 8 && col <= 22 {
+                    if col >= 8 && col <= 24 {
+                        app.work_tab_mode = crate::ui::app::WorkTabMode::Projects;
+                        return true;
+                    } else if col >= 25 && col <= 38 {
                         app.work_tab_mode = crate::ui::app::WorkTabMode::Risks;
                         return true;
-                    } else if col >= 23 && col <= 40 {
+                    } else if col >= 39 && col <= 54 {
                         app.work_tab_mode = crate::ui::app::WorkTabMode::Console;
                         return true;
                     }
@@ -279,9 +290,29 @@ impl Footer {
             } else {
                 match app.active_tab {
                     ActiveTab::Work => match app.work_tab_mode {
+                        crate::ui::app::WorkTabMode::Projects => vec![
+                            Span::styled("[/] ", Style::default().fg(t.status_proposed()).add_modifier(Modifier::BOLD)),
+                            Span::raw("Command Dock   "),
+                            Span::styled("[↑↓/jk] ", Style::default().fg(t.accent())),
+                            Span::raw("Navigate   "),
+                            Span::styled("[Tab] ", Style::default().fg(t.accent())),
+                            Span::raw("Pane   "),
+                            Span::styled("[Enter] ", Style::default().fg(t.accent())),
+                            Span::raw("Read   "),
+                            Span::styled("[o] ", Style::default().fg(t.accent())),
+                            Span::raw("IDE   "),
+                            Span::styled("[w] ", Style::default().fg(t.accent())),
+                            Span::raw("Risks   "),
+                            Span::styled("[c] ", Style::default().fg(t.accent())),
+                            Span::raw("Logs   "),
+                            Span::styled("[?] ", Style::default().fg(t.accent())),
+                            Span::raw("Help"),
+                        ],
                         crate::ui::app::WorkTabMode::Risks => vec![
                             Span::styled("[/] ", Style::default().fg(t.status_proposed()).add_modifier(Modifier::BOLD)),
                             Span::raw("Command Dock   "),
+                            Span::styled("[p] ", Style::default().fg(t.accent())),
+                            Span::raw("Projects   "),
                             Span::styled("[↑↓/jk] ", Style::default().fg(t.accent())),
                             Span::raw("Select Risk   "),
                             Span::styled("[Tab] ", Style::default().fg(t.accent())),
@@ -296,6 +327,8 @@ impl Footer {
                         crate::ui::app::WorkTabMode::Console => vec![
                             Span::styled("[/] ", Style::default().fg(t.status_proposed()).add_modifier(Modifier::BOLD)),
                             Span::raw("Command Dock   "),
+                            Span::styled("[p] ", Style::default().fg(t.accent())),
+                            Span::raw("Projects   "),
                             Span::styled("[w] ", Style::default().fg(t.accent())),
                             Span::raw("Risks View   "),
                             Span::styled("[↑↓] ", Style::default().fg(t.accent())),

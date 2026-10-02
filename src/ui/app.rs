@@ -1,5 +1,6 @@
 use crate::domain::{
-    AgentSession, AuthorityGrant, BrowseOptions, Directive, Document, RepoManifest, RiskMatch,
+    AgentSession, AuthorityGrant, BrowseOptions, Directive, Document, ProjectSummary, RepoManifest,
+    RiskMatch,
 };
 use crate::storage::{Database, Queries};
 use crate::ui::theme::ThemeMode;
@@ -7,6 +8,7 @@ use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WorkTabMode {
+    Projects,
     Risks,
     Console,
 }
@@ -284,8 +286,13 @@ pub struct App {
     pub new_grant_field: usize,
 
 
-    // Work / Terminal tab mode
+    // Work / Cockpit tab mode and project scaling
     pub work_tab_mode: WorkTabMode,
+    pub projects: Vec<ProjectSummary>,
+    pub selected_project_idx: usize,
+    pub project_tasks: Vec<Document>,
+    pub selected_project_task_idx: usize,
+    pub project_task_scroll_offset: usize,
 
     // Live Diagnostic Output Stream & Command Input
     pub diagnostic_stream: Vec<DiagnosticEntry>,
@@ -309,6 +316,11 @@ pub struct App {
 impl App {
     pub fn new(collection_id: &str, profile_id: &str) -> Self {
         let root = std::env::current_dir().unwrap_or_else(|_| Path::new(".").to_path_buf());
+        Self::new_with_root(&root, collection_id, profile_id)
+    }
+
+    pub fn new_with_root<P: AsRef<Path>>(root_path: P, collection_id: &str, profile_id: &str) -> Self {
+        let root = root_path.as_ref().to_path_buf();
         let manifest = RepoManifest::load_or_default(&root);
         let theme = ThemeMode::from_id(&manifest.settings.theme);
         let mouse_capture = manifest.settings.mouse_enabled;
@@ -397,7 +409,12 @@ impl App {
             new_grant_preset_idx: 0,
             new_grant_ttl_hours: 4,
             new_grant_field: 0,
-            work_tab_mode: WorkTabMode::Risks,
+            work_tab_mode: WorkTabMode::Projects,
+            projects: Vec::new(),
+            selected_project_idx: 0,
+            project_tasks: Vec::new(),
+            selected_project_task_idx: 0,
+            project_task_scroll_offset: 0,
             diagnostic_stream: vec![init_entry],
             selected_diagnostic_idx: 0,
             diagnostic_scroll: 0,
@@ -573,6 +590,56 @@ impl App {
                 self.selected_grant_idx = self.grants.len() - 1;
             }
         }
+
+        if let Ok(projects) = Queries::list_projects(db.conn(), &self.collection_id) {
+            self.projects = projects;
+            if self.selected_project_idx >= self.projects.len() && !self.projects.is_empty() {
+                self.selected_project_idx = self.projects.len() - 1;
+            }
+            self.refresh_project_tasks(db);
+        }
+    }
+
+    pub fn refresh_project_tasks(&mut self, db: &Database) {
+        if let Some(proj) = self.projects.get(self.selected_project_idx) {
+            let opts = BrowseOptions {
+                project: Some(proj.name.clone()),
+                limit: 200,
+                ..Default::default()
+            };
+            if let Ok((docs, _)) = Queries::browse(db.conn(), &[self.collection_id.clone()], &opts) {
+                self.project_tasks = docs;
+                if self.selected_project_task_idx >= self.project_tasks.len() && !self.project_tasks.is_empty() {
+                    self.selected_project_task_idx = self.project_tasks.len() - 1;
+                }
+            }
+        } else {
+            self.project_tasks.clear();
+            self.selected_project_task_idx = 0;
+        }
+    }
+
+    pub fn set_selected_project(&mut self, idx: usize, db: &Database) {
+        if !self.projects.is_empty() {
+            self.selected_project_idx = idx.min(self.projects.len() - 1);
+            self.selected_project_task_idx = 0;
+            self.refresh_project_tasks(db);
+        }
+    }
+
+    pub fn cycle_work_tab_mode(&mut self, db: &Database) {
+        self.work_tab_mode = match self.work_tab_mode {
+            WorkTabMode::Projects => WorkTabMode::Risks,
+            WorkTabMode::Risks => WorkTabMode::Console,
+            WorkTabMode::Console => WorkTabMode::Projects,
+        };
+        if self.work_tab_mode == WorkTabMode::Projects {
+            if self.projects.is_empty() {
+                self.refresh_data(db);
+            } else {
+                self.refresh_project_tasks(db);
+            }
+        }
     }
 
     pub const CATEGORIES: &'static [&'static str] = &["all", "tasks", "decisions", "risks", "specs", "plans"];
@@ -681,19 +748,34 @@ impl App {
     pub fn next(&mut self) {
         match self.active_tab {
             ActiveTab::Work => {
-                if self.work_tab_mode == WorkTabMode::Console {
-                    if self.focused_pane == FocusedPane::Detail {
-                        self.diagnostic_scroll += 2;
-                    } else if let Some(entry) = self.diagnostic_stream.get_mut(self.selected_diagnostic_idx) {
-                        if entry.file_targets.len() > 1 {
-                            entry.selected_file_idx = (entry.selected_file_idx + 1) % entry.file_targets.len();
-                        } else if !self.diagnostic_stream.is_empty() {
-                            self.selected_diagnostic_idx = (self.selected_diagnostic_idx + 1) % self.diagnostic_stream.len();
-                            self.diagnostic_scroll = 0;
+                match self.work_tab_mode {
+                    WorkTabMode::Projects => {
+                        if self.focused_pane == FocusedPane::Detail {
+                            if !self.project_tasks.is_empty() {
+                                self.selected_project_task_idx = (self.selected_project_task_idx + 1) % self.project_tasks.len();
+                            }
+                        } else if !self.projects.is_empty() {
+                            self.selected_project_idx = (self.selected_project_idx + 1) % self.projects.len();
+                            self.selected_project_task_idx = 0;
                         }
                     }
-                } else if !self.active_risks.is_empty() {
-                    self.selected_risk_idx = (self.selected_risk_idx + 1) % self.active_risks.len();
+                    WorkTabMode::Console => {
+                        if self.focused_pane == FocusedPane::Detail {
+                            self.diagnostic_scroll += 2;
+                        } else if let Some(entry) = self.diagnostic_stream.get_mut(self.selected_diagnostic_idx) {
+                            if entry.file_targets.len() > 1 {
+                                entry.selected_file_idx = (entry.selected_file_idx + 1) % entry.file_targets.len();
+                            } else if !self.diagnostic_stream.is_empty() {
+                                self.selected_diagnostic_idx = (self.selected_diagnostic_idx + 1) % self.diagnostic_stream.len();
+                                self.diagnostic_scroll = 0;
+                            }
+                        }
+                    }
+                    WorkTabMode::Risks => {
+                        if !self.active_risks.is_empty() {
+                            self.selected_risk_idx = (self.selected_risk_idx + 1) % self.active_risks.len();
+                        }
+                    }
                 }
             }
             ActiveTab::Explore => {
@@ -757,30 +839,53 @@ impl App {
     pub fn prev(&mut self) {
         match self.active_tab {
             ActiveTab::Work => {
-                if self.work_tab_mode == WorkTabMode::Console {
-                    if self.focused_pane == FocusedPane::Detail {
-                        self.diagnostic_scroll = self.diagnostic_scroll.saturating_sub(2);
-                    } else if let Some(entry) = self.diagnostic_stream.get_mut(self.selected_diagnostic_idx) {
-                        if entry.file_targets.len() > 1 {
-                            if entry.selected_file_idx == 0 {
-                                entry.selected_file_idx = entry.file_targets.len().saturating_sub(1);
-                            } else {
-                                entry.selected_file_idx -= 1;
+                match self.work_tab_mode {
+                    WorkTabMode::Projects => {
+                        if self.focused_pane == FocusedPane::Detail {
+                            if !self.project_tasks.is_empty() {
+                                if self.selected_project_task_idx == 0 {
+                                    self.selected_project_task_idx = self.project_tasks.len().saturating_sub(1);
+                                } else {
+                                    self.selected_project_task_idx -= 1;
+                                }
                             }
-                        } else if !self.diagnostic_stream.is_empty() {
-                            if self.selected_diagnostic_idx == 0 {
-                                self.selected_diagnostic_idx = self.diagnostic_stream.len().saturating_sub(1);
+                        } else if !self.projects.is_empty() {
+                            if self.selected_project_idx == 0 {
+                                self.selected_project_idx = self.projects.len().saturating_sub(1);
                             } else {
-                                self.selected_diagnostic_idx -= 1;
+                                self.selected_project_idx -= 1;
                             }
-                            self.diagnostic_scroll = 0;
+                            self.selected_project_task_idx = 0;
                         }
                     }
-                } else if !self.active_risks.is_empty() {
-                    if self.selected_risk_idx == 0 {
-                        self.selected_risk_idx = self.active_risks.len() - 1;
-                    } else {
-                        self.selected_risk_idx -= 1;
+                    WorkTabMode::Console => {
+                        if self.focused_pane == FocusedPane::Detail {
+                            self.diagnostic_scroll = self.diagnostic_scroll.saturating_sub(2);
+                        } else if let Some(entry) = self.diagnostic_stream.get_mut(self.selected_diagnostic_idx) {
+                            if entry.file_targets.len() > 1 {
+                                if entry.selected_file_idx == 0 {
+                                    entry.selected_file_idx = entry.file_targets.len().saturating_sub(1);
+                                } else {
+                                    entry.selected_file_idx -= 1;
+                                }
+                            } else if !self.diagnostic_stream.is_empty() {
+                                if self.selected_diagnostic_idx == 0 {
+                                    self.selected_diagnostic_idx = self.diagnostic_stream.len().saturating_sub(1);
+                                } else {
+                                    self.selected_diagnostic_idx -= 1;
+                                }
+                                self.diagnostic_scroll = 0;
+                            }
+                        }
+                    }
+                    WorkTabMode::Risks => {
+                        if !self.active_risks.is_empty() {
+                            if self.selected_risk_idx == 0 {
+                                self.selected_risk_idx = self.active_risks.len() - 1;
+                            } else {
+                                self.selected_risk_idx -= 1;
+                            }
+                        }
                     }
                 }
             }
@@ -1076,6 +1181,40 @@ impl App {
                 self.active_tab = ActiveTab::Reader;
                 self.reader_scroll_offset = 0;
             }
+        } else if self.active_tab == ActiveTab::Work && self.work_tab_mode == WorkTabMode::Projects {
+            if let Some(task) = self.project_tasks.get(self.selected_project_task_idx) {
+                self.current_document = Some(task.clone());
+                self.active_tab = ActiveTab::Reader;
+                self.reader_scroll_offset = 0;
+            } else if let Some(proj) = self.projects.get(self.selected_project_idx) {
+                let status_path = format!("projects/{}/status.md", proj.name);
+                let full_p = self.root.join(&status_path);
+                if let Ok(content) = std::fs::read_to_string(&full_p) {
+                    let doc = Document {
+                        id: format!("status-{}", proj.name),
+                        collection_id: self.collection_id.clone(),
+                        path: status_path,
+                        title: format!("{} Status", proj.name),
+                        topic: "status".to_string(),
+                        status: crate::domain::DocumentStatus::Accepted,
+                        kind: crate::domain::DocumentKind::Spec,
+                        owner: "project".to_string(),
+                        issue: String::new(),
+                        replacement_id: None,
+                        supersedes: None,
+                        content,
+                        source: "repo document".to_string(),
+                        available: true,
+                        stale: false,
+                        declared_status: Some("active".to_string()),
+                        checksum: String::new(),
+                        worktree_state: None,
+                    };
+                    self.current_document = Some(doc);
+                    self.active_tab = ActiveTab::Reader;
+                    self.reader_scroll_offset = 0;
+                }
+            }
         } else if self.active_tab == ActiveTab::Settings {
             let root = std::env::current_dir().unwrap_or_else(|_| Path::new(".").to_path_buf());
             let _ = self.save_settings(root);
@@ -1092,8 +1231,8 @@ impl App {
             self.filter_query.clear();
         } else if self.repl_active {
             self.repl_active = false;
-        } else if self.active_tab == ActiveTab::Work && self.work_tab_mode == WorkTabMode::Console {
-            self.work_tab_mode = WorkTabMode::Risks;
+        } else if self.active_tab == ActiveTab::Work && self.work_tab_mode != WorkTabMode::Projects {
+            self.work_tab_mode = WorkTabMode::Projects;
         } else if self.active_tab == ActiveTab::Reader {
             self.active_tab = ActiveTab::Explore;
         }
@@ -1660,6 +1799,12 @@ impl App {
                         if let Some(target) = entry.file_targets.get(entry.selected_file_idx) {
                             return Some(self.root.join(target));
                         }
+                    }
+                } else if self.work_tab_mode == WorkTabMode::Projects {
+                    if let Some(task) = self.project_tasks.get(self.selected_project_task_idx) {
+                        return Some(self.root.join(&task.path));
+                    } else if let Some(proj) = self.projects.get(self.selected_project_idx) {
+                        return Some(self.root.join(format!("projects/{}/status.md", proj.name)));
                     }
                 }
                 self.selected_risk().map(|r| self.root.join(&r.document.path))
@@ -2424,6 +2569,11 @@ impl App {
                     let _ = self.execute_action_palette_item("check_work", db);
                     return;
                 }
+                "projects" => {
+                    self.switch_tab(ActiveTab::Work);
+                    self.work_tab_mode = WorkTabMode::Projects;
+                    return;
+                }
                 "risks" => {
                     self.switch_tab(ActiveTab::Work);
                     self.work_tab_mode = WorkTabMode::Risks;
@@ -3158,11 +3308,14 @@ mod tests {
     #[test]
     fn test_work_tab_dual_mode_and_diagnostic_stream() {
         let mut app = App::new("test", "test");
-        assert_eq!(app.work_tab_mode, WorkTabMode::Risks);
+        assert_eq!(app.work_tab_mode, WorkTabMode::Projects);
         assert_eq!(app.diagnostic_stream.len(), 1);
         assert!(!app.repl_active);
 
-        // Switch to console mode
+        // Switch to risks and console modes
+        app.work_tab_mode = WorkTabMode::Risks;
+        assert_eq!(app.work_tab_mode, WorkTabMode::Risks);
+
         app.work_tab_mode = WorkTabMode::Console;
         assert_eq!(app.work_tab_mode, WorkTabMode::Console);
 
@@ -3205,9 +3358,60 @@ mod tests {
         app.next_diagnostic_entry();
         assert_eq!(app.selected_diagnostic_idx, 2);
 
-        // Esc should switch back to Risks
+        // Esc should switch back to Projects
         app.go_back();
+        assert_eq!(app.work_tab_mode, WorkTabMode::Projects);
+    }
+
+    #[test]
+    fn test_work_tab_projects_cockpit_navigation() {
+        let db = Database::open_in_memory("test_coll", "test_prof").unwrap();
+        let mut app = App::new("test_coll", "test_prof");
+        assert_eq!(app.work_tab_mode, WorkTabMode::Projects);
+
+        // Simulate loaded projects
+        app.projects = vec![
+            ProjectSummary {
+                name: "service-auth".to_string(),
+                path: "projects/service-auth".to_string(),
+                total_documents: 10,
+                tasks_pending: 3,
+                tasks_in_progress: 2,
+                tasks_completed: 4,
+                tasks_blocked: 1,
+                open_risks: 0,
+                decisions_count: 1,
+                has_status_doc: true,
+            },
+            ProjectSummary {
+                name: "service-billing".to_string(),
+                path: "projects/service-billing".to_string(),
+                total_documents: 5,
+                tasks_pending: 1,
+                tasks_in_progress: 0,
+                tasks_completed: 4,
+                tasks_blocked: 0,
+                open_risks: 0,
+                decisions_count: 0,
+                has_status_doc: true,
+            },
+        ];
+
+        assert_eq!(app.selected_project_idx, 0);
+        app.next();
+        assert_eq!(app.selected_project_idx, 1);
+        app.next();
+        assert_eq!(app.selected_project_idx, 0);
+        app.prev();
+        assert_eq!(app.selected_project_idx, 1);
+
+        // Test cycle work tab mode
+        app.cycle_work_tab_mode(&db);
         assert_eq!(app.work_tab_mode, WorkTabMode::Risks);
+        app.cycle_work_tab_mode(&db);
+        assert_eq!(app.work_tab_mode, WorkTabMode::Console);
+        app.cycle_work_tab_mode(&db);
+        assert_eq!(app.work_tab_mode, WorkTabMode::Projects);
     }
 
     #[test]

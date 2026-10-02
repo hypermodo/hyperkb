@@ -255,6 +255,85 @@ impl RepoManifest {
         Self::default()
     }
 
+    /// Resolves the effective HyperKB knowledge hub root directory.
+    /// If `start` has `hyperkb.json` or `.hyperkb`, it is used directly.
+    /// Otherwise, checks:
+    /// 1. Parent directory (e.g. if start is a subfolder of the hub).
+    /// 2. Sibling directories (e.g. `../..-SYSTEM-KB`, `../kb`, or any sibling with `hyperkb.json`).
+    /// 3. Ancestor directories up to 4 levels up.
+    /// Returns `(resolved_root, detected_subproject_name)`.
+    pub fn resolve_root<P: AsRef<Path>>(start: P) -> (PathBuf, Option<String>) {
+        let start_path = start.as_ref();
+        let target = if let Ok(c) = start_path.canonicalize() {
+            c
+        } else {
+            start_path.to_path_buf()
+        };
+
+        // 1. Check if target directly contains hyperkb.json or .hyperkb/
+        if target.join(Self::FILE_NAME).exists() || target.join(".hyperkb").exists() {
+            return (target, None);
+        }
+
+        let curr_name = target
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string());
+
+        // 2. Check parent directory directly
+        if let Some(parent) = target.parent() {
+            if parent.join(Self::FILE_NAME).exists() || parent.join(".hyperkb").exists() {
+                return (parent.to_path_buf(), curr_name);
+            }
+
+            // 3. Check sibling directories in parent
+            if let Ok(entries) = fs::read_dir(parent) {
+                let mut candidate_hub: Option<PathBuf> = None;
+                for entry in entries.flatten() {
+                    let path = entry.path();
+                    if path == target || !path.is_dir() {
+                        continue;
+                    }
+                    let name = path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+                    let has_manifest = path.join(Self::FILE_NAME).exists() || path.join(".hyperkb").exists();
+                    let is_kb_name = name.to_uppercase().ends_with("-SYSTEM-KB")
+                        || name.to_uppercase().ends_with("-KB")
+                        || name.to_lowercase() == "kb"
+                        || name.to_lowercase() == "system-kb";
+
+                    if has_manifest || is_kb_name {
+                        // Check if this candidate has projects/<curr_name>
+                        if let Some(ref c_name) = curr_name {
+                            if path.join("projects").join(c_name).exists() {
+                                return (path, curr_name);
+                            }
+                        }
+                        if candidate_hub.is_none() && has_manifest {
+                            candidate_hub = Some(path);
+                        }
+                    }
+                }
+                if let Some(hub) = candidate_hub {
+                    return (hub, curr_name);
+                }
+            }
+        }
+
+        // 4. Check ancestors up to 4 levels
+        let mut ancestor = target.parent();
+        for _ in 0..4 {
+            if let Some(p) = ancestor {
+                if p.join(Self::FILE_NAME).exists() || p.join(".hyperkb").exists() {
+                    return (p.to_path_buf(), curr_name);
+                }
+                ancestor = p.parent();
+            } else {
+                break;
+            }
+        }
+
+        (target, None)
+    }
+
     /// Initializes a new `hyperkb.json` and standard directories in the given root path.
     pub fn init<P: AsRef<Path>>(
         root: P,
@@ -436,5 +515,26 @@ mod tests {
         let empty_json = "{}";
         let from_empty: KbSettings = serde_json::from_str(empty_json).unwrap();
         assert_eq!(from_empty, settings);
+    }
+
+    #[test]
+    fn test_resolve_root_finds_sibling_hub() {
+        let temp_base = std::env::temp_dir().join(format!("hyperkb-sibling-test-{}", Uuid::now_v7()));
+        let kb_dir = temp_base.join("MY-SYSTEM-KB");
+        let project_code_dir = temp_base.join("service-auth");
+
+        fs::create_dir_all(&kb_dir).unwrap();
+        fs::create_dir_all(&project_code_dir).unwrap();
+        fs::create_dir_all(kb_dir.join("projects").join("service-auth")).unwrap();
+
+        // Write hyperkb.json in the hub
+        let _ = RepoManifest::init(&kb_dir, Some("Hub"), Some("my-hub")).unwrap();
+
+        // Calling resolve_root from the code repo service-auth should find MY-SYSTEM-KB
+        let (resolved, detected_proj) = RepoManifest::resolve_root(&project_code_dir);
+        assert_eq!(resolved.canonicalize().unwrap(), kb_dir.canonicalize().unwrap());
+        assert_eq!(detected_proj, Some("service-auth".to_string()));
+
+        let _ = fs::remove_dir_all(&temp_base);
     }
 }

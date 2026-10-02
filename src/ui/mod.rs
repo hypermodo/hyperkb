@@ -37,7 +37,7 @@ pub fn run(root: &Path, db: &Database, collection_id: &str, profile_id: &str) ->
     }));
 
     // 2. Initialize App and load initial data
-    let mut app = App::new(collection_id, profile_id);
+    let mut app = App::new_with_root(root, collection_id, profile_id);
     app.refresh_data(db);
 
     // 3. Setup terminal in raw mode & alternate screen buffer with mouse capture conditional on settings
@@ -160,7 +160,9 @@ fn run_loop(
 
                 let divider_x = match app.active_tab {
                     ActiveTab::Work => {
-                        if app.work_tab_mode == crate::ui::app::WorkTabMode::Risks && !app.active_risks.is_empty() {
+                        if app.work_tab_mode == crate::ui::app::WorkTabMode::Projects && !app.projects.is_empty() {
+                            Some((area.width * 38 / 100).clamp(32, 60))
+                        } else if app.work_tab_mode == crate::ui::app::WorkTabMode::Risks && !app.active_risks.is_empty() {
                             Some(area.width * 45 / 100)
                         } else {
                             None
@@ -607,12 +609,22 @@ fn run_loop(
                             KeyCode::Char('4') => app.switch_tab(ActiveTab::Sessions),
                             KeyCode::Char('5') => app.switch_tab(ActiveTab::Settings),
                             KeyCode::Tab => app.toggle_pane(),
-                            KeyCode::Down | KeyCode::Char('j') => app.next(),
-                            KeyCode::Up | KeyCode::Char('k') => app.prev(),
-                            KeyCode::Left | KeyCode::Char('h') if app.active_tab == ActiveTab::Settings => {
+                            KeyCode::Down | KeyCode::Char('j') => {
+                                app.next();
+                                if app.active_tab == ActiveTab::Work && app.work_tab_mode == crate::ui::app::WorkTabMode::Projects {
+                                    app.refresh_project_tasks(db);
+                                }
+                            }
+                            KeyCode::Up | KeyCode::Char('k') => {
+                                app.prev();
+                                if app.active_tab == ActiveTab::Work && app.work_tab_mode == crate::ui::app::WorkTabMode::Projects {
+                                    app.refresh_project_tasks(db);
+                                }
+                            }
+                            KeyCode::Left | KeyCode::Char('h') if app.active_tab == ActiveTab::Settings || app.active_tab == ActiveTab::Work => {
                                 app.focused_pane = crate::ui::app::FocusedPane::List;
                             }
-                            KeyCode::Right | KeyCode::Char('l') if app.active_tab == ActiveTab::Settings => {
+                            KeyCode::Right | KeyCode::Char('l') if app.active_tab == ActiveTab::Settings || app.active_tab == ActiveTab::Work => {
                                 app.focused_pane = crate::ui::app::FocusedPane::Detail;
                             }
                             KeyCode::Char('-') if app.active_tab == ActiveTab::Settings => {
@@ -692,6 +704,12 @@ fn run_loop(
                                     app.go_back();
                                 }
                             }
+                            KeyCode::Char('p') | KeyCode::Char('P') if app.active_tab == ActiveTab::Work => {
+                                app.work_tab_mode = crate::ui::app::WorkTabMode::Projects;
+                                if app.projects.is_empty() {
+                                    app.refresh_data(db);
+                                }
+                            }
                             KeyCode::Char('w') | KeyCode::Char('W') if app.active_tab == ActiveTab::Work => {
                                 app.work_tab_mode = crate::ui::app::WorkTabMode::Risks;
                             }
@@ -715,11 +733,7 @@ fn run_loop(
                                 } else if app.active_tab == ActiveTab::Directives {
                                     app.next_directive_category(db);
                                 } else if app.active_tab == ActiveTab::Work {
-                                    if app.work_tab_mode == crate::ui::app::WorkTabMode::Console {
-                                        app.work_tab_mode = crate::ui::app::WorkTabMode::Risks;
-                                    } else {
-                                        app.work_tab_mode = crate::ui::app::WorkTabMode::Console;
-                                    }
+                                    app.cycle_work_tab_mode(db);
                                 }
                             }
                             KeyCode::Char('n') | KeyCode::Char('N') if app.active_tab == ActiveTab::Directives => {
@@ -969,23 +983,36 @@ fn run_loop(
                                     }
 
                                     let list_width = match app.active_tab {
-                                            ActiveTab::Work => area.width * 45 / 100,
-                                            ActiveTab::Reader => 0,
-                                            ActiveTab::Settings => (area.width * 40 / 100).clamp(38, 65),
-                                            _ => (area.width * 38 / 100).clamp(36, 68),
-                                        };
+                                        ActiveTab::Work => {
+                                            if app.work_tab_mode == crate::ui::app::WorkTabMode::Projects {
+                                                area.width * 38 / 100
+                                            } else {
+                                                area.width * 45 / 100
+                                            }
+                                        }
+                                        ActiveTab::Reader => 0,
+                                        ActiveTab::Settings => (area.width * 40 / 100).clamp(38, 65),
+                                        _ => (area.width * 38 / 100).clamp(36, 68),
+                                    };
 
-                                        let rel_row = row.saturating_sub(3);
-                                        if col < list_width {
-                                            app.focused_pane = crate::ui::app::FocusedPane::List;
-                                            if rel_row >= 2 {
-                                                match app.active_tab {
-                                                    ActiveTab::Work => {
+                                    let rel_row = row.saturating_sub(3);
+                                    if col < list_width {
+                                        app.focused_pane = crate::ui::app::FocusedPane::List;
+                                        if rel_row >= 2 {
+                                            match app.active_tab {
+                                                ActiveTab::Work => {
+                                                    if app.work_tab_mode == crate::ui::app::WorkTabMode::Projects {
+                                                        let item_idx = ((rel_row - 2) / 3) as usize;
+                                                        if item_idx < app.projects.len() {
+                                                            app.set_selected_project(item_idx, db);
+                                                        }
+                                                    } else {
                                                         let item_idx = ((rel_row - 2) / 3) as usize;
                                                         if item_idx < app.active_risks.len() {
                                                             app.selected_risk_idx = item_idx;
                                                         }
                                                     }
+                                                }
                                                     ActiveTab::Directives => {
                                                         let item_idx = ((rel_row - 2) / 3) as usize;
                                                         if item_idx < app.directives.len() {
@@ -1030,7 +1057,14 @@ fn run_loop(
                                             }
                                         } else {
                                             app.focused_pane = crate::ui::app::FocusedPane::Detail;
-                                            if app.active_tab == ActiveTab::Settings && app.settings_selected_idx == 7 {
+                                            if app.active_tab == ActiveTab::Work && app.work_tab_mode == crate::ui::app::WorkTabMode::Projects {
+                                                if rel_row >= 9 {
+                                                    let task_idx = ((rel_row - 9) / 2) as usize;
+                                                    if task_idx < app.project_tasks.len() {
+                                                        app.selected_project_task_idx = task_idx;
+                                                    }
+                                                }
+                                            } else if app.active_tab == ActiveTab::Settings && app.settings_selected_idx == 7 {
                                                 if rel_row >= 15 {
                                                     let clicked_harness = ((rel_row - 15) / 5) as usize;
                                                     if clicked_harness < app.harnesses.len() {

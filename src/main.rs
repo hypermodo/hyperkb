@@ -366,11 +366,25 @@ enum GrantCommands {
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
 
-    let manifest = RepoManifest::load_or_default(&cli.root);
+    let (effective_root, auto_project) = if matches!(cli.command, Some(Commands::Init { .. })) {
+        (cli.root.clone(), None)
+    } else {
+        RepoManifest::resolve_root(&cli.root)
+    };
+
+    if effective_root != cli.root && !matches!(cli.command, Some(Commands::Mcp)) {
+        eprintln!(
+            "ℹ Discovered sibling knowledge hub: {}{}",
+            effective_root.display(),
+            auto_project.as_deref().map(|p| format!(" (auto-scoped to project '{}')", p)).unwrap_or_default()
+        );
+    }
+
+    let manifest = RepoManifest::load_or_default(&effective_root);
     let collection_id = &manifest.collection_id;
     let profile_id = &manifest.default_profile;
 
-    let db_path = cli.root.join(".hyperkb").join("hyperkb.db");
+    let db_path = effective_root.join(".hyperkb").join("hyperkb.db");
     let db = Database::open_or_create(&db_path, collection_id, profile_id)?;
 
     match cli.command {
@@ -392,7 +406,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
         Some(Commands::Index { dir }) => {
-            let target_dir = dir.as_deref().unwrap_or(&cli.root);
+            let target_dir = dir.as_deref().unwrap_or(&effective_root);
             println!("Indexing Markdown documents in: {}", target_dir.display());
             let report = Scanner::index_workspace(db.conn(), target_dir, &manifest)?;
             println!(
@@ -446,7 +460,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
         Some(Commands::Projects { json }) => {
-            let _ = Scanner::index_workspace(db.conn(), &cli.root, &manifest);
+            let _ = Scanner::index_workspace(db.conn(), &effective_root, &manifest);
             let summaries = Queries::list_projects(db.conn(), &collection_id)?;
             if json {
                 println!("{}", serde_json::to_string_pretty(&summaries).unwrap());
@@ -567,7 +581,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
 
             // Lint markdown documentation files for KB anti-bloat & schema compliance
-            let docs_dir = cli.root.join(manifest.docs_root());
+            let docs_dir = effective_root.join(manifest.docs_root());
             for path in &check.checked_paths {
                 if path.ends_with(".md") || path.ends_with(".markdown") {
                     let file_p = cli.root.join(path);
@@ -702,7 +716,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             environments,
         }) => {
             let draft = RiskWorkflow::draft_risk(
-                &cli.root,
+                &effective_root,
                 db.conn(),
                 collection_id,
                 &title,
@@ -720,8 +734,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!("\nIndexed and active for pre-edit interception.");
         }
         Some(Commands::Mcp) => {
-            let _ = Scanner::index_workspace(db.conn(), &cli.root, &manifest);
-            McpServer::run_stdio(&cli.root, db.conn(), collection_id, profile_id)?;
+            let _ = Scanner::index_workspace(db.conn(), &effective_root, &manifest);
+            McpServer::run_stdio(&effective_root, db.conn(), collection_id, profile_id)?;
         }
         Some(Commands::DraftDecision {
             title,
@@ -731,7 +745,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }) => {
             let actor = Actor::Human { username: owner };
             let draft = DecisionWorkflow::draft_replacement(
-                &cli.root,
+                &effective_root,
                 db.conn(),
                 collection_id,
                 &title,
@@ -752,14 +766,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }) => {
             let actor = Actor::Human { username: owner };
             let review = DecisionWorkflow::review_acceptance(
-                &cli.root,
+                &effective_root,
                 db.conn(),
                 &path,
                 &actor,
                 supersedes.as_deref(),
             )?;
             println!("Accepting decision at {}:", path);
-            DecisionWorkflow::accept_decision(&cli.root, db.conn(), collection_id, &review, Some(&actor))?;
+            DecisionWorkflow::accept_decision(&effective_root, db.conn(), collection_id, &review, Some(&actor))?;
             println!("✓ Decision accepted and indexed as architectural authority.");
         }
         Some(Commands::Remember { title, content }) => {
@@ -776,7 +790,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         Some(Commands::Backup { keep }) => {
             let report = MaintenanceManager::create_backup(
-                &cli.root,
+                &effective_root,
                 &db,
                 collection_id,
                 profile_id,
@@ -788,7 +802,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!("  Removed: {} older snapshot(s)", report.removed);
         }
         Some(Commands::ListBackups) => {
-            let snapshots = MaintenanceManager::list_backups(&cli.root)?;
+            let snapshots = MaintenanceManager::list_backups(&effective_root)?;
             println!("Managed backup snapshots ({} total):", snapshots.len());
             for snap in snapshots {
                 println!("  - {}", snap);
@@ -806,7 +820,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }) => {
             let actor = Actor::Human { username: owner };
             let ack = RiskWorkflow::acknowledge_risk(
-                &cli.root,
+                &effective_root,
                 db.conn(),
                 collection_id,
                 &risk_id,
@@ -857,7 +871,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 };
 
                 let grant = GrantStore::issue_grant(
-                    &cli.root,
+                    &effective_root,
                     &grantee,
                     &authorizer,
                     allowed_actions,
@@ -879,7 +893,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
             GrantCommands::List => {
-                let grants = GrantStore::list_grants(&cli.root)?;
+                let grants = GrantStore::list_grants(&effective_root)?;
                 if grants.is_empty() {
                     println!("No authority grants currently registered in .hyperkb/grants.");
                 } else {
@@ -899,7 +913,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             GrantCommands::Revoke { grant_id } => {
                 let uid = Uuid::parse_str(&grant_id)
                     .map_err(|_| format!("Invalid grant UUID '{}'", grant_id))?;
-                if GrantStore::revoke_grant(&cli.root, uid)? {
+                if GrantStore::revoke_grant(&effective_root, uid)? {
                     println!("✓ AuthorityGrant '{}' revoked and removed.", uid);
                 } else {
                     println!("Grant '{}' not found.", uid);
@@ -1040,7 +1054,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     scope.clone()
                 };
                 let dir = DirectiveWorkflow::draft_directive(
-                    &cli.root,
+                    &effective_root,
                     db.conn(),
                     collection_id,
                     &title,
@@ -1058,7 +1072,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 println!("  Path:        {}/{}.md", manifest.directives_path, dir.id);
             }
             DirectiveCommands::Retire { id } => {
-                let retired = DirectiveWorkflow::retire_directive(&cli.root, db.conn(), &id)?;
+                let retired = DirectiveWorkflow::retire_directive(&effective_root, db.conn(), &id)?;
                 if retired {
                     println!("✓ Directive '{}' is now retired.", id);
                 } else {
@@ -1066,7 +1080,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
             DirectiveCommands::Audit { json } => {
-                let report = DirectiveWorkflow::audit_directives(&cli.root, db.conn(), collection_id)?;
+                let report = DirectiveWorkflow::audit_directives(&effective_root, db.conn(), collection_id)?;
                 if json {
                     println!("{}", serde_json::to_string_pretty(&report)?);
                 } else {
@@ -1101,7 +1115,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         },
         Some(Commands::Taxonomy { command }) => match command {
             TaxonomyCommands::List { json } => {
-                let m = RepoManifest::load_or_default(&cli.root);
+                let m = RepoManifest::load_or_default(&effective_root);
                 if json {
                     println!("{}", serde_json::to_string_pretty(&m.taxonomy)?);
                 } else {
@@ -1112,10 +1126,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
             TaxonomyCommands::Add { id, name, description } => {
-                let mut m = RepoManifest::load_or_default(&cli.root);
+                let mut m = RepoManifest::load_or_default(&effective_root);
                 m.add_category(id.clone(), name, description)
                     .map_err(|e| format!("Failed to add taxonomy: {}", e))?;
-                m.save(&cli.root)
+                m.save(&effective_root)
                     .map_err(|e| format!("Failed to save hyperkb.json: {}", e))?;
                 println!("✓ Added taxonomy category '{}' to hyperkb.json.", id);
             }
@@ -1128,12 +1142,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let mut dir_report = None;
 
             if audit_kb_flag {
-                let report = KbLinter::audit_workspace(&cli.root, &manifest)?;
+                let report = KbLinter::audit_workspace(&effective_root, &manifest)?;
                 kb_report = Some(report);
             }
 
             if audit_directives_flag {
-                let report = DirectiveWorkflow::audit_directives(&cli.root, db.conn(), collection_id)?;
+                let report = DirectiveWorkflow::audit_directives(&effective_root, db.conn(), collection_id)?;
                 dir_report = Some(report);
             }
 
@@ -1227,7 +1241,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
         Some(Commands::Config { get, set, json }) => {
-            let mut manifest = RepoManifest::load_or_default(&cli.root);
+            let mut manifest = RepoManifest::load_or_default(&effective_root);
             if let Some(set_str) = set {
                 if let Some((key, val)) = set_str.split_once('=') {
                     let key = key.trim();
@@ -1274,7 +1288,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             return Err(format!("Unknown configuration key '{}'. Available keys:\n  - max_briefing_directives\n  - stale_days_threshold\n  - audit_max_lines\n  - audit_max_depth\n  - theme\n  - mouse_enabled", key).into());
                         }
                     }
-                    manifest.save(&cli.root)?;
+                    manifest.save(&effective_root)?;
                 } else {
                     return Err("Expected format: key=value (e.g. -s max_briefing_directives=8)".to_string().into());
                 }
@@ -1307,10 +1321,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         None => {
             // Index existing docs in workspace so the TUI opens with real knowledge ready to browse
-            let _ = Scanner::index_workspace(db.conn(), &cli.root, &manifest);
+            let _ = Scanner::index_workspace(db.conn(), &effective_root, &manifest);
 
             // Launch the full-screen Ratatui TUI
-            ui::run(&cli.root, &db, collection_id, profile_id)?;
+            ui::run(&effective_root, &db, collection_id, profile_id)?;
         }
     }
 
