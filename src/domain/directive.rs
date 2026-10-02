@@ -66,27 +66,9 @@ impl Directive {
             return true;
         }
 
-        let normalized = path.replace('\\', "/");
         for pattern in &self.scope {
-            let pat_norm = pattern.replace('\\', "/");
-            if pat_norm == normalized {
+            if crate::core::RiskEngine::matches_path(pattern, path) {
                 return true;
-            }
-            if pat_norm.ends_with("/**") {
-                let prefix = &pat_norm[..pat_norm.len() - 3];
-                if normalized.starts_with(prefix) {
-                    return true;
-                }
-            } else if pat_norm.ends_with("/*") {
-                let prefix = &pat_norm[..pat_norm.len() - 2];
-                if normalized.starts_with(prefix) && !normalized[prefix.len() + 1..].contains('/') {
-                    return true;
-                }
-            } else if pat_norm.starts_with("*.") {
-                let ext = &pat_norm[1..];
-                if normalized.ends_with(ext) {
-                    return true;
-                }
             }
         }
 

@@ -237,14 +237,16 @@ impl Git {
 # HyperKB Pre-Commit Risk Interception Hook
 # Ensures both human developers and AI agents verify cited open risks before committing code.
 
+REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+
 if command -v hyperkb >/dev/null 2>&1; then
-    hyperkb check-work --staged || exit 1
-elif [ -x "./target/release/hyperkb" ]; then
-    ./target/release/hyperkb check-work --staged || exit 1
+    hyperkb -r "$REPO_ROOT" check-work --staged || exit 1
+elif [ -x "$REPO_ROOT/target/release/hyperkb" ]; then
+    "$REPO_ROOT/target/release/hyperkb" -r "$REPO_ROOT" check-work --staged || exit 1
 elif command -v hyperkb-rs >/dev/null 2>&1; then
-    hyperkb-rs check-work --staged || exit 1
-elif [ -x "./target/release/hyperkb-rs" ]; then
-    ./target/release/hyperkb-rs check-work --staged || exit 1
+    hyperkb-rs -r "$REPO_ROOT" check-work --staged || exit 1
+elif [ -x "$REPO_ROOT/target/release/hyperkb-rs" ]; then
+    "$REPO_ROOT/target/release/hyperkb-rs" -r "$REPO_ROOT" check-work --staged || exit 1
 fi
 "#;
 

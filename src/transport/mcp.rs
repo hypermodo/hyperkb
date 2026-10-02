@@ -563,7 +563,10 @@ impl McpServer {
                     .and_then(|v| v.as_array())
                     .map(|arr| {
                         arr.iter()
-                            .filter_map(|s| s.as_str().map(|str_val| str_val.to_string()))
+                            .filter_map(|s| s.as_str().map(|str_val| {
+                                crate::core::RiskEngine::normalize_path(str_val, Some(root))
+                            }))
+                            .filter(|s| !s.is_empty())
                             .collect()
                     })
                     .unwrap_or_default();

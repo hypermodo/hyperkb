@@ -37,6 +37,11 @@ impl Queries {
         let now = Utc::now().to_rfc3339();
 
         conn.execute(
+            "INSERT OR IGNORE INTO collections (id) VALUES (?1);",
+            params![collection_id],
+        )?;
+
+        conn.execute(
             "DELETE FROM documents WHERE collection_id = ?1 AND path = ?2 AND source_id != ?3;",
             params![collection_id, path, source_id],
         )?;

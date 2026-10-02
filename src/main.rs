@@ -33,10 +33,10 @@ enum Commands {
         #[arg(short, long)]
         collection: Option<String>,
     },
-    /// Index Markdown files in the target directory
+    /// Index Markdown files across configured knowledge roots
     Index {
-        #[arg(short, long, default_value = ".")]
-        dir: PathBuf,
+        #[arg(short, long)]
+        dir: Option<PathBuf>,
     },
     /// Search indexed knowledge and private memory
     Search {
@@ -392,8 +392,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
         Some(Commands::Index { dir }) => {
-            println!("Indexing Markdown documents in: {}", dir.display());
-            let report = Scanner::index_directory(db.conn(), &dir, collection_id)?;
+            let target_dir = dir.as_deref().unwrap_or(&cli.root);
+            println!("Indexing Markdown documents in: {}", target_dir.display());
+            let report = Scanner::index_workspace(db.conn(), target_dir, &manifest)?;
             println!(
                 "Indexed {} documents ({} added, {} updated, {} unchanged, {} errors)",
                 report.scanned, report.added, report.updated, report.unchanged, report.errors
@@ -514,7 +515,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let changed_files = Git::changed_files(&cli.root)?;
                 files.extend(changed_files);
             }
-            files.retain(|f| !f.trim().is_empty());
+            files = files
+                .into_iter()
+                .map(|f| hyperkb::core::RiskEngine::normalize_path(&f, Some(&cli.root)))
+                .filter(|f| !f.is_empty())
+                .collect();
             files.sort();
             files.dedup();
 

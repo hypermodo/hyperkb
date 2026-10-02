@@ -1,13 +1,79 @@
 use crate::domain::{Document, RiskApplicability, RiskCheck, RiskMatch};
+use std::path::Path;
 
 pub struct RiskEngine;
 
 impl RiskEngine {
-    pub fn matches_path(pattern: &str, target_path: &str) -> bool {
-        let pattern_parts: Vec<&str> = pattern.split('/').filter(|s| !s.is_empty()).collect();
-        let target_parts: Vec<&str> = target_path.split('/').filter(|s| !s.is_empty()).collect();
+    pub fn normalize_path<P: AsRef<Path>>(path: &str, root: Option<P>) -> String {
+        let mut p = path.trim().replace('\\', "/");
+        if let Some(r) = root {
+            let root_ref = r.as_ref();
+            if let Ok(canon_root) = root_ref.canonicalize() {
+                let canon_str = canon_root.to_string_lossy().replace('\\', "/");
+                if p.starts_with(&canon_str) {
+                    p = p[canon_str.len()..].to_string();
+                }
+            }
+            let root_str = root_ref.to_string_lossy().replace('\\', "/");
+            if p.starts_with(&root_str) {
+                p = p[root_str.len()..].to_string();
+            }
+        }
+        let segments: Vec<&str> = p
+            .split('/')
+            .filter(|s| !s.is_empty() && *s != ".")
+            .collect();
+        segments.join("/")
+    }
 
-        Self::match_segments(&pattern_parts, &target_parts)
+    pub fn matches_path(pattern: &str, target_path: &str) -> bool {
+        let clean_pattern = pattern.trim().replace('\\', "/");
+        let clean_target = target_path.trim().replace('\\', "/");
+
+        if clean_pattern == "*" || clean_pattern == "**" || clean_pattern == "**/*" {
+            return true;
+        }
+
+        let pattern_parts: Vec<&str> = clean_pattern
+            .split('/')
+            .filter(|s| !s.is_empty() && *s != ".")
+            .collect();
+        let target_parts: Vec<&str> = clean_target
+            .split('/')
+            .filter(|s| !s.is_empty() && *s != ".")
+            .collect();
+
+        if pattern_parts.is_empty() {
+            return target_parts.is_empty();
+        }
+
+        // 1. Direct segment match: e.g. "src/storage/**" matches "src/storage/db.rs"
+        if Self::match_segments(&pattern_parts, &target_parts) {
+            return true;
+        }
+
+        // 2. Generic / Unrooted pattern match against subproject paths
+        // If pattern is e.g. "src/**", "*.rs", or "storage/*" (does not start with "projects", "shared", "docs")
+        // and target path is inside a project like "projects/alpha/src/storage/db.rs",
+        // check if any sub-path of target matches the pattern.
+        let is_rooted = matches!(pattern_parts.first().copied(), Some("projects" | "shared" | "docs"));
+        if !is_rooted && target_parts.len() > pattern_parts.len() {
+            for i in 1..target_parts.len() {
+                if Self::match_segments(&pattern_parts, &target_parts[i..]) {
+                    return true;
+                }
+            }
+        }
+
+        // 3. Rooted pattern against subproject-relative target
+        // If pattern is "projects/alpha/src/**" and target is "src/db.rs"
+        if is_rooted && pattern_parts.len() > 2 {
+            if Self::match_segments(&pattern_parts[2..], &target_parts) {
+                return true;
+            }
+        }
+
+        false
     }
 
     fn match_segments(pattern: &[&str], target: &[&str]) -> bool {
@@ -67,8 +133,9 @@ impl RiskEngine {
         for (doc, risk_paths, versions, environments) in open_risks {
             let mut matched_paths = Vec::new();
             for target in target_paths {
+                let norm_target = Self::normalize_path(target, None::<&Path>);
                 for pattern in risk_paths {
-                    if Self::matches_path(pattern, target) {
+                    if Self::matches_path(pattern, &norm_target) {
                         matched_paths.push(target.clone());
                         break;
                     }
@@ -145,6 +212,34 @@ mod tests {
         assert!(!RiskEngine::matches_path("src/*.rs", "src/domain/actor.rs"));
         assert!(RiskEngine::matches_path("auth/tokens.go", "auth/tokens.go"));
         assert!(RiskEngine::matches_path("auth/**", "auth/tokens/jwt.go"));
+
+        // Leading dot and backslashes
+        assert!(RiskEngine::matches_path("src/storage/**", "./src/storage/db.rs"));
+        assert!(RiskEngine::matches_path("src/storage/**", "src\\storage\\db.rs"));
+
+        // Generic unrooted pattern matching inside a subproject
+        assert!(RiskEngine::matches_path("src/**", "projects/adaptive-tuning/src/main.rs"));
+        assert!(RiskEngine::matches_path("*.rs", "projects/adaptive-tuning/src/main.rs"));
+
+        // Rooted pattern matching against subproject-relative target
+        assert!(RiskEngine::matches_path("projects/adaptive-tuning/src/**", "src/main.rs"));
+    }
+
+    #[test]
+    fn test_normalize_path() {
+        assert_eq!(
+            RiskEngine::normalize_path("./src/storage/./queries.rs", None::<&Path>),
+            "src/storage/queries.rs"
+        );
+        assert_eq!(
+            RiskEngine::normalize_path("src\\domain\\document.rs", None::<&Path>),
+            "src/domain/document.rs"
+        );
+        let root = Path::new("/var/app/myrepo");
+        assert_eq!(
+            RiskEngine::normalize_path("/var/app/myrepo/src/main.rs", Some(root)),
+            "src/main.rs"
+        );
     }
 }
 
