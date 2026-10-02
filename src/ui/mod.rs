@@ -660,7 +660,7 @@ fn run_loop(
                                 }
                             }
                             KeyCode::Left | KeyCode::Char('h') if app.active_tab == ActiveTab::Settings => {
-                                if app.focused_pane == crate::ui::app::FocusedPane::Detail && (app.settings_selected_idx == 7 || app.settings_selected_idx == 6) {
+                                if app.focused_pane == crate::ui::app::FocusedPane::Detail {
                                     app.focused_pane = crate::ui::app::FocusedPane::List;
                                 } else {
                                     let old_mouse = app.mouse_capture;
@@ -678,7 +678,7 @@ fn run_loop(
                                 }
                             }
                             KeyCode::Right | KeyCode::Char('l') if app.active_tab == ActiveTab::Settings => {
-                                if app.settings_selected_idx == 7 || app.settings_selected_idx == 6 {
+                                if app.focused_pane == crate::ui::app::FocusedPane::List {
                                     app.focused_pane = crate::ui::app::FocusedPane::Detail;
                                 } else {
                                     let old_mouse = app.mouse_capture;
@@ -748,17 +748,23 @@ fn run_loop(
                                 } else if app.active_tab == ActiveTab::Explore && app.explore_tree_mode {
                                     app.open_selected();
                                 } else if app.active_tab == ActiveTab::Settings {
-                                    let old_mouse = app.mouse_capture;
-                                    app.adjust_setting(1);
-                                    if app.mouse_capture != old_mouse {
-                                        if app.mouse_capture {
-                                            let _ = execute!(terminal.backend_mut(), EnableMouseCapture);
-                                            let _ = terminal.backend_mut().flush();
-                                        } else {
-                                            let _ = execute!(terminal.backend_mut(), DisableMouseCapture);
-                                            let _ = terminal.backend_mut().write_all(b"\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1005l\x1b[?1006l\x1b[?1015l");
-                                            let _ = terminal.backend_mut().flush();
+                                    if app.settings_selected_idx == 5 {
+                                        let old_mouse = app.mouse_capture;
+                                        app.adjust_setting(1);
+                                        if app.mouse_capture != old_mouse {
+                                            if app.mouse_capture {
+                                                let _ = execute!(terminal.backend_mut(), EnableMouseCapture);
+                                                let _ = terminal.backend_mut().flush();
+                                            } else {
+                                                let _ = execute!(terminal.backend_mut(), DisableMouseCapture);
+                                                let _ = terminal.backend_mut().write_all(b"\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1005l\x1b[?1006l\x1b[?1015l");
+                                                let _ = terminal.backend_mut().flush();
+                                            }
                                         }
+                                    } else if app.settings_selected_idx == 4 {
+                                        app.adjust_setting(1);
+                                    } else if app.focused_pane == crate::ui::app::FocusedPane::List && (app.settings_selected_idx == 7 || app.settings_selected_idx == 6) {
+                                        app.focused_pane = crate::ui::app::FocusedPane::Detail;
                                     }
                                 } else {
                                     // Unified entry to Command Dock
@@ -769,7 +775,22 @@ fn run_loop(
                             }
                             KeyCode::Enter => {
                                 if app.active_tab == ActiveTab::Settings {
-                                    if app.focused_pane == crate::ui::app::FocusedPane::List && (app.settings_selected_idx == 7 || app.settings_selected_idx == 6) {
+                                    if app.settings_selected_idx == 5 {
+                                        let old_mouse = app.mouse_capture;
+                                        app.adjust_setting(1);
+                                        if app.mouse_capture != old_mouse {
+                                            if app.mouse_capture {
+                                                let _ = execute!(terminal.backend_mut(), EnableMouseCapture);
+                                                let _ = terminal.backend_mut().flush();
+                                            } else {
+                                                let _ = execute!(terminal.backend_mut(), DisableMouseCapture);
+                                                let _ = terminal.backend_mut().write_all(b"\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1005l\x1b[?1006l\x1b[?1015l");
+                                                let _ = terminal.backend_mut().flush();
+                                            }
+                                        }
+                                    } else if app.settings_selected_idx == 4 {
+                                        app.adjust_setting(1);
+                                    } else if app.focused_pane == crate::ui::app::FocusedPane::List && (app.settings_selected_idx == 7 || app.settings_selected_idx == 6) {
                                         app.focused_pane = crate::ui::app::FocusedPane::Detail;
                                     } else {
                                         let _ = app.save_settings(root);

@@ -928,9 +928,13 @@ impl App {
                 }
             }
             ActiveTab::Settings => {
-                if self.focused_pane == FocusedPane::Detail && self.settings_selected_idx == 7 {
-                    if !self.harnesses.is_empty() {
+                if self.focused_pane == FocusedPane::Detail {
+                    if self.settings_selected_idx == 7 && !self.harnesses.is_empty() {
                         self.selected_harness_idx = (self.selected_harness_idx + 1) % self.harnesses.len();
+                    } else if self.settings_selected_idx == 4 {
+                        self.next_theme();
+                    } else if self.settings_selected_idx <= 3 {
+                        self.adjust_setting(1);
                     }
                 } else {
                     self.next_setting();
@@ -1062,13 +1066,17 @@ impl App {
                 }
             }
             ActiveTab::Settings => {
-                if self.focused_pane == FocusedPane::Detail && self.settings_selected_idx == 7 {
-                    if !self.harnesses.is_empty() {
+                if self.focused_pane == FocusedPane::Detail {
+                    if self.settings_selected_idx == 7 && !self.harnesses.is_empty() {
                         if self.selected_harness_idx == 0 {
                             self.selected_harness_idx = self.harnesses.len() - 1;
                         } else {
                             self.selected_harness_idx -= 1;
                         }
+                    } else if self.settings_selected_idx == 4 {
+                        self.prev_theme();
+                    } else if self.settings_selected_idx <= 3 {
+                        self.adjust_setting(-1);
                     }
                 } else {
                     self.prev_setting();
@@ -1473,12 +1481,14 @@ impl App {
             }
             _ => {}
         }
+        let _ = self.manifest.save(&self.root);
     }
 
     pub fn next_theme(&mut self) {
         self.theme = self.theme.next();
         self.manifest.settings.theme = self.theme.id_str().to_string();
         self.settings_dirty = true;
+        let _ = self.manifest.save(&self.root);
         self.status_message = Some(format!("Theme: {}", self.theme.as_str()));
     }
 
@@ -1486,6 +1496,7 @@ impl App {
         self.theme = self.theme.prev();
         self.manifest.settings.theme = self.theme.id_str().to_string();
         self.settings_dirty = true;
+        let _ = self.manifest.save(&self.root);
         self.status_message = Some(format!("Theme: {}", self.theme.as_str()));
     }
 
@@ -1493,6 +1504,7 @@ impl App {
         self.mouse_capture = !self.mouse_capture;
         self.manifest.settings.mouse_enabled = self.mouse_capture;
         self.settings_dirty = true;
+        let _ = self.manifest.save(&self.root);
         self.mouse_capture
     }
 
