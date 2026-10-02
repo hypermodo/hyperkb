@@ -34,6 +34,121 @@ impl SessionManager {
         Ok(session)
     }
 
+    /// Resumes a recent matching session within sliding window or starts a new one
+    pub fn start_or_resume_session(
+        conn: &Connection,
+        collection_id: &str,
+        profile_id: &str,
+        agent_id: &str,
+        grant_id: Option<String>,
+        project: Option<String>,
+        window_seconds: i64,
+    ) -> Result<AgentSession, String> {
+        let cutoff = (chrono::Utc::now() - chrono::Duration::seconds(window_seconds)).to_rfc3339();
+
+        let map_session_row = |row: &rusqlite::Row| -> rusqlite::Result<AgentSession> {
+            let first_pass_clean_int: i32 = row.get(13)?;
+            Ok(AgentSession {
+                id: row.get(0)?,
+                collection_id: row.get(1)?,
+                profile_id: row.get(2)?,
+                agent_id: row.get(3)?,
+                grant_id: row.get(4)?,
+                started_at: row.get(5)?,
+                ended_at: row.get(6)?,
+                total_tool_calls: row.get(7)?,
+                total_edits: row.get(8)?,
+                total_diff_lines: row.get(9)?,
+                risks_cited: row.get(10)?,
+                risks_prevented: row.get(11)?,
+                review_loops: row.get(12)?,
+                first_pass_clean: first_pass_clean_int == 1,
+                status: row.get(14)?,
+                project: row.get(15)?,
+            })
+        };
+
+        let found = if let Some(ref proj) = project {
+            let mut stmt = conn.prepare(
+                "SELECT id, collection_id, profile_id, agent_id, grant_id, started_at, ended_at,
+                        total_tool_calls, total_edits, total_diff_lines, risks_cited, risks_prevented,
+                        review_loops, first_pass_clean, status, project
+                 FROM agent_sessions
+                 WHERE collection_id = ?1
+                   AND (project = ?3 OR project IS NULL)
+                   AND (ended_at IS NULL OR ended_at >= ?2 OR started_at >= ?2)
+                 ORDER BY started_at DESC
+                 LIMIT 1;",
+            ).map_err(|e| e.to_string())?;
+            stmt.query_row(rusqlite::params![collection_id, cutoff, proj], map_session_row).ok()
+        } else {
+            let mut stmt = conn.prepare(
+                "SELECT id, collection_id, profile_id, agent_id, grant_id, started_at, ended_at,
+                        total_tool_calls, total_edits, total_diff_lines, risks_cited, risks_prevented,
+                        review_loops, first_pass_clean, status, project
+                 FROM agent_sessions
+                 WHERE collection_id = ?1
+                   AND (ended_at IS NULL OR ended_at >= ?2 OR started_at >= ?2)
+                 ORDER BY started_at DESC
+                 LIMIT 1;",
+            ).map_err(|e| e.to_string())?;
+            stmt.query_row(rusqlite::params![collection_id, cutoff], map_session_row).ok()
+        };
+
+        if let Some(mut existing) = found {
+            let was_idle = existing.status != "active";
+            existing.status = "active".to_string();
+
+            if existing.project.is_none() && project.is_some() {
+                existing.project = project;
+            }
+
+            if (existing.agent_id == "mcp_agent" || existing.agent_id.starts_with("mcp_agent")) && agent_id != "mcp_agent" {
+                existing.agent_id = agent_id.to_string();
+            }
+
+            Queries::update_session(conn, &existing).map_err(|e| e.to_string())?;
+
+            if was_idle {
+                let detail = serde_json::json!({
+                    "resumed_from": "idle",
+                    "agent_id": existing.agent_id,
+                    "project": existing.project
+                }).to_string();
+                let _ = Queries::record_session_event(conn, &existing.id, "session_resumed", "", &existing.agent_id, &detail);
+            }
+
+            return Ok(existing);
+        }
+
+        Self::start_session(conn, collection_id, profile_id, agent_id, grant_id, project)
+    }
+
+    pub fn sync_diff_volume(
+        conn: &Connection,
+        session_id: &str,
+        diff_lines: u32,
+        files_count: u32,
+    ) -> Result<(), String> {
+        let mut session = Queries::get_session(conn, session_id)
+            .map_err(|e| e.to_string())?
+            .ok_or_else(|| format!("Session {} not found", session_id))?;
+
+        let mut changed = false;
+        if diff_lines > session.total_diff_lines {
+            session.total_diff_lines = diff_lines;
+            changed = true;
+        }
+        if files_count > session.total_edits {
+            session.total_edits = files_count;
+            changed = true;
+        }
+        if changed {
+            Queries::update_session(conn, &session).map_err(|e| e.to_string())?;
+        }
+        Ok(())
+    }
+
     pub fn set_agent_id(
         conn: &Connection,
         session_id: &str,
@@ -503,5 +618,60 @@ mod tests {
         let briefing = SessionManager::generate_briefing(db.conn(), "coll_mgr", Some("src/**"))
             .expect("generate briefing");
         assert!(briefing.formatted_markdown.contains("src/auth.rs"));
+    }
+
+    #[test]
+    fn test_start_or_resume_session_coalescing() {
+        let db = Database::open_in_memory("coll_coalesce", "prof_coalesce").unwrap();
+
+        // 1. Initial invocation creates a new session
+        let sess1 = SessionManager::start_or_resume_session(
+            db.conn(),
+            "coll_coalesce",
+            "prof_coalesce",
+            "mcp_agent",
+            None,
+            Some("project-alpha".into()),
+            600,
+        ).expect("starts session 1");
+
+        assert_eq!(sess1.agent_id, "mcp_agent");
+        assert_eq!(sess1.project.as_deref(), Some("project-alpha"));
+        assert_eq!(sess1.status, "active");
+
+        // Record a tool call
+        SessionManager::record_tool_call(db.conn(), &sess1.id, "check_work", "src/lib.rs", "{}")
+            .expect("record tool call");
+
+        // 2. Simulate client disconnect (transition to idle)
+        let _ = db.conn().execute(
+            "UPDATE agent_sessions SET status = 'idle', ended_at = ?2 WHERE id = ?1;",
+            rusqlite::params![sess1.id, chrono::Utc::now().to_rfc3339()],
+        );
+
+        // 3. Second invocation within sliding window should coalesce into the same session
+        // and refine generic agent_id to specific model if provided
+        let sess2 = SessionManager::start_or_resume_session(
+            db.conn(),
+            "coll_coalesce",
+            "prof_coalesce",
+            "claude-3-7-sonnet",
+            None,
+            Some("project-alpha".into()),
+            600,
+        ).expect("resumes session 1");
+
+        assert_eq!(sess2.id, sess1.id, "Session ID must be preserved across invocations");
+        assert_eq!(sess2.status, "active", "Resumed session should be active");
+        assert_eq!(sess2.agent_id, "claude-3-7-sonnet", "Agent ID should be refined");
+        assert_eq!(sess2.total_tool_calls, 1, "Tool call count should be preserved");
+
+        // 4. Test sync_diff_volume
+        SessionManager::sync_diff_volume(db.conn(), &sess2.id, 42, 3)
+            .expect("sync diff volume");
+
+        let updated = Queries::get_session(db.conn(), &sess2.id).unwrap().unwrap();
+        assert_eq!(updated.total_diff_lines, 42);
+        assert_eq!(updated.total_edits, 3);
     }
 }

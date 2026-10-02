@@ -41,7 +41,21 @@ struct SessionGuard<'a> {
 impl<'a> Drop for SessionGuard<'a> {
     fn drop(&mut self) {
         if let Some(ref id) = self.session_id {
-            let _ = SessionManager::end_session(self.conn, id, "completed");
+            // Check if this connection performed 0 tool calls
+            if let Ok(Some(sess)) = Queries::get_session(self.conn, id) {
+                if sess.total_tool_calls == 0 {
+                    // Ephemeral connection with 0 tool calls: prune ghost session
+                    let _ = self.conn.execute("DELETE FROM session_events WHERE session_id = ?1;", [id]);
+                    let _ = self.conn.execute("DELETE FROM agent_sessions WHERE id = ?1;", [id]);
+                    return;
+                }
+            }
+            // Mark session as idle with ended_at = now, keeping it ready for resumption if agent reconnects
+            let now = chrono::Utc::now().to_rfc3339();
+            let _ = self.conn.execute(
+                "UPDATE agent_sessions SET status = 'idle', ended_at = ?2 WHERE id = ?1;",
+                rusqlite::params![id, now],
+            );
         }
     }
 }
@@ -84,14 +98,15 @@ impl McpServer {
 
         let initial_agent = Self::resolve_initial_agent(cli_agent, cli_model);
 
-        // Initialize active session for this stdio server connection
-        let active_session = SessionManager::start_session(
+        // Resume active/recent session (10m sliding window) or initialize new one
+        let active_session = SessionManager::start_or_resume_session(
             conn,
             collection_id,
             profile_id,
             &initial_agent,
             None,
             cli_project.map(|s| s.to_string()),
+            600,
         ).ok();
         let active_session_id = active_session.as_ref().map(|s| s.id.clone());
 
@@ -821,6 +836,13 @@ impl McpServer {
                         if !m.suppressed {
                             let _ = SessionManager::record_risk_cited(conn, sess_id, first_file, &m.document.title);
                         }
+                    }
+
+                    // Automatically sync real Git working tree diff volume
+                    let (added, deleted) = Git::get_working_tree_diff_lines(root);
+                    let diff_lines = added + deleted;
+                    if diff_lines > 0 {
+                        let _ = SessionManager::sync_diff_volume(conn, sess_id, diff_lines, files.len() as u32);
                     }
                 }
 

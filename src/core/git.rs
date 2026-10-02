@@ -67,6 +67,38 @@ impl Git {
         Ok(files)
     }
 
+    /// Discovers total lines added and deleted in the Git working tree (unstaged + staged).
+    pub fn get_working_tree_diff_lines<P: AsRef<Path>>(root: P) -> (u32, u32) {
+        let root = root.as_ref();
+        let mut total_added = 0u32;
+        let mut total_deleted = 0u32;
+
+        for cached in [false, true] {
+            let mut cmd = Command::new("git");
+            cmd.arg("diff").arg("--numstat");
+            if cached {
+                cmd.arg("--cached");
+            }
+            cmd.current_dir(root);
+            if let Ok(output) = cmd.output() {
+                if output.status.success() {
+                    let text = String::from_utf8_lossy(&output.stdout);
+                    for line in text.lines() {
+                        let parts: Vec<&str> = line.split_whitespace().collect();
+                        if parts.len() >= 2 {
+                            let added: u32 = parts[0].parse().unwrap_or(0);
+                            let deleted: u32 = parts[1].parse().unwrap_or(0);
+                            total_added += added;
+                            total_deleted += deleted;
+                        }
+                    }
+                }
+            }
+        }
+
+        (total_added, total_deleted)
+    }
+
     /// Checks whether the diff for a target file consists exclusively of comments, docstrings, and whitespace.
     pub fn file_diff_is_trivial<P: AsRef<Path>>(
         root: P,

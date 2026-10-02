@@ -826,13 +826,28 @@ impl Queries {
 
     pub fn prune_stale_sessions(conn: &Connection, collection_id: &str) -> Result<usize> {
         let now_str = chrono::Utc::now().to_rfc3339();
+        // Delete zero-action ghost sessions (no edits and <= 1 tool call)
+        let _ = conn.execute(
+            "DELETE FROM session_events 
+             WHERE session_id IN (
+                 SELECT id FROM agent_sessions 
+                 WHERE collection_id = ?1 AND total_edits = 0 AND total_tool_calls <= 1
+             );",
+            params![collection_id],
+        );
+        let deleted = conn.execute(
+            "DELETE FROM agent_sessions 
+             WHERE collection_id = ?1 AND total_edits = 0 AND total_tool_calls <= 1;",
+            params![collection_id],
+        ).unwrap_or(0);
+
         let changed = conn.execute(
             "UPDATE agent_sessions 
              SET status = 'completed', ended_at = coalesce(ended_at, ?2) 
              WHERE collection_id = ?1 AND status != 'completed';",
             params![collection_id, now_str],
         )?;
-        Ok(changed)
+        Ok(deleted + changed)
     }
 
     pub fn list_sessions(
