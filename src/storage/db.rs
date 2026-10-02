@@ -62,16 +62,16 @@ impl Database {
     /// Opens an existing HyperKB database or creates a new one if it does not exist.
     pub fn open_or_create<P: AsRef<Path>>(path: P, collection_id: &str, profile_id: &str) -> Result<Self> {
         let path = path.as_ref();
+        if let Some(parent) = path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+            let gi = parent.join(".gitignore");
+            if !gi.exists() {
+                let _ = std::fs::write(&gi, "*\n");
+            }
+        }
         if path.exists() {
             Self::open(path, collection_id, profile_id)
         } else {
-            if let Some(parent) = path.parent() {
-                let _ = std::fs::create_dir_all(parent);
-                let gi = parent.join(".gitignore");
-                if !gi.exists() {
-                    let _ = std::fs::write(&gi, "*\n");
-                }
-            }
             Self::create(path, collection_id, profile_id)
         }
     }

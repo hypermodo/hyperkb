@@ -275,8 +275,32 @@ impl RepoManifest {
             return (target, None);
         }
 
-        // 1. Check if target directly contains hyperkb.json or .hyperkb/
-        if target.join(Self::FILE_NAME).exists() || target.join(".hyperkb").exists() {
+        // 1. Check if target directly contains hyperkb.json
+        if target.join(Self::FILE_NAME).exists() {
+            return (target, None);
+        }
+
+        // 1b. Check if target contains an immediate child knowledge hub (e.g. xymbia-kb, ZDP-SYSTEM-KB, kb)
+        if let Ok(entries) = fs::read_dir(&target) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if !path.is_dir() {
+                    continue;
+                }
+                let name = path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+                let has_manifest = path.join(Self::FILE_NAME).exists();
+                let is_kb_name = name.to_uppercase().ends_with("-SYSTEM-KB")
+                    || name.to_uppercase().ends_with("-KB")
+                    || name.to_lowercase() == "kb"
+                    || name.to_lowercase() == "system-kb";
+                if has_manifest || is_kb_name {
+                    return (path, None);
+                }
+            }
+        }
+
+        // 1c. Check if target directly contains .hyperkb/
+        if target.join(".hyperkb").exists() {
             return (target, None);
         }
 
