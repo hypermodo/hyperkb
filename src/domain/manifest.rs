@@ -62,8 +62,12 @@ pub struct RepoManifest {
     #[serde(default = "default_profile")]
     pub default_profile: String,
 
-    #[serde(default = "default_docs_root")]
-    pub docs_root: String,
+    #[serde(
+        default = "default_knowledge_roots",
+        deserialize_with = "deserialize_knowledge_roots",
+        alias = "docs_root"
+    )]
+    pub knowledge_roots: Vec<String>,
 
     #[serde(default = "default_decisions_path")]
     pub decisions_path: String,
@@ -161,24 +165,59 @@ fn default_profile() -> String {
     "default_profile".to_string()
 }
 
-fn default_docs_root() -> String {
-    "docs".to_string()
+fn default_knowledge_roots() -> Vec<String> {
+    vec![
+        "projects".to_string(),
+        "shared".to_string(),
+        "docs".to_string(),
+    ]
+}
+
+fn deserialize_knowledge_roots<'de, D>(deserializer: D) -> Result<Vec<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum StringOrVec {
+        String(String),
+        Vec(Vec<String>),
+    }
+
+    match Option::<StringOrVec>::deserialize(deserializer)? {
+        Some(StringOrVec::String(s)) => {
+            let trimmed = s.trim();
+            if trimmed.is_empty() {
+                Ok(default_knowledge_roots())
+            } else {
+                Ok(vec![trimmed.to_string()])
+            }
+        }
+        Some(StringOrVec::Vec(v)) => {
+            if v.is_empty() {
+                Ok(default_knowledge_roots())
+            } else {
+                Ok(v)
+            }
+        }
+        None => Ok(default_knowledge_roots()),
+    }
 }
 
 fn default_decisions_path() -> String {
-    "docs/decisions".to_string()
+    "decisions".to_string()
 }
 
 fn default_risks_path() -> String {
-    "docs/risks".to_string()
+    "risks".to_string()
 }
 
 fn default_directives_path() -> String {
-    "docs/directives".to_string()
+    "directives".to_string()
 }
 
 fn default_memory_path() -> String {
-    "docs/memory".to_string()
+    "memory".to_string()
 }
 
 impl Default for RepoManifest {
@@ -188,7 +227,7 @@ impl Default for RepoManifest {
             name: default_name(),
             version: default_version(),
             default_profile: default_profile(),
-            docs_root: default_docs_root(),
+            knowledge_roots: default_knowledge_roots(),
             decisions_path: default_decisions_path(),
             risks_path: default_risks_path(),
             directives_path: default_directives_path(),
@@ -249,18 +288,32 @@ impl RepoManifest {
         let json = serde_json::to_string_pretty(&manifest)
             .map_err(|e| format!("failed to serialize manifest: {}", e))?;
 
-        // Create standard documentation directories
+        // Create standard documentation & governance directories
         fs::create_dir_all(root.join(&manifest.decisions_path))
             .map_err(|e| format!("failed to create decisions path: {}", e))?;
         fs::create_dir_all(root.join(&manifest.risks_path))
             .map_err(|e| format!("failed to create risks path: {}", e))?;
         fs::create_dir_all(root.join(&manifest.directives_path))
             .map_err(|e| format!("failed to create directives path: {}", e))?;
+        fs::create_dir_all(root.join(&manifest.memory_path))
+            .map_err(|e| format!("failed to create memory path: {}", e))?;
+        for k_root in &manifest.knowledge_roots {
+            fs::create_dir_all(root.join(k_root))
+                .map_err(|e| format!("failed to create knowledge root '{}': {}", k_root, e))?;
+        }
 
         fs::write(&manifest_path, json.as_bytes())
             .map_err(|e| format!("failed to write hyperkb.json: {}", e))?;
 
         Ok((manifest, manifest_path))
+    }
+
+    /// Returns the primary docs or knowledge root for display / backwards compatibility.
+    pub fn docs_root(&self) -> &str {
+        self.knowledge_roots
+            .first()
+            .map(|s| s.as_str())
+            .unwrap_or("docs")
     }
 
     pub fn save<P: AsRef<Path>>(&self, root: P) -> Result<(), String> {
@@ -304,12 +357,30 @@ mod tests {
     fn test_manifest_defaults() {
         let m = RepoManifest::default();
         assert_eq!(m.collection_id, "local_collection");
-        assert_eq!(m.decisions_path, "docs/decisions");
-        assert_eq!(m.risks_path, "docs/risks");
-        assert_eq!(m.directives_path, "docs/directives");
+        assert_eq!(m.decisions_path, "decisions");
+        assert_eq!(m.risks_path, "risks");
+        assert_eq!(m.directives_path, "directives");
+        assert_eq!(m.memory_path, "memory");
+        assert_eq!(m.knowledge_roots, vec!["projects", "shared", "docs"]);
+        assert_eq!(m.docs_root(), "projects");
         assert!(m.is_valid_category("architecture"));
         assert!(m.is_valid_category("BEHAVIOR"));
         assert!(!m.is_valid_category("unknown_category"));
+    }
+
+    #[test]
+    fn test_manifest_backward_compatibility_docs_root() {
+        // Test that an older manifest JSON containing "docs_root": "my_docs" deserializes properly into knowledge_roots
+        let json = r#"{
+            "collection_id": "legacy_repo",
+            "name": "Legacy Repo",
+            "docs_root": "legacy_docs"
+        }"#;
+
+        let m: RepoManifest = serde_json::from_str(json).unwrap();
+        assert_eq!(m.collection_id, "legacy_repo");
+        assert_eq!(m.knowledge_roots, vec!["legacy_docs".to_string()]);
+        assert_eq!(m.docs_root(), "legacy_docs");
     }
 
     #[test]
@@ -321,9 +392,12 @@ mod tests {
         assert_eq!(manifest.name, "My Project");
         assert_eq!(manifest.collection_id, "my-proj");
         assert!(path.exists());
-        assert!(temp_dir.join("docs/decisions").exists());
-        assert!(temp_dir.join("docs/risks").exists());
-        assert!(temp_dir.join("docs/directives").exists());
+        assert!(temp_dir.join("decisions").exists());
+        assert!(temp_dir.join("risks").exists());
+        assert!(temp_dir.join("directives").exists());
+        assert!(temp_dir.join("projects").exists());
+        assert!(temp_dir.join("shared").exists());
+        assert!(temp_dir.join("docs").exists());
 
         let loaded = RepoManifest::load_or_default(&temp_dir);
         assert_eq!(loaded, manifest);

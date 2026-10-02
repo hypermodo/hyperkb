@@ -345,9 +345,9 @@ impl Queries {
             "risks" => where_clauses.push("d.kind = 'risk' AND e.effective_status = 'open'".into()),
             "proposals" => where_clauses.push("e.effective_status = 'proposed'".into()),
             "superseded" => where_clauses.push("e.effective_status = 'superseded'".into()),
-            "specs" => where_clauses.push("d.path LIKE '%/specs/%'".into()),
-            "plans" => where_clauses.push("d.path LIKE '%/plans/%'".into()),
-            _ => {}
+            "specs" => where_clauses.push("d.path LIKE '%/specs/%' AND d.kind != 'directive'".into()),
+            "plans" => where_clauses.push("d.path LIKE '%/plans/%' AND d.kind != 'directive'".into()),
+            _ => where_clauses.push("d.kind != 'directive'".into()),
         }
 
         if let Some(ref project) = opts.project {

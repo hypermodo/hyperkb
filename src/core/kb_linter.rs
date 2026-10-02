@@ -21,6 +21,20 @@ impl KbAuditReport {
             && self.depth_warnings.is_empty()
             && self.stale_warnings.is_empty()
     }
+
+    pub fn merge(&mut self, other: KbAuditReport) {
+        self.total_documents += other.total_documents;
+        self.valid_documents += other.valid_documents;
+        self.bloat_warnings.extend(other.bloat_warnings);
+        self.schema_errors.extend(other.schema_errors);
+        self.depth_warnings.extend(other.depth_warnings);
+        self.stale_warnings.extend(other.stale_warnings);
+        for t in other.topics {
+            if !self.topics.contains(&t) {
+                self.topics.push(t);
+            }
+        }
+    }
 }
 
 pub struct KbLinter;
@@ -33,6 +47,44 @@ impl KbLinter {
 
     pub fn audit_directory<P: AsRef<Path>>(docs_dir: P) -> Result<KbAuditReport, String> {
         Self::audit_directory_with_settings(docs_dir, Self::MAX_LINE_COUNT, Self::MAX_FOLDER_DEPTH, 90)
+    }
+
+    pub fn audit_workspace<P: AsRef<Path>>(
+        workspace_root: P,
+        manifest: &crate::domain::RepoManifest,
+    ) -> Result<KbAuditReport, String> {
+        let root = workspace_root.as_ref();
+        let mut combined = KbAuditReport::default();
+        let mut audited_any = false;
+
+        for k in &manifest.knowledge_roots {
+            let p = root.join(k);
+            if p.exists() {
+                audited_any = true;
+                let rep = Self::audit_directory_with_settings(
+                    &p,
+                    manifest.settings.audit_max_lines,
+                    manifest.settings.audit_max_depth,
+                    manifest.settings.stale_days_threshold,
+                )?;
+                combined.merge(rep);
+            }
+        }
+
+        if !audited_any {
+            let p = root.join(manifest.docs_root());
+            if p.exists() {
+                let rep = Self::audit_directory_with_settings(
+                    &p,
+                    manifest.settings.audit_max_lines,
+                    manifest.settings.audit_max_depth,
+                    manifest.settings.stale_days_threshold,
+                )?;
+                combined.merge(rep);
+            }
+        }
+
+        Ok(combined)
     }
 
     pub fn audit_directory_with_settings<P: AsRef<Path>>(

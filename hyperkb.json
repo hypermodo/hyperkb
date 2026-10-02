@@ -3,11 +3,15 @@
   "name": "HyperKB",
   "version": "0.1.0",
   "default_profile": "default_profile",
-  "docs_root": "docs",
-  "decisions_path": "docs/decisions",
-  "risks_path": "docs/risks",
-  "directives_path": "docs/directives",
-  "memory_path": "docs/memory",
+  "knowledge_roots": [
+    "projects",
+    "shared",
+    "docs"
+  ],
+  "decisions_path": "decisions",
+  "risks_path": "risks",
+  "directives_path": "directives",
+  "memory_path": "memory",
   "taxonomy": {
     "categories": [
       {

@@ -1859,13 +1859,7 @@ impl App {
                 self.revoke_selected_grant()
             }
             "audit_kb" => {
-                let docs_dir = self.root.join(&self.manifest.docs_root);
-                let report = crate::core::KbLinter::audit_directory_with_settings(
-                    &docs_dir,
-                    self.manifest.settings.audit_max_lines,
-                    self.manifest.settings.audit_max_depth,
-                    self.manifest.settings.stale_days_threshold,
-                ).unwrap_or_default();
+                let report = crate::core::KbLinter::audit_workspace(&self.root, &self.manifest).unwrap_or_default();
                 let dir_report = crate::core::DirectiveWorkflow::audit_directives(&self.root, db.conn(), &self.collection_id);
                 let dir_count = dir_report.as_ref().map(|r| r.active_directives).unwrap_or(0);
                 let total_dirs = dir_report.as_ref().map(|r| r.total_directives).unwrap_or(0);
@@ -1875,7 +1869,7 @@ impl App {
                 let mut lines = Vec::new();
                 let total_issues = report.schema_errors.len() + report.bloat_warnings.len() + report.depth_warnings.len() + report.stale_warnings.len();
 
-                lines.push(format!("Knowledge Base Root: '{}' ({} total documents)", self.manifest.docs_root, report.total_documents));
+                lines.push(format!("Knowledge Base Roots: '{}' ({} total documents)", self.manifest.knowledge_roots.join(", "), report.total_documents));
                 lines.push(format!("  ✓ Schema & Metadata: {} valid frontmatter files", report.valid_documents));
 
                 if !report.bloat_warnings.is_empty() {
@@ -1969,8 +1963,7 @@ impl App {
                 ))
             }
             "reindex_kb" => {
-                let docs_dir = self.root.join(&self.manifest.docs_root);
-                match crate::core::Scanner::index_directory(db.conn(), &docs_dir, &self.collection_id) {
+                match crate::core::Scanner::index_workspace(db.conn(), &self.root, &self.manifest) {
                     Ok(rep) => {
                         self.refresh_data(db);
                         let summary_msg = format!(
@@ -1986,7 +1979,7 @@ impl App {
                             success: true,
                             summary: summary_msg.clone(),
                             lines: vec![
-                                format!("Documents scanned in '{}': {}", self.manifest.docs_root, rep.scanned),
+                                format!("Knowledge roots scanned: {}", self.manifest.knowledge_roots.join(", ")),
                                 format!("FTS5 Index Updates: {} added, {} updated, {} unchanged, {} removed", rep.added, rep.updated, rep.unchanged, rep.removed),
                                 "SQLite full-text index is in sync with on-disk markdown files.".to_string(),
                             ],

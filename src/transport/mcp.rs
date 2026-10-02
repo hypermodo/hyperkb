@@ -550,7 +550,8 @@ impl McpServer {
                 let mut check = Queries::check_work(conn, collection_id, &files, version, env)
                     .map_err(|e| format!("Failed to check work: {}", e))?;
 
-                let docs_dir = root.join("docs");
+                let manifest = crate::domain::RepoManifest::load_or_default(root);
+                let docs_dir = root.join(manifest.docs_root());
                 for file in &files {
                     if file.ends_with(".md") || file.ends_with(".markdown") {
                         let full_p = root.join(file);
@@ -1249,10 +1250,15 @@ impl McpServer {
                     let _ = SessionManager::record_tool_call(conn, sess_id, "audit_kb", "", "");
                 }
 
-                let sub_path = args.get("path").and_then(|v| v.as_str()).unwrap_or("docs");
-                let audit_dir = root.join(sub_path);
+                let manifest = crate::domain::RepoManifest::load_or_default(root);
+                let report = if let Some(sub_path) = args.get("path").and_then(|v| v.as_str()) {
+                    let audit_dir = root.join(sub_path);
+                    crate::core::KbLinter::audit_directory(&audit_dir)
+                } else {
+                    crate::core::KbLinter::audit_workspace(root, &manifest)
+                };
 
-                match crate::core::KbLinter::audit_directory(&audit_dir) {
+                match report {
                     Ok(rep) => {
                         let serialized = serde_json::to_string_pretty(&rep)
                             .map_err(|e| format!("Serialization error: {}", e))?;

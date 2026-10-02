@@ -481,7 +481,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
 
             // Lint markdown documentation files for KB anti-bloat & schema compliance
-            let docs_dir = cli.root.join(&manifest.docs_root);
+            let docs_dir = cli.root.join(manifest.docs_root());
             for path in &check.checked_paths {
                 if path.ends_with(".md") || path.ends_with(".markdown") {
                     let file_p = cli.root.join(path);
@@ -634,12 +634,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!("\nIndexed and active for pre-edit interception.");
         }
         Some(Commands::Mcp) => {
-            let docs_dir = cli.root.join(&manifest.docs_root);
-            if docs_dir.exists() {
-                let _ = Scanner::index_directory(db.conn(), &docs_dir, collection_id);
-            } else {
-                let _ = Scanner::index_directory(db.conn(), &cli.root, collection_id);
-            }
+            let _ = Scanner::index_workspace(db.conn(), &cli.root, &manifest);
             McpServer::run_stdio(&cli.root, db.conn(), collection_id, profile_id)?;
         }
         Some(Commands::DraftDecision {
@@ -1047,13 +1042,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let mut dir_report = None;
 
             if audit_kb_flag {
-                let docs_dir = cli.root.join(&manifest.docs_root);
-                let report = KbLinter::audit_directory_with_settings(
-                    &docs_dir,
-                    manifest.settings.audit_max_lines,
-                    manifest.settings.audit_max_depth,
-                    manifest.settings.stale_days_threshold,
-                )?;
+                let report = KbLinter::audit_workspace(&cli.root, &manifest)?;
                 kb_report = Some(report);
             }
 
@@ -1232,12 +1221,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         None => {
             // Index existing docs in workspace so the TUI opens with real knowledge ready to browse
-            let docs_dir = cli.root.join(&manifest.docs_root);
-            if docs_dir.exists() {
-                let _ = Scanner::index_directory(db.conn(), &docs_dir, collection_id);
-            } else {
-                let _ = Scanner::index_directory(db.conn(), &cli.root, collection_id);
-            }
+            let _ = Scanner::index_workspace(db.conn(), &cli.root, &manifest);
 
             // Launch the full-screen Ratatui TUI
             ui::run(&cli.root, &db, collection_id, profile_id)?;
