@@ -102,3 +102,28 @@ This generates concise (~11-line) instruction files:
 | `get_session_scorecard`| `session_id?: string` | Returns the real-time 0–100 session quality score, duration, and thrashing metrics. |
 | `record_session_metric`| `session_id: string`, `metric_name: string`, `value: number` | Emits custom agent velocity and execution metrics into the session telemetry log. |
 | `remember` | `title: string`, `content: string`, `kind?: string` | Stores private, local agent memory and scratchpad notes. |
+| `transition_task` | `project: string`, `task_id: string`, `status: string`, `reason?: string` | Transitions a project task status (`in_progress`, `completed`, `blocked`, `pending`) and syncs status.md active critical path lock. |
+| `update_status` | `project: string`, `health: string`, `reason?: string`, `blocker?: string` | Updates project health (`healthy`, `at_risk`, `blocked`) and appends blocker notes. |
+| `get_project_status` | `project: string` | Retrieves structured status, active task lock, blockers, and exit criteria for a project. |
+| `defer_finding` | `project: string`, `title: string`, `details: string`, `severity?: string` | Jails tangential discoveries into project BACKLOG.md to prevent critical path context thrashing. |
+| `verify_exit_criteria` | `project: string` | Executes the project's exit criteria command and automatically marks the project completed upon matching exit code. |
+| `consult_peer_model` | `peer: string`, `prompt: string`, `context_files?: string[]` | Consults a peer AI model (Claude, ChatGPT, Gemini) as middleware with centralized audit logging and token latency tracking. |
+
+---
+
+## 💬 In-Harness Slash Commands & Universal MCP Prompts
+
+HyperKB 2.1 implements the official Model Context Protocol **Prompts specification** (`prompts/list` and `prompts/get`). In harnesses that support MCP Prompts (OpenCode, Claude Code, Cursor), these automatically appear as **native slash commands**:
+
+| Prompt / Slash Command | Arguments | In-Harness Behavior |
+| :--- | :--- | :--- |
+| `brief` (or `/brief`) | `scope?: string` | Delivers warm-start context briefing clamped under 35 lines with Rule of 5 directives and locked critical path. |
+| `status` (or `/status`) | `project?: string` | Renders active project health, active task lock (`🔒 task-02`), blockers, and exit criteria. |
+| `verify` (or `/verify`) | `project?: string` | Runs deterministic exit criteria verification; reports exit code, stdout, and pass/fail. |
+| `task_next` (or `/task_next`) | `project?: string`, `task_id?: string`, `status?: string`, `reason?: string` | Advances active task to completed and locks next sequential task without leaving the harness. |
+| `defer` (or `/defer`) | `title: string`, `details?: string`, `project?: string` | Jails a side finding into `BACKLOG.md` with strict return-to-path instruction. |
+| `metrics` (or `/metrics`) | `session_id?: string` | Renders tool-to-edit ratio, review loop oscillations, and coding effectiveness scorecard. |
+| `claude` (or `/claude`) | `prompt: string`, `context_files?: string` | Consults Anthropic Claude peer model directly from your current harness (e.g. from Antigravity/Gemini or OpenCode). |
+| `chatgpt` (or `/chatgpt`) | `prompt: string`, `context_files?: string` | Consults OpenAI ChatGPT peer model directly from your current harness. |
+| `gemini` (or `/gemini`) | `prompt: string`, `context_files?: string` | Consults Google Gemini peer model directly from your current harness. |
+

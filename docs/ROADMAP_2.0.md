@@ -139,3 +139,29 @@ From direct sampling of `ZDP-SYSTEM-KB`, four systemic failure modes were identi
   - Validated across `ZDP-SYSTEM-KB` (60 projects cleanly segregated).
   - Verified interactive task transition modal flow and state transitions.
   - All 103 unit and integration tests passing.
+
+---
+
+### Phase 11: Extended MCP Protocol, Universal Prompts & Peer Model Middleware
+**Goal**: Bring zero-context-switch tactical control directly into AI coding harnesses (OpenCode, Claude Code, Cursor, Antigravity) via official MCP Prompts and enable cross-harness peer model consultation.
+
+- [x] **Universal MCP Prompts Specification (`src/transport/mcp.rs`)**:
+  - Advertised `prompts: { "listChanged": false }` capability in `initialize`.
+  - Implemented `prompts/list` exposing 9 in-harness slash commands:
+    - `/brief`: Clamped warm-start context briefing (<35 lines) enforcing Rule of 5 and critical path lock.
+    - `/status`: Real-time project health, critical path lock (`🔒 <task>`), blockers, and exit criteria.
+    - `/verify`: Executable deterministic exit criteria verification.
+    - `/task_next`: In-harness critical path progression and task completion.
+    - `/defer`: Backlog jailing of tangential findings with return-to-path constraint.
+    - `/metrics`: Session effectiveness, tool-to-edit ratio, and loop oscillation scorecard.
+    - `/claude`, `/chatgpt`, `/gemini`: Direct peer model consultation prompts.
+  - Implemented `prompts/get` handler with automatic project discovery and Markdown formatting.
+- [x] **Peer Model Middleware Router (`src/core/model_router.rs`)**:
+  - Implemented `ModelRouter::consult` supporting Anthropic (Claude), OpenAI (ChatGPT), and Google (Gemini).
+  - Supports API keys (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`/`GOOGLE_API_KEY`) and local CLI fallbacks (`claude -p`).
+  - Added automatic file context attachment (`context_files`) with safety truncation (<150 lines/file).
+  - Exposed `consult_peer_model` MCP tool and `/claude`, `/chatgpt`, `/gemini` prompts with Action Ledger audit tracking.
+- [x] **Verification**:
+  - Unit tests: `test_mcp_prompts_list_and_get`, `test_model_router_unsupported_peer`, `test_model_router_unconfigured_graceful_response`, `test_model_router_context_file_attachment`.
+  - All 111 unit and integration tests passing.
+

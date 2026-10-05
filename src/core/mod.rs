@@ -14,6 +14,7 @@ pub mod risks;
 pub mod scanner;
 pub mod session_manager;
 pub mod status_engine;
+pub mod model_router;
 
 pub use archeology::{Archeology, ArcheologyCandidate, ArcheologyReport, IncidentCommit};
 pub use decisions::{DecisionDraft, DecisionReview, DecisionWorkflow};
@@ -25,11 +26,13 @@ pub use harness_init::{HarnessInit, HarnessInitReport};
 pub use kb_linter::{KbAuditReport, KbLinter};
 pub use maintenance::{BackupManifest, BackupReport, MaintenanceManager};
 pub use metadata::{MetadataParser, ParsedMetadata};
+pub use model_router::{ModelRouter, PeerConsultationResult};
 pub use query::{QueryExpander, QueryToken};
 pub use risk_engine::RiskEngine;
 pub use risks::{RiskDraft, RiskWorkflow};
 pub use scanner::Scanner;
 pub use session_manager::SessionManager;
 pub use status_engine::StatusEngine;
+
 
 

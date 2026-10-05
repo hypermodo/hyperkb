@@ -212,7 +212,10 @@ impl McpServer {
                     result: Some(json!({
                         "protocolVersion": "2024-11-05",
                         "capabilities": {
-                            "tools": {}
+                            "tools": {},
+                            "prompts": {
+                                "listChanged": false
+                            }
                         },
                         "serverInfo": {
                             "name": "hyperkb",
@@ -241,6 +244,36 @@ impl McpServer {
 
             "tools/call" => {
                 let result = Self::handle_tool_call(root, conn, collection_id, profile_id, session_id, req.params);
+                match result {
+                    Ok(val) => Some(JsonRpcResponse {
+                        jsonrpc: "2.0",
+                        id,
+                        result: Some(val),
+                        error: None,
+                    }),
+                    Err(err_msg) => Some(JsonRpcResponse {
+                        jsonrpc: "2.0",
+                        id,
+                        result: None,
+                        error: Some(JsonRpcError {
+                            code: -32602,
+                            message: err_msg,
+                        }),
+                    }),
+                }
+            }
+
+            "prompts/list" => Some(JsonRpcResponse {
+                jsonrpc: "2.0",
+                id,
+                result: Some(json!({
+                    "prompts": Self::prompt_definitions()
+                })),
+                error: None,
+            }),
+
+            "prompts/get" => {
+                let result = Self::handle_prompt_get(root, conn, collection_id, profile_id, session_id, req.params);
                 match result {
                     Ok(val) => Some(JsonRpcResponse {
                         jsonrpc: "2.0",
@@ -701,7 +734,595 @@ impl McpServer {
                     "required": ["project"]
                 }
             }),
+            json!({
+                "name": "consult_peer_model",
+                "description": "Consult a peer AI model (Claude, ChatGPT, or Gemini) as middleware for cross-checks, specialized queries, or second opinions. Returns the peer's response, token latency, and records the interaction in the HyperKB session audit ledger.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "peer": {
+                            "type": "string",
+                            "description": "Target peer model: 'claude', 'chatgpt', or 'gemini'"
+                        },
+                        "prompt": {
+                            "type": "string",
+                            "description": "Question, instructions, or critique request for the peer model"
+                        },
+                        "context_files": {
+                            "type": "array",
+                            "items": { "type": "string" },
+                            "description": "Optional list of root-relative file paths to attach as context (e.g. ['src/storage/db.rs'])"
+                        }
+                    },
+                    "required": ["peer", "prompt"]
+                }
+            }),
         ]
+    }
+
+    pub fn prompt_definitions() -> Vec<Value> {
+        vec![
+            json!({
+                "name": "brief",
+                "description": "Warm-start context briefing with rule-of-5 guardrails and locked critical path",
+                "arguments": [
+                    {
+                        "name": "scope",
+                        "description": "Optional project scope or grant pattern (e.g. projects/platform-shell)",
+                        "required": false
+                    }
+                ]
+            }),
+            json!({
+                "name": "status",
+                "description": "Current project health, active task lock, blockers, and exit criteria status",
+                "arguments": [
+                    {
+                        "name": "project",
+                        "description": "Project directory name (e.g. platform-shell). Defaults to active project if omitted.",
+                        "required": false
+                    }
+                ]
+            }),
+            json!({
+                "name": "verify",
+                "description": "Execute deterministic exit criteria verification for a project",
+                "arguments": [
+                    {
+                        "name": "project",
+                        "description": "Project directory name (e.g. platform-shell). Defaults to active project if omitted.",
+                        "required": false
+                    }
+                ]
+            }),
+            json!({
+                "name": "task_next",
+                "description": "Advance or transition the critical path task for a project (e.g. mark completed, in_progress, or blocked)",
+                "arguments": [
+                    {
+                        "name": "project",
+                        "description": "Project directory name. Defaults to active project if omitted.",
+                        "required": false
+                    },
+                    {
+                        "name": "task_id",
+                        "description": "Task ID to transition (e.g. task-01). Defaults to current active task if omitted.",
+                        "required": false
+                    },
+                    {
+                        "name": "status",
+                        "description": "Target status: 'completed', 'in_progress', or 'blocked'. Defaults to 'completed'.",
+                        "required": false
+                    },
+                    {
+                        "name": "reason",
+                        "description": "Optional transition rationale or progress note.",
+                        "required": false
+                    }
+                ]
+            }),
+            json!({
+                "name": "defer",
+                "description": "Jail a tangential finding or bug into the project backlog to protect the critical path",
+                "arguments": [
+                    {
+                        "name": "title",
+                        "description": "Title or summary of the finding to defer",
+                        "required": true
+                    },
+                    {
+                        "name": "details",
+                        "description": "Details or reproduction steps",
+                        "required": false
+                    },
+                    {
+                        "name": "project",
+                        "description": "Target project directory. Defaults to active project if omitted.",
+                        "required": false
+                    }
+                ]
+            }),
+            json!({
+                "name": "metrics",
+                "description": "View session effectiveness scorecard, coding velocity, tool-to-edit ratio, and review loops",
+                "arguments": [
+                    {
+                        "name": "session_id",
+                        "description": "Optional specific session ID. Defaults to current active session.",
+                        "required": false
+                    }
+                ]
+            }),
+            json!({
+                "name": "claude",
+                "description": "Consult Anthropic Claude peer model for a second opinion, architecture critique, or design feedback",
+                "arguments": [
+                    {
+                        "name": "prompt",
+                        "description": "Question, instructions, or critique request for Claude",
+                        "required": true
+                    },
+                    {
+                        "name": "context_files",
+                        "description": "Optional file paths to attach as context (comma-separated or array)",
+                        "required": false
+                    }
+                ]
+            }),
+            json!({
+                "name": "chatgpt",
+                "description": "Consult OpenAI ChatGPT peer model for a second opinion, code generation, or review",
+                "arguments": [
+                    {
+                        "name": "prompt",
+                        "description": "Question, instructions, or critique request for ChatGPT",
+                        "required": true
+                    },
+                    {
+                        "name": "context_files",
+                        "description": "Optional file paths to attach as context (comma-separated or array)",
+                        "required": false
+                    }
+                ]
+            }),
+            json!({
+                "name": "gemini",
+                "description": "Consult Google Gemini peer model for multimodal analysis, long-context reasoning, or review",
+                "arguments": [
+                    {
+                        "name": "prompt",
+                        "description": "Question, instructions, or critique request for Gemini",
+                        "required": true
+                    },
+                    {
+                        "name": "context_files",
+                        "description": "Optional file paths to attach as context (comma-separated or array)",
+                        "required": false
+                    }
+                ]
+            }),
+        ]
+    }
+
+    fn resolve_project(
+        root: &Path,
+        conn: &Connection,
+        collection_id: &str,
+        session_id: Option<&str>,
+        explicit: Option<&str>,
+    ) -> Result<String, String> {
+        if let Some(p) = explicit {
+            let trimmed = p.trim();
+            if !trimmed.is_empty() {
+                let clean = trimmed.strip_prefix("projects/").unwrap_or(trimmed);
+                let clean = clean.trim_matches('/');
+                return Ok(clean.to_string());
+            }
+        }
+        if let Some(sess_id) = session_id {
+            if let Ok(Some(sess)) = Queries::get_session(conn, sess_id) {
+                if let Some(ref proj) = sess.project {
+                    if !proj.is_empty() && proj != "Unscoped" {
+                        return Ok(proj.clone());
+                    }
+                }
+            }
+        }
+        let projects = Queries::list_projects(conn, collection_id, false).unwrap_or_default();
+        if projects.len() == 1 {
+            return Ok(projects[0].name.clone());
+        }
+        let active: Vec<_> = projects
+            .iter()
+            .filter(|p| p.tasks_in_progress > 0 || p.tasks_pending > 0 || p.active_task.is_some())
+            .collect();
+        if active.len() == 1 {
+            return Ok(active[0].name.clone());
+        }
+        if let Some(first) = projects.first() {
+            return Ok(first.name.clone());
+        }
+        let projects_dir = root.join("projects");
+        if projects_dir.is_dir() {
+            if let Ok(entries) = std::fs::read_dir(&projects_dir) {
+                let subdirs: Vec<_> = entries
+                    .filter_map(|e| e.ok())
+                    .filter(|e| e.path().is_dir())
+                    .map(|e| e.file_name().to_string_lossy().to_string())
+                    .filter(|name| !name.starts_with('.') && !name.starts_with('_'))
+                    .collect();
+                if subdirs.len() == 1 {
+                    return Ok(subdirs[0].clone());
+                }
+            }
+        }
+        Err("No project specified and no active project discovered in workspace. Pass project argument (e.g. project: 'platform-shell').".to_string())
+    }
+
+    fn handle_prompt_get(
+        root: &Path,
+        conn: &Connection,
+        collection_id: &str,
+        _profile_id: &str,
+        session_id: Option<&str>,
+        params: Option<Value>,
+    ) -> Result<Value, String> {
+        let params = params.ok_or_else(|| "Missing params for prompts/get".to_string())?;
+        let name = params
+            .get("name")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| "Missing required parameter 'name' for prompts/get".to_string())?;
+        let args = params.get("arguments").and_then(|v| v.as_object());
+
+        match name {
+            "brief" => {
+                let scope = args
+                    .and_then(|a| a.get("scope"))
+                    .and_then(|v| v.as_str());
+                let manifest = crate::domain::RepoManifest::load_or_default(root);
+                let briefing = SessionManager::generate_briefing_with_limit(
+                    conn,
+                    collection_id,
+                    scope,
+                    manifest.settings.max_briefing_directives,
+                ).map_err(|e| format!("Failed to generate briefing: {}", e))?;
+
+                if let Some(sess_id) = session_id {
+                    let _ = SessionManager::record_tool_call(conn, sess_id, "prompt/brief", "", "{}");
+                }
+
+                Ok(json!({
+                    "description": "Warm-start context briefing with rule-of-5 guardrails and locked critical path",
+                    "messages": [
+                        {
+                            "role": "user",
+                            "content": {
+                                "type": "text",
+                                "text": briefing.formatted_markdown
+                            }
+                        }
+                    ]
+                }))
+            }
+
+            "status" => {
+                let explicit_project = args
+                    .and_then(|a| a.get("project"))
+                    .and_then(|v| v.as_str());
+                let project = Self::resolve_project(root, conn, collection_id, session_id, explicit_project)?;
+
+                if let Some(sess_id) = session_id {
+                    let _ = SessionManager::set_project(conn, sess_id, &project);
+                    let _ = SessionManager::record_tool_call(conn, sess_id, "prompt/status", &format!("projects/{}/status.md", project), "");
+                }
+
+                let st = crate::core::StatusEngine::get_project_status(root, &project)
+                    .map_err(|e| format!("Error reading status for project '{}': {}", project, e))?;
+
+                let mut text = format!("# Project Status: {}\n\n", project);
+                text.push_str(&format!("- **Status**: `{}`\n", st.status.as_str()));
+                text.push_str(&format!("- **Health**: `{}`\n", st.health.as_str()));
+                if let Some(ref at) = st.active_task {
+                    text.push_str(&format!("- **Active Critical Path Task**: 🔒 `{}`\n", at));
+                } else {
+                    text.push_str("- **Active Critical Path Task**: *(None active / unblocked)*\n");
+                }
+                text.push_str(&format!("- **Goal**: {}\n", st.goal));
+                if let Some(ref ec) = st.exit_criteria {
+                    text.push_str(&format!("- **Exit Criteria**: `{}` (expected exit code: {})\n", ec.command, ec.expected_exit_code));
+                }
+                if !st.blockers.is_empty() {
+                    text.push_str("\n### Blockers:\n");
+                    for b in &st.blockers {
+                        let icon = if b.resolved { "✔ [RESOLVED]" } else { "✖ [OPEN]" };
+                        text.push_str(&format!("- {} `{}`: {}\n", icon, b.id, b.description));
+                    }
+                }
+
+                Ok(json!({
+                    "description": format!("Current status, critical path, and health for project '{}'", project),
+                    "messages": [
+                        {
+                            "role": "user",
+                            "content": {
+                                "type": "text",
+                                "text": text
+                            }
+                        }
+                    ]
+                }))
+            }
+
+            "verify" => {
+                let explicit_project = args
+                    .and_then(|a| a.get("project"))
+                    .and_then(|v| v.as_str());
+                let project = Self::resolve_project(root, conn, collection_id, session_id, explicit_project)?;
+
+                if let Some(sess_id) = session_id {
+                    let _ = SessionManager::set_project(conn, sess_id, &project);
+                    let _ = SessionManager::record_tool_call(conn, sess_id, "prompt/verify", &format!("projects/{}", project), "");
+                }
+
+                let res = crate::core::StatusEngine::verify_exit_criteria(root, &project)
+                    .map_err(|e| format!("Exit criteria verification error for '{}': {}", project, e))?;
+
+                let mut text = format!("# Exit Criteria Verification: {}\n\n", project);
+                if res.passed {
+                    text.push_str(&format!("✅ **PASSED** (Exit code: {})\n", res.exit_code));
+                } else {
+                    text.push_str(&format!("❌ **FAILED** (Exit code: {})\n", res.exit_code));
+                }
+                text.push_str(&format!("- **Command Executed**: `{}`\n", res.command));
+                if !res.stdout.trim().is_empty() {
+                    text.push_str(&format!("\n**Standard Output**:\n```\n{}\n```\n", res.stdout.trim()));
+                }
+                if !res.stderr.trim().is_empty() {
+                    text.push_str(&format!("\n**Standard Error**:\n```\n{}\n```\n", res.stderr.trim()));
+                }
+
+                Ok(json!({
+                    "description": format!("Exit criteria verification outcome for '{}'", project),
+                    "messages": [
+                        {
+                            "role": "user",
+                            "content": {
+                                "type": "text",
+                                "text": text
+                            }
+                        }
+                    ]
+                }))
+            }
+
+            "task_next" => {
+                let explicit_project = args
+                    .and_then(|a| a.get("project"))
+                    .and_then(|v| v.as_str());
+                let project = Self::resolve_project(root, conn, collection_id, session_id, explicit_project)?;
+                let status_arg = args
+                    .and_then(|a| a.get("status"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("completed");
+                let explicit_task_id = args
+                    .and_then(|a| a.get("task_id"))
+                    .and_then(|v| v.as_str());
+                let reason = args
+                    .and_then(|a| a.get("reason"))
+                    .and_then(|v| v.as_str());
+
+                let st = crate::core::StatusEngine::get_project_status(root, &project)
+                    .map_err(|e| format!("Error reading status for '{}': {}", project, e))?;
+
+                let target_task_id = match explicit_task_id {
+                    Some(id) if !id.trim().is_empty() => id.trim().to_string(),
+                    _ => match st.active_task {
+                        Some(ref at) => at.clone(),
+                        None => return Err(format!("No active task currently found in project '{}' to transition. Provide 'task_id'.", project)),
+                    },
+                };
+
+                let target_status = match status_arg.to_lowercase().as_str() {
+                    "completed" | "complete" | "done" => crate::domain::schema::TaskState::Completed,
+                    "in_progress" | "progress" | "start" => crate::domain::schema::TaskState::InProgress,
+                    "blocked" | "block" => crate::domain::schema::TaskState::Blocked,
+                    "pending" | "reset" => crate::domain::schema::TaskState::Pending,
+                    other => return Err(format!("Invalid task status '{}'. Supported: completed, in_progress, blocked, pending", other)),
+                };
+
+                let updated_task = crate::core::StatusEngine::transition_task(
+                    root,
+                    &project,
+                    &target_task_id,
+                    target_status,
+                    reason,
+                ).map_err(|e| format!("Failed to transition task: {}", e))?;
+
+                let manifest = crate::domain::RepoManifest::load_or_default(root);
+                let _ = crate::core::Scanner::index_workspace(conn, root, &manifest);
+
+                if let Some(sess_id) = session_id {
+                    let _ = SessionManager::set_project(conn, sess_id, &project);
+                    let _ = SessionManager::record_tool_call(
+                        conn,
+                        sess_id,
+                        "prompt/task_next",
+                        &format!("projects/{}/tasks/{}.md", project, target_task_id),
+                        status_arg,
+                    );
+                }
+
+                let mut text = format!("# Task Transition: {}\n\n", project);
+                text.push_str(&format!("- **Task ID**: `{}`\n", updated_task.id));
+                text.push_str(&format!("- **New Status**: `{}`\n", updated_task.status.as_str()));
+                if let Some(ref r) = updated_task.reason {
+                    text.push_str(&format!("- **Reason**: {}\n", r));
+                }
+                if let Ok(updated_st) = crate::core::StatusEngine::get_project_status(root, &project) {
+                    if let Some(ref next_task) = updated_st.active_task {
+                        text.push_str(&format!("- **Next Critical Path Lock**: 🔒 `{}`\n", next_task));
+                    } else {
+                        text.push_str("- **Next Critical Path Lock**: *(None remaining / All tasks completed)*\n");
+                    }
+                }
+
+                Ok(json!({
+                    "description": format!("Transitioned task '{}' to '{}' in project '{}'", target_task_id, updated_task.status.as_str(), project),
+                    "messages": [
+                        {
+                            "role": "user",
+                            "content": {
+                                "type": "text",
+                                "text": text
+                            }
+                        }
+                    ]
+                }))
+            }
+
+            "defer" => {
+                let explicit_project = args
+                    .and_then(|a| a.get("project"))
+                    .and_then(|v| v.as_str());
+                let project = Self::resolve_project(root, conn, collection_id, session_id, explicit_project)?;
+                let title = args
+                    .and_then(|a| a.get("title"))
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| "Missing required argument 'title' for defer prompt".to_string())?;
+                let details = args
+                    .and_then(|a| a.get("details"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                let severity = args
+                    .and_then(|a| a.get("severity"))
+                    .and_then(|v| v.as_str());
+
+                let result = crate::core::StatusEngine::defer_finding(
+                    root,
+                    &project,
+                    title,
+                    details,
+                    severity,
+                ).map_err(|e| format!("Failed to defer finding: {}", e))?;
+
+                if let Some(sess_id) = session_id {
+                    let _ = SessionManager::set_project(conn, sess_id, &project);
+                    let _ = SessionManager::record_tool_call(
+                        conn,
+                        sess_id,
+                        "prompt/defer",
+                        &format!("projects/{}/BACKLOG.md", project),
+                        title,
+                    );
+                }
+
+                let instruction = format!(
+                    "Finding '{}' ({}) recorded in 'projects/{}/BACKLOG.md'. Tangential scope creep is strictly prohibited: you MUST return immediately to the single-slot critical path task.",
+                    title, result, project
+                );
+
+                let mut text = format!("# Finding Deferred to Backlog: {}\n\n", project);
+                text.push_str(&format!("- **Title**: {}\n", title));
+                text.push_str(&format!("- **Backlog File**: `projects/{}/BACKLOG.md`\n", project));
+                text.push_str(&format!("- **Instruction**: {}\n", instruction));
+
+                Ok(json!({
+                    "description": format!("Deferred tangential finding '{}' to {} backlog", title, project),
+                    "messages": [
+                        {
+                            "role": "user",
+                            "content": {
+                                "type": "text",
+                                "text": text
+                            }
+                        }
+                    ]
+                }))
+            }
+
+            "metrics" => {
+                let target_id = args
+                    .and_then(|a| a.get("session_id"))
+                    .and_then(|v| v.as_str())
+                    .or(session_id)
+                    .ok_or_else(|| "No active session ID found to generate metrics".to_string())?;
+
+                let sc = SessionManager::compute_scorecard(conn, target_id)
+                    .map_err(|e| format!("Failed to compute scorecard: {}", e))?;
+
+                let mut text = format!("# Session Scorecard: `{}`\n\n", sc.session_id);
+                text.push_str(&format!("- **Coding Effectiveness**: {:.0}%\n", sc.coding_effectiveness * 100.0));
+                text.push_str(&format!("- **Knowledge Hit Rate**: {:.0}%\n", sc.knowledge_hit_rate * 100.0));
+                text.push_str(&format!("- **Tool-to-Edit Ratio**: {:.1} (Healthy benchmark: 2.0 – 4.0)\n", sc.tool_to_edit_ratio));
+                text.push_str(&format!("- **Review Loops Detected**: {}\n", sc.review_loops_detected));
+                text.push_str(&format!("- **Risks Handled / Prevented**: {}\n", sc.risks_handled));
+                text.push_str(&format!("- **Session Duration**: {}s\n", sc.duration_seconds));
+                if !sc.friction_hotspots.is_empty() {
+                    text.push_str("\n### Friction Hotspots (Re-edited files):\n");
+                    for p in &sc.friction_hotspots {
+                        text.push_str(&format!("- `{}`\n", p));
+                    }
+                }
+
+                Ok(json!({
+                    "description": format!("Telemetry and quality scorecard for session '{}'", target_id),
+                    "messages": [
+                        {
+                            "role": "user",
+                            "content": {
+                                "type": "text",
+                                "text": text
+                            }
+                        }
+                    ]
+                }))
+            }
+
+            "claude" | "chatgpt" | "gemini" => {
+                let prompt = args
+                    .and_then(|a| a.get("prompt"))
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| format!("Missing required argument 'prompt' for {} prompt", name))?;
+
+                let context_files: Option<Vec<String>> = args.and_then(|a| a.get("context_files")).and_then(|v| {
+                    if let Some(arr) = v.as_array() {
+                        Some(arr.iter().filter_map(|x| x.as_str().map(|s| s.to_string())).collect())
+                    } else if let Some(s) = v.as_str() {
+                        Some(s.split(',').map(|f| f.trim().to_string()).filter(|f| !f.is_empty()).collect())
+                    } else {
+                        None
+                    }
+                });
+
+                if let Some(sess_id) = session_id {
+                    let _ = SessionManager::record_tool_call(conn, sess_id, &format!("prompt/{}", name), "", prompt);
+                }
+
+                let res = crate::core::ModelRouter::consult(root, name, prompt, context_files.as_deref());
+                let mut text = format!("### {} Peer Consultation ({})\n\n", name.to_uppercase(), res.model);
+                if res.success {
+                    text.push_str(&res.response);
+                    text.push_str(&format!("\n\n*Latency: {}ms | Source: {}*", res.elapsed_ms, res.source));
+                } else {
+                    text.push_str(&format!("⚠️ **Notice**: {}\n", res.response));
+                }
+
+                Ok(json!({
+                    "description": format!("Peer consultation response from {}", name),
+                    "messages": [
+                        {
+                            "role": "user",
+                            "content": {
+                                "type": "text",
+                                "text": text
+                            }
+                        }
+                    ]
+                }))
+            }
+
+            other => Err(format!("Unknown prompt '{}'. Available: brief, status, verify, task_next, defer, metrics, claude, chatgpt, gemini", other)),
+        }
     }
 
     fn ensure_session_id(
@@ -1808,6 +2429,50 @@ impl McpServer {
                 }
             }
 
+            "consult_peer_model" => {
+                let peer = args
+                    .get("peer")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| "Missing required argument 'peer' for consult_peer_model".to_string())?;
+                let prompt = args
+                    .get("prompt")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| "Missing required argument 'prompt' for consult_peer_model".to_string())?;
+                let context_files: Option<Vec<String>> = args
+                    .get("context_files")
+                    .and_then(|v| v.as_array())
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|x| x.as_str().map(|s| s.to_string()))
+                            .collect()
+                    });
+
+                if let Some(ref sess_id) = current_sess_id {
+                    let _ = SessionManager::record_tool_call(
+                        conn,
+                        sess_id,
+                        &format!("consult_peer_model:{}", peer),
+                        "",
+                        prompt,
+                    );
+                }
+
+                let result = crate::core::ModelRouter::consult(
+                    root,
+                    peer,
+                    prompt,
+                    context_files.as_deref(),
+                );
+
+                let serialized = serde_json::to_string_pretty(&result)
+                    .map_err(|e| format!("Serialization error: {}", e))?;
+
+                Ok(json!({
+                    "content": [{ "type": "text", "text": serialized }],
+                    "isError": !result.success
+                }))
+            }
+
             _ => Err(format!("Unknown tool '{}'", tool_name)),
         }
     }
@@ -2497,4 +3162,132 @@ mod tests {
 
         let _ = std::fs::remove_dir_all(&temp_dir);
     }
+
+    #[test]
+    fn test_mcp_prompts_list_and_get() {
+        let temp_dir = std::env::temp_dir().join(format!("hyperkb_test_mcp_prompts_{}", uuid::Uuid::now_v7()));
+        std::fs::create_dir_all(&temp_dir).unwrap();
+        let db = Database::open_in_memory("coll_test", "prof_test").unwrap();
+        let root_str = temp_dir.to_str().unwrap();
+
+        // 1. prompts/list
+        let list_req = JsonRpcRequest {
+            jsonrpc: "2.0".into(),
+            id: Some(json!(80)),
+            method: "prompts/list".into(),
+            params: None,
+        };
+        let list_resp = McpServer::handle_request(root_str, db.conn(), "coll_test", "prof_test", list_req).unwrap();
+        let prompts = list_resp.result.unwrap()["prompts"].as_array().unwrap().clone();
+        let prompt_names: Vec<&str> = prompts.iter().map(|p| p["name"].as_str().unwrap()).collect();
+        assert!(prompt_names.contains(&"brief"));
+        assert!(prompt_names.contains(&"status"));
+        assert!(prompt_names.contains(&"verify"));
+        assert!(prompt_names.contains(&"task_next"));
+        assert!(prompt_names.contains(&"defer"));
+        assert!(prompt_names.contains(&"metrics"));
+        assert!(prompt_names.contains(&"claude"));
+        assert!(prompt_names.contains(&"chatgpt"));
+        assert!(prompt_names.contains(&"gemini"));
+
+        // 2. prompts/get brief
+        let get_brief_req = JsonRpcRequest {
+            jsonrpc: "2.0".into(),
+            id: Some(json!(81)),
+            method: "prompts/get".into(),
+            params: Some(json!({
+                "name": "brief",
+                "arguments": {}
+            })),
+        };
+        let brief_resp = McpServer::handle_request(root_str, db.conn(), "coll_test", "prof_test", get_brief_req).unwrap();
+        let brief_msgs = brief_resp.result.unwrap()["messages"].as_array().unwrap().clone();
+        assert_eq!(brief_msgs.len(), 1);
+        let brief_text = brief_msgs[0]["content"]["text"].as_str().unwrap();
+        assert!(brief_text.contains("Session Briefing"));
+
+        // 3. Setup project and test prompts/get status
+        let proj_dir = temp_dir.join("projects/demo-proj");
+        std::fs::create_dir_all(&proj_dir).unwrap();
+        let status_md = "---\nid: status-demo-proj\nstatus: active\nhealth: healthy\nactive_task: task-01\ngoal: Test prompt status\n---\n# Status\n";
+        std::fs::write(proj_dir.join("status.md"), status_md).unwrap();
+
+        let get_status_req = JsonRpcRequest {
+            jsonrpc: "2.0".into(),
+            id: Some(json!(82)),
+            method: "prompts/get".into(),
+            params: Some(json!({
+                "name": "status",
+                "arguments": {
+                    "project": "demo-proj"
+                }
+            })),
+        };
+        let status_resp = McpServer::handle_request(root_str, db.conn(), "coll_test", "prof_test", get_status_req).unwrap();
+        let status_msgs = status_resp.result.unwrap()["messages"].as_array().unwrap().clone();
+        let status_text = status_msgs[0]["content"]["text"].as_str().unwrap();
+        assert!(status_text.contains("Project Status: demo-proj"));
+        assert!(status_text.contains("task-01"));
+
+        // 4. prompts/get task_next
+        let task_next_req = JsonRpcRequest {
+            jsonrpc: "2.0".into(),
+            id: Some(json!(83)),
+            method: "prompts/get".into(),
+            params: Some(json!({
+                "name": "task_next",
+                "arguments": {
+                    "project": "demo-proj",
+                    "task_id": "task-01",
+                    "status": "completed",
+                    "reason": "Shipped successfully"
+                }
+            })),
+        };
+        let task_next_resp = McpServer::handle_request(root_str, db.conn(), "coll_test", "prof_test", task_next_req).unwrap();
+        let task_next_msgs = task_next_resp.result.unwrap()["messages"].as_array().unwrap().clone();
+        let task_next_text = task_next_msgs[0]["content"]["text"].as_str().unwrap();
+        assert!(task_next_text.contains("Task Transition: demo-proj"));
+        assert!(task_next_text.contains("completed"));
+
+        // 5. prompts/get defer
+        let defer_req = JsonRpcRequest {
+            jsonrpc: "2.0".into(),
+            id: Some(json!(84)),
+            method: "prompts/get".into(),
+            params: Some(json!({
+                "name": "defer",
+                "arguments": {
+                    "project": "demo-proj",
+                    "title": "Minor styling glitch"
+                }
+            })),
+        };
+        let defer_resp = McpServer::handle_request(root_str, db.conn(), "coll_test", "prof_test", defer_req).unwrap();
+        let defer_msgs = defer_resp.result.unwrap()["messages"].as_array().unwrap().clone();
+        let defer_text = defer_msgs[0]["content"]["text"].as_str().unwrap();
+        assert!(defer_text.contains("Finding Deferred to Backlog"));
+        assert!(temp_dir.join("projects/demo-proj/BACKLOG.md").exists());
+
+        // 6. consult_peer_model tool call
+        let consult_req = JsonRpcRequest {
+            jsonrpc: "2.0".into(),
+            id: Some(json!(85)),
+            method: "tools/call".into(),
+            params: Some(json!({
+                "name": "consult_peer_model",
+                "arguments": {
+                    "peer": "claude",
+                    "prompt": "Evaluate this architecture pattern"
+                }
+            })),
+        };
+        let consult_resp = McpServer::handle_request(root_str, db.conn(), "coll_test", "prof_test", consult_req).unwrap();
+        assert!(consult_resp.result.is_some());
+        let consult_val: Value = serde_json::from_str(consult_resp.result.unwrap()["content"][0]["text"].as_str().unwrap()).unwrap();
+        assert_eq!(consult_val["peer"], "claude");
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
 }
+
