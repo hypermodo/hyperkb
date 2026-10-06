@@ -147,14 +147,14 @@ From direct sampling of `ZDP-SYSTEM-KB`, four systemic failure modes were identi
 
 - [x] **Universal MCP Prompts Specification (`src/transport/mcp.rs`)**:
   - Advertised `prompts: { "listChanged": false }` capability in `initialize`.
-  - Implemented `prompts/list` exposing 9 in-harness slash commands:
-    - `/brief`: Clamped warm-start context briefing (<35 lines) enforcing Rule of 5 and critical path lock.
-    - `/status`: Real-time project health, critical path lock (`🔒 <task>`), blockers, and exit criteria.
-    - `/verify`: Executable deterministic exit criteria verification.
-    - `/task_next`: In-harness critical path progression and task completion.
-    - `/defer`: Backlog jailing of tangential findings with return-to-path constraint.
-    - `/metrics`: Session effectiveness, tool-to-edit ratio, and loop oscillation scorecard.
-    - `/claude`, `/chatgpt`, `/gemini`: Direct peer model consultation prompts.
+  - Implemented `prompts/list` exposing 9 in-harness slash commands (prefixed with ergonomic `hkb-`):
+    - `/hkb-brief`: Clamped warm-start context briefing (<35 lines) enforcing Rule of 5 and critical path lock.
+    - `/hkb-status`: Real-time project health, critical path lock (`🔒 <task>`), blockers, and exit criteria.
+    - `/hkb-verify`: Executable deterministic exit criteria verification.
+    - `/hkb-task-next`: In-harness critical path progression and task completion.
+    - `/hkb-defer`: Backlog jailing of tangential findings with return-to-path constraint.
+    - `/hkb-metrics`: Session effectiveness, tool-to-edit ratio, and loop oscillation scorecard.
+    - `/hkb-claude`, `/hkb-chatgpt`, `/hkb-gemini`: Direct peer model consultation prompts.
   - Implemented `prompts/get` handler with automatic project discovery and Markdown formatting.
 - [x] **Peer Model Middleware Router (`src/core/model_router.rs`)**:
   - Implemented `ModelRouter::consult` supporting Anthropic (Claude), OpenAI (ChatGPT), and Google (Gemini).

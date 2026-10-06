@@ -91,14 +91,14 @@ Add to `mcp_config.json`:
 
 ## 💬 Supported In-Harness Slash Commands (MCP Prompts)
 
-When connected to any harness supporting standard MCP Prompts, HyperKB automatically provides (prefixed with `hkb_` to prevent collisions with harness-native commands):
+When connected to any harness supporting standard MCP Prompts, HyperKB automatically provides (prefixed with `hkb-` to prevent collisions with harness-native commands and allow effortless typing without the shift key):
 
-- `/hkb_brief`: Injects thin warm-start briefing (<35 lines) enforcing Rule of 5 and critical path lock. *(Alias: `/brief`)*
-- `/hkb_status`: Renders active project health, active task lock (`🔒 <task>`), blockers, and exit criteria. *(Alias: `/status`)*
-- `/hkb_verify`: Runs deterministic project exit criteria verification. *(Alias: `/verify`)*
-- `/hkb_task_next`: Progresses current critical path task without leaving chat. *(Alias: `/task_next`)*
-- `/hkb_defer`: Jails tangential side-quests into project `BACKLOG.md`. *(Alias: `/defer`)*
-- `/hkb_metrics`: Displays session effectiveness and review loop scorecard. *(Alias: `/metrics`)*
-- `/hkb_claude`: Queries Anthropic Claude peer model directly from your current harness. *(Alias: `/claude`)*
-- `/hkb_chatgpt`: Queries OpenAI ChatGPT peer model directly from your current harness. *(Alias: `/chatgpt`)*
-- `/hkb_gemini`: Queries Google Gemini peer model directly from your current harness. *(Alias: `/gemini`)*
+- `/hkb-brief`: Injects thin warm-start briefing (<35 lines) enforcing Rule of 5 and critical path lock. *(Aliases: `/hkb_brief`, `/brief`)*
+- `/hkb-status`: Renders active project health, active task lock (`🔒 <task>`), blockers, and exit criteria. *(Aliases: `/hkb_status`, `/status`)*
+- `/hkb-verify`: Runs deterministic project exit criteria verification. *(Aliases: `/hkb_verify`, `/verify`)*
+- `/hkb-task-next`: Progresses current critical path task without leaving chat. *(Aliases: `/hkb-next`, `/hkb_task_next`, `/task_next`)*
+- `/hkb-defer`: Jails tangential side-quests into project `BACKLOG.md`. *(Aliases: `/hkb_defer`, `/defer`)*
+- `/hkb-metrics`: Displays session effectiveness and review loop scorecard. *(Aliases: `/hkb_metrics`, `/metrics`)*
+- `/hkb-claude`: Queries Anthropic Claude peer model directly from your current harness. *(Aliases: `/hkb_claude`, `/claude`)*
+- `/hkb-chatgpt`: Queries OpenAI ChatGPT peer model directly from your current harness. *(Aliases: `/hkb_chatgpt`, `/chatgpt`)*
+- `/hkb-gemini`: Queries Google Gemini peer model directly from your current harness. *(Aliases: `/hkb_gemini`, `/gemini`)*
