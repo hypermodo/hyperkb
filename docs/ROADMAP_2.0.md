@@ -165,3 +165,21 @@ From direct sampling of `ZDP-SYSTEM-KB`, four systemic failure modes were identi
   - Unit tests: `test_mcp_prompts_list_and_get`, `test_model_router_unsupported_peer`, `test_model_router_unconfigured_graceful_response`, `test_model_router_context_file_attachment`.
   - All 111 unit and integration tests passing.
 
+---
+
+### Phase 12: Zero-Cargo Universal Distribution & Lifecycle Hook Engine
+**Goal**: Solve the developer distribution and workflow friction problem so users never need Rust/Cargo to run HyperKB, and enable automated session start context injection and pre-tool risk guards across OpenCode, Claude Code, Cursor, and Antigravity.
+
+- [x] **Universal NPM Distribution Package (`npm/`)**:
+  - Light cross-platform npm package (`hyperkb`) wrapping pre-compiled native binaries (`hyperkb-darwin-arm64`, `hyperkb-linux-x64`, etc.).
+  - Zero-cargo execution via `npx -y hyperkb [cmd]` and global CLI via `npm install -g hyperkb`.
+  - Automatic architecture/platform detection, fallback order (env override -> bundled platform binary -> local workspace dev target -> system PATH), and macOS provenance attribute clearing.
+  - Packaged tarball (`hyperkb-0.1.0.tgz`, 1.5 MB compressed).
+- [x] **Generic Lifecycle Hook Engine (`src/main.rs`)**:
+  - Implemented `hyperkb hook session-start [--scope <scope>] [--json]`: emits rule-of-5 clamped warm-start briefing (<35 lines) directly into harness output.
+  - Implemented `hyperkb hook pre-tool-call [--tool <tool>] [--path <path>] [--strict] [--json]`: proactively evaluates open risks and comment hygiene before tool execution with deterministic blocker codes.
+- [x] **OpenCode Native Harness Integration**:
+  - Created reference OpenCode plugin (`examples/opencode-plugin/index.ts`).
+  - Tested live in `hypercontrol` via both MCP (`tools.hyperkb.*`) and lifecycle hooks (`session.created`, `tool.execute.before`).
+  - Verified live in OpenCode: `get_session_briefing`, `check_work`, and peer model consultation routing.
+

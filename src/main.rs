@@ -405,6 +405,30 @@ enum HookAction {
         #[arg(long)]
         all_siblings: bool,
     },
+    /// Intercept harness session start and emit warm-start context briefing
+    SessionStart {
+        /// Optional project scope or grant pattern (e.g. projects/platform-shell)
+        #[arg(short, long)]
+        scope: Option<String>,
+        /// Output briefing in JSON format
+        #[arg(long)]
+        json: bool,
+    },
+    /// Intercept harness tool call before execution (e.g. file edit/write/bash)
+    PreToolCall {
+        /// Name of the tool being called (e.g. write, edit, bash)
+        #[arg(short, long)]
+        tool: Option<String>,
+        /// Target file path or command argument
+        #[arg(short, long)]
+        path: Option<String>,
+        /// Fail with non-zero exit code if unacknowledged risks apply
+        #[arg(long)]
+        strict: bool,
+        /// Output evaluation in JSON format
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -803,6 +827,90 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
             println!("\nAll staged commits will now be evaluated against cited open risks.");
+        }
+        Some(Commands::Hook {
+            action: HookAction::SessionStart { scope, json },
+        }) => {
+            let briefing = SessionManager::generate_briefing_with_limit(
+                db.conn(),
+                collection_id,
+                scope.as_deref(),
+                manifest.settings.max_briefing_directives,
+            )
+            .map_err(|e| format!("Failed to generate briefing: {}", e))?;
+            if json {
+                println!("{}", serde_json::to_string_pretty(&briefing)?);
+            } else {
+                println!("{}", briefing.formatted_markdown);
+            }
+        }
+        Some(Commands::Hook {
+            action:
+                HookAction::PreToolCall {
+                    tool,
+                    path,
+                    strict,
+                    json,
+                },
+        }) => {
+            let paths_to_check = match path {
+                Some(ref p) if !p.trim().is_empty() => vec![p.trim().to_string()],
+                _ => Git::get_modified_and_untracked_files(&cli.root).unwrap_or_default(),
+            };
+
+            let mut check = Queries::check_work(
+                db.conn(),
+                collection_id,
+                &paths_to_check,
+                None,
+                None,
+            )?;
+            let docs_dir = effective_root.join(manifest.docs_root());
+            for p in &check.checked_paths {
+                if p.ends_with(".md") || p.ends_with(".markdown") {
+                    let file_p = cli.root.join(p);
+                    if file_p.exists() {
+                        if let Ok(issues) = KbLinter::lint_single_file(&file_p, &docs_dir) {
+                            for issue in issues {
+                                check.hygiene_warnings.push(format!("KB Linter [{}]: {}", p, issue));
+                            }
+                        }
+                    }
+                }
+            }
+
+            if json {
+                println!("{}", serde_json::to_string_pretty(&check)?);
+            } else {
+                let tool_str = tool.as_deref().unwrap_or("generic");
+                if check.has_open_risks() {
+                    eprintln!(
+                        "❌ [hyperkb:hook:pre-tool-call] BLOCKED: Unacknowledged risks apply to tool '{}' on paths: {:?}",
+                        tool_str, check.checked_paths
+                    );
+                    for m in &check.matches {
+                        if !m.suppressed && !m.acknowledged {
+                            eprintln!("  • {} - {}", m.document.title, m.reason);
+                        }
+                    }
+                    if strict {
+                        std::process::exit(1);
+                    }
+                } else if !check.hygiene_warnings.is_empty() {
+                    eprintln!(
+                        "⚠ [hyperkb:hook:pre-tool-call] WARN: Hygiene warnings for tool '{}':",
+                        tool_str
+                    );
+                    for w in &check.hygiene_warnings {
+                        eprintln!("  • {}", w);
+                    }
+                } else {
+                    println!(
+                        "✓ [hyperkb:hook:pre-tool-call] ALLOWED: Tool '{}' validated on {} path(s).",
+                        tool_str, check.checked_paths.len()
+                    );
+                }
+            }
         }
         Some(Commands::Bootstrap {
             limit,

@@ -101,6 +101,11 @@ function main() {
     try {
       fs.chmodSync(binaryPath, 0o755);
     } catch (_) {}
+    if (process.platform === 'darwin') {
+      try {
+        execSync(`xattr -c "${binaryPath}" 2>/dev/null || true`);
+      } catch (_) {}
+    }
   }
 
   const child = spawn(binaryPath, process.argv.slice(2), {
