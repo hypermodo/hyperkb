@@ -171,6 +171,14 @@ jobs:
           cd npm
           npm version "${VERSION}" --no-git-tag-version --allow-same-version
 
+      - name: Build NPM package tarball for GitHub Release
+        shell: bash
+        run: |
+          cd npm
+          TARBALL=$(npm pack)
+          mv "${TARBALL}" ../dist/
+          echo "Attached ${TARBALL} to release dist assets."
+
       - name: Publish to NPM registry
         id: npm-publish
         shell: bash
