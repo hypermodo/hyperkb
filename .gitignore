@@ -6,3 +6,6 @@
 .hyperkb/
 .agents/
 .DS_Store
+npm/*.tgz
+npm/bin/hyperkb-*
+!npm/bin/hyperkb.js
