@@ -2418,7 +2418,23 @@ impl App {
     pub fn resolve_harness(&self, target: &str) -> Option<crate::domain::HarnessDefinition> {
         let t = target.trim().to_lowercase();
         if t == "default" || t == "agent" || t.is_empty() {
-            return self.harnesses.get(self.selected_harness_idx).cloned();
+            if let Some(h) = self.harnesses.get(self.selected_harness_idx) {
+                return Some(h.clone());
+            }
+            return Some(crate::domain::HarnessDefinition {
+                id: "default".to_string(),
+                name: "Default Agent (CLI)".to_string(),
+                protocol: crate::domain::HarnessProtocol::CliSubprocess {
+                    binary: "agent".to_string(),
+                    default_args: Vec::new(),
+                },
+                capabilities: vec!["code_generation".to_string(), "custom_cli".to_string()],
+                detected_models: Vec::new(),
+                governance_status: crate::domain::HarnessGovernanceStatus::Discovered,
+                governance_reason: Some("Default fallback harness".to_string()),
+                binary_path: None,
+                last_seen: Some(chrono::Utc::now()),
+            });
         }
         if t == "openai" {
             if let Some(h) = self.harnesses.iter().find(|h| h.id == "codex" || h.id == "openai") {
