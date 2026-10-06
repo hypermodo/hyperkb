@@ -16,7 +16,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        os: [ubuntu-latest, macos-latest, windows-latest]
 
     steps:
       - name: Checkout repository
@@ -50,12 +50,23 @@ jobs:
         run: cargo build --release
 
       - name: Self-check governance and check-work
-        run: ./target/release/hyperkb check-work
+        shell: bash
+        run: |
+          BIN="./target/release/hyperkb"
+          if [ -f "./target/release/hyperkb.exe" ]; then
+            BIN="./target/release/hyperkb.exe"
+          fi
+          "$BIN" check-work
 
       - name: Verify lifecycle hooks
+        shell: bash
         run: |
-          ./target/release/hyperkb hook session-start
-          ./target/release/hyperkb hook pre-tool-call --tool write --path src/main.rs
+          BIN="./target/release/hyperkb"
+          if [ -f "./target/release/hyperkb.exe" ]; then
+            BIN="./target/release/hyperkb.exe"
+          fi
+          "$BIN" hook session-start
+          "$BIN" hook pre-tool-call --tool write --path src/main.rs
 
   npm-package:
     name: Validate NPM Packaging
