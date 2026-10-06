@@ -35,10 +35,18 @@ Add to `.agents/mcp_config.json`:
 ```
 
 ### 3. Cursor & OpenCode
-Add to Cursor's MCP configuration (`settings > MCP`):
-- **Name**: `hyperkb`
-- **Type**: `command`
-- **Command**: `hyperkb mcp --root .`
+Add to `opencode.json` (or Cursor MCP settings):
+```json
+{
+  "mcp": {
+    "hyperkb": {
+      "command": "npx",
+      "args": ["@hypermodo/hyperkb", "mcp"]
+    }
+  }
+}
+```
+*(If installed locally via `npm install -D @hypermodo/hyperkb`, `npx` launches `./node_modules/.bin/hyperkb` instantly with zero Rust or Cargo required).*
 
 ### 4. Centralized Knowledge Hub (Monorepos & Multi-Repo)
 If your knowledge base lives in a central repo (e.g. `/Volumes/ExtSSD/Workspace/ZDP/ZDP-SYSTEM-KB`) while your code lives in a separate subproject, point `--root` to the knowledge hub:

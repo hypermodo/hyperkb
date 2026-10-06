@@ -1,14 +1,17 @@
 {
-  "name": "hyperkb",
+  "name": "@hypermodo/hyperkb",
   "version": "0.1.0",
   "description": "Fast, resource-efficient local developer knowledge hub, anti-churn governor, and MCP server for AI coding agents",
   "main": "bin/hyperkb.js",
   "bin": {
     "hyperkb": "bin/hyperkb.js"
   },
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com"
+  },
   "repository": {
     "type": "git",
-    "url": "https://github.com/HyperModo/hyperkb"
+    "url": "git+https://github.com/hypermodo/hyperkb.git"
   },
   "keywords": [
     "hyperkb",

@@ -13,6 +13,7 @@ on:
 
 permissions:
   contents: write
+  packages: write
   id-token: write
 
 jobs:
@@ -179,19 +180,30 @@ jobs:
           mv "${TARBALL}" ../dist/
           echo "Attached ${TARBALL} to release dist assets."
 
-      - name: Publish to NPM registry
+      - name: Publish to GitHub Packages
+        shell: bash
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          cd npm
+          echo "@hypermodo:registry=https://npm.pkg.github.com" > .npmrc
+          echo "//npm.pkg.github.com/:_authToken=${NODE_AUTH_TOKEN}" >> .npmrc
+          npm publish
+          echo "Successfully published @hypermodo/hyperkb to GitHub Packages!"
+
+      - name: Publish to NPM registry (optional)
         id: npm-publish
         shell: bash
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           if [ -z "${NODE_AUTH_TOKEN}" ]; then
-            echo "::warning::NPM_TOKEN secret is not set. Skipping automated npm publish."
-            echo "To enable zero-cargo npx distribution, add NPM_TOKEN to your repository secrets."
+            echo "NPM_TOKEN secret is not set. Skipping optional npmjs.com publish."
           else
             cd npm
+            echo "//registry.npmjs.org/:_authToken=${NODE_AUTH_TOKEN}" > .npmrc
             npm publish --access public --provenance
-            echo "Successfully published hyperkb to npm registry."
+            echo "Successfully published to npmjs.com registry."
           fi
 
       - name: Create GitHub Release
