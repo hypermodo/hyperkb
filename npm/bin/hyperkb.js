@@ -104,6 +104,7 @@ function main() {
     if (process.platform === 'darwin') {
       try {
         execSync(`xattr -c "${binaryPath}" 2>/dev/null || true`);
+        execSync(`codesign -s - -f "${binaryPath}" 2>/dev/null || true`);
       } catch (_) {}
     }
   }

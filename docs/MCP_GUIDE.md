@@ -117,13 +117,13 @@ HyperKB 2.1 implements the official Model Context Protocol **Prompts specificati
 
 | Prompt / Slash Command | Arguments | In-Harness Behavior |
 | :--- | :--- | :--- |
-| `brief` (or `/brief`) | `scope?: string` | Delivers warm-start context briefing clamped under 35 lines with Rule of 5 directives and locked critical path. |
-| `status` (or `/status`) | `project?: string` | Renders active project health, active task lock (`🔒 task-02`), blockers, and exit criteria. |
-| `verify` (or `/verify`) | `project?: string` | Runs deterministic exit criteria verification; reports exit code, stdout, and pass/fail. |
-| `task_next` (or `/task_next`) | `project?: string`, `task_id?: string`, `status?: string`, `reason?: string` | Advances active task to completed and locks next sequential task without leaving the harness. |
-| `defer` (or `/defer`) | `title: string`, `details?: string`, `project?: string` | Jails a side finding into `BACKLOG.md` with strict return-to-path instruction. |
-| `metrics` (or `/metrics`) | `session_id?: string` | Renders tool-to-edit ratio, review loop oscillations, and coding effectiveness scorecard. |
-| `claude` (or `/claude`) | `prompt: string`, `context_files?: string` | Consults Anthropic Claude peer model directly from your current harness (e.g. from Antigravity/Gemini or OpenCode). |
-| `chatgpt` (or `/chatgpt`) | `prompt: string`, `context_files?: string` | Consults OpenAI ChatGPT peer model directly from your current harness. |
-| `gemini` (or `/gemini`) | `prompt: string`, `context_files?: string` | Consults Google Gemini peer model directly from your current harness. |
+| `hkb_brief` (or `/hkb_brief`) | `scope?: string` | Delivers warm-start context briefing clamped under 35 lines with Rule of 5 directives and locked critical path. *(Aliases: `brief`)* |
+| `hkb_status` (or `/hkb_status`) | `project?: string` | Renders active project health, active task lock (`🔒 task-02`), blockers, and exit criteria. *(Aliases: `status`)* |
+| `hkb_verify` (or `/hkb_verify`) | `project?: string` | Runs deterministic exit criteria verification; reports exit code, stdout, and pass/fail. *(Aliases: `verify`)* |
+| `hkb_task_next` (or `/hkb_task_next`) | `project?: string`, `task_id?: string`, `status?: string`, `reason?: string` | Advances active task to completed and locks next sequential task without leaving the harness. *(Aliases: `task_next`)* |
+| `hkb_defer` (or `/hkb_defer`) | `title: string`, `details?: string`, `project?: string` | Jails a side finding into `BACKLOG.md` with strict return-to-path instruction. *(Aliases: `defer`)* |
+| `hkb_metrics` (or `/hkb_metrics`) | `session_id?: string` | Renders tool-to-edit ratio, review loop oscillations, and coding effectiveness scorecard. *(Aliases: `metrics`)* |
+| `hkb_claude` (or `/hkb_claude`) | `prompt: string`, `context_files?: string` | Consults Anthropic Claude peer model directly from your current harness (e.g. from Antigravity/Gemini or OpenCode). *(Aliases: `claude`)* |
+| `hkb_chatgpt` (or `/hkb_chatgpt`) | `prompt: string`, `context_files?: string` | Consults OpenAI ChatGPT peer model directly from your current harness. *(Aliases: `chatgpt`)* |
+| `hkb_gemini` (or `/hkb_gemini`) | `prompt: string`, `context_files?: string` | Consults Google Gemini peer model directly from your current harness. *(Aliases: `gemini`)* |
 

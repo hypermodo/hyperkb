@@ -763,7 +763,7 @@ impl McpServer {
     pub fn prompt_definitions() -> Vec<Value> {
         vec![
             json!({
-                "name": "brief",
+                "name": "hkb_brief",
                 "description": "Warm-start context briefing with rule-of-5 guardrails and locked critical path",
                 "arguments": [
                     {
@@ -774,7 +774,7 @@ impl McpServer {
                 ]
             }),
             json!({
-                "name": "status",
+                "name": "hkb_status",
                 "description": "Current project health, active task lock, blockers, and exit criteria status",
                 "arguments": [
                     {
@@ -785,7 +785,7 @@ impl McpServer {
                 ]
             }),
             json!({
-                "name": "verify",
+                "name": "hkb_verify",
                 "description": "Execute deterministic exit criteria verification for a project",
                 "arguments": [
                     {
@@ -796,7 +796,7 @@ impl McpServer {
                 ]
             }),
             json!({
-                "name": "task_next",
+                "name": "hkb_task_next",
                 "description": "Advance or transition the critical path task for a project (e.g. mark completed, in_progress, or blocked)",
                 "arguments": [
                     {
@@ -822,7 +822,7 @@ impl McpServer {
                 ]
             }),
             json!({
-                "name": "defer",
+                "name": "hkb_defer",
                 "description": "Jail a tangential finding or bug into the project backlog to protect the critical path",
                 "arguments": [
                     {
@@ -843,7 +843,7 @@ impl McpServer {
                 ]
             }),
             json!({
-                "name": "metrics",
+                "name": "hkb_metrics",
                 "description": "View session effectiveness scorecard, coding velocity, tool-to-edit ratio, and review loops",
                 "arguments": [
                     {
@@ -854,7 +854,7 @@ impl McpServer {
                 ]
             }),
             json!({
-                "name": "claude",
+                "name": "hkb_claude",
                 "description": "Consult Anthropic Claude peer model for a second opinion, architecture critique, or design feedback",
                 "arguments": [
                     {
@@ -870,7 +870,7 @@ impl McpServer {
                 ]
             }),
             json!({
-                "name": "chatgpt",
+                "name": "hkb_chatgpt",
                 "description": "Consult OpenAI ChatGPT peer model for a second opinion, code generation, or review",
                 "arguments": [
                     {
@@ -886,7 +886,7 @@ impl McpServer {
                 ]
             }),
             json!({
-                "name": "gemini",
+                "name": "hkb_gemini",
                 "description": "Consult Google Gemini peer model for multimodal analysis, long-context reasoning, or review",
                 "arguments": [
                     {
@@ -968,10 +968,14 @@ impl McpServer {
         params: Option<Value>,
     ) -> Result<Value, String> {
         let params = params.ok_or_else(|| "Missing params for prompts/get".to_string())?;
-        let name = params
+        let raw_name = params
             .get("name")
             .and_then(|v| v.as_str())
             .ok_or_else(|| "Missing required parameter 'name' for prompts/get".to_string())?;
+        let name = raw_name
+            .strip_prefix("hkb_")
+            .or_else(|| raw_name.strip_prefix("hkb-"))
+            .unwrap_or(raw_name);
         let args = params.get("arguments").and_then(|v| v.as_object());
 
         match name {
@@ -3180,23 +3184,23 @@ mod tests {
         let list_resp = McpServer::handle_request(root_str, db.conn(), "coll_test", "prof_test", list_req).unwrap();
         let prompts = list_resp.result.unwrap()["prompts"].as_array().unwrap().clone();
         let prompt_names: Vec<&str> = prompts.iter().map(|p| p["name"].as_str().unwrap()).collect();
-        assert!(prompt_names.contains(&"brief"));
-        assert!(prompt_names.contains(&"status"));
-        assert!(prompt_names.contains(&"verify"));
-        assert!(prompt_names.contains(&"task_next"));
-        assert!(prompt_names.contains(&"defer"));
-        assert!(prompt_names.contains(&"metrics"));
-        assert!(prompt_names.contains(&"claude"));
-        assert!(prompt_names.contains(&"chatgpt"));
-        assert!(prompt_names.contains(&"gemini"));
+        assert!(prompt_names.contains(&"hkb_brief"));
+        assert!(prompt_names.contains(&"hkb_status"));
+        assert!(prompt_names.contains(&"hkb_verify"));
+        assert!(prompt_names.contains(&"hkb_task_next"));
+        assert!(prompt_names.contains(&"hkb_defer"));
+        assert!(prompt_names.contains(&"hkb_metrics"));
+        assert!(prompt_names.contains(&"hkb_claude"));
+        assert!(prompt_names.contains(&"hkb_chatgpt"));
+        assert!(prompt_names.contains(&"hkb_gemini"));
 
-        // 2. prompts/get brief
+        // 2. prompts/get hkb_brief (and verify legacy 'brief' fallback)
         let get_brief_req = JsonRpcRequest {
             jsonrpc: "2.0".into(),
             id: Some(json!(81)),
             method: "prompts/get".into(),
             params: Some(json!({
-                "name": "brief",
+                "name": "hkb_brief",
                 "arguments": {}
             })),
         };
@@ -3206,7 +3210,20 @@ mod tests {
         let brief_text = brief_msgs[0]["content"]["text"].as_str().unwrap();
         assert!(brief_text.contains("Session Briefing"));
 
-        // 3. Setup project and test prompts/get status
+        // Also test bare "brief" fallback
+        let get_legacy_brief_req = JsonRpcRequest {
+            jsonrpc: "2.0".into(),
+            id: Some(json!(810)),
+            method: "prompts/get".into(),
+            params: Some(json!({
+                "name": "brief",
+                "arguments": {}
+            })),
+        };
+        let leg_resp = McpServer::handle_request(root_str, db.conn(), "coll_test", "prof_test", get_legacy_brief_req).unwrap();
+        assert!(leg_resp.result.is_some());
+
+        // 3. Setup project and test prompts/get hkb_status
         let proj_dir = temp_dir.join("projects/demo-proj");
         std::fs::create_dir_all(&proj_dir).unwrap();
         let status_md = "---\nid: status-demo-proj\nstatus: active\nhealth: healthy\nactive_task: task-01\ngoal: Test prompt status\n---\n# Status\n";
@@ -3217,7 +3234,7 @@ mod tests {
             id: Some(json!(82)),
             method: "prompts/get".into(),
             params: Some(json!({
-                "name": "status",
+                "name": "hkb_status",
                 "arguments": {
                     "project": "demo-proj"
                 }
