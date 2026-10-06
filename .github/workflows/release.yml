@@ -4,28 +4,40 @@ on:
   push:
     tags:
       - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag (e.g. v0.1.0)'
+        required: true
+        default: 'v0.1.0'
 
 permissions:
   contents: write
+  id-token: write
 
 jobs:
   build:
-    name: Build - ${{ matrix.target }}
+    name: Build - ${{ matrix.platform }} (${{ matrix.target }})
     runs-on: ${{ matrix.os }}
     strategy:
+      fail-fast: false
       matrix:
         include:
           - os: macos-latest
             target: aarch64-apple-darwin
+            platform: darwin-arm64
             use_cross: false
           - os: macos-13
             target: x86_64-apple-darwin
+            platform: darwin-x64
             use_cross: false
           - os: ubuntu-latest
             target: x86_64-unknown-linux-musl
+            platform: linux-x64
             use_cross: true
           - os: ubuntu-latest
             target: aarch64-unknown-linux-musl
+            platform: linux-arm64
             use_cross: true
 
     steps:
@@ -49,10 +61,23 @@ jobs:
             cargo build --release --target ${{ matrix.target }}
           fi
 
+      - name: Stage native binary for NPM
+        run: |
+          mkdir -p bin_staging
+          cp "target/${{ matrix.target }}/release/hyperkb" "bin_staging/hyperkb-${{ matrix.platform }}"
+          chmod +x "bin_staging/hyperkb-${{ matrix.platform }}"
+
+      - name: Upload platform binary artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: binary-${{ matrix.platform }}
+          path: bin_staging/hyperkb-${{ matrix.platform }}
+          if-no-files-found: error
+
       - name: Package release archive
         shell: bash
         run: |
-          TAG="${GITHUB_REF_NAME}"
+          TAG="${GITHUB_REF_NAME:-${{ inputs.tag }}}"
           ARCHIVE="hyperkb-${TAG}-${{ matrix.target }}.tar.gz"
           BIN_PATH="target/${{ matrix.target }}/release/hyperkb"
           
@@ -62,12 +87,89 @@ jobs:
           
           tar -czf "${ARCHIVE}" -C package_staging hyperkb
           shasum -a 256 "${ARCHIVE}" > "${ARCHIVE}.sha256"
+          
+          mkdir -p dist_staging
+          mv "${ARCHIVE}" dist_staging/
+          mv "${ARCHIVE}.sha256" dist_staging/
 
-      - name: Upload artifacts to GitHub Release
+      - name: Upload archive artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: archive-${{ matrix.target }}
+          path: dist_staging/*
+          if-no-files-found: error
+
+  publish:
+    name: Publish Release & NPM Package
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Download all platform binaries
+        uses: actions/download-artifact@v4
+        with:
+          pattern: binary-*
+          path: npm/bin
+          merge-multiple: true
+
+      - name: Download all release archives
+        uses: actions/download-artifact@v4
+        with:
+          pattern: archive-*
+          path: dist
+          merge-multiple: true
+
+      - name: Verify bundled platform binaries
+        run: |
+          echo "Verifying staged platform binaries in npm/bin:"
+          ls -la npm/bin/
+          chmod +x npm/bin/hyperkb-*
+          
+          # Ensure all expected matrix platforms are present
+          for platform in darwin-arm64 darwin-x64 linux-x64 linux-arm64; do
+            if [ ! -f "npm/bin/hyperkb-${platform}" ]; then
+              echo "Error: Missing expected binary npm/bin/hyperkb-${platform}"
+              exit 1
+            fi
+          done
+          echo "All platform binaries successfully verified."
+
+      - name: Sync NPM package version
+        run: |
+          TAG="${GITHUB_REF_NAME:-${{ inputs.tag }}}"
+          VERSION="${TAG#v}"
+          echo "Setting npm package version to: ${VERSION}"
+          cd npm
+          npm version "${VERSION}" --no-git-tag-version --allow-same-version
+
+      - name: Publish to NPM registry
+        id: npm-publish
+        shell: bash
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          if [ -z "${NODE_AUTH_TOKEN}" ]; then
+            echo "::warning::NPM_TOKEN secret is not set. Skipping automated npm publish."
+            echo "To enable zero-cargo npx distribution, add NPM_TOKEN to your repository secrets."
+          else
+            cd npm
+            npm publish --access public --provenance
+            echo "Successfully published hyperkb to npm registry."
+          fi
+
+      - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: |
-            hyperkb-*.tar.gz
-            hyperkb-*.sha256
+          tag_name: ${{ github.ref_name || inputs.tag }}
+          files: dist/*
+          generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
