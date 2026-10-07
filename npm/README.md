@@ -69,14 +69,16 @@ Add to `opencode.json` (or parent folder `opencode.json` for multi-repo suites):
 {
   "$schema": "https://opencode.ai/config.json",
   "mcp": {
-    "hyperkb": {
-      "type": "local",
-      "command": [
-        "npx",
-        "-y",
-        "@hypermodo/hyperkb",
-        "mcp"
-      ]
+    "servers": {
+      "hyperkb": {
+        "type": "local",
+        "command": [
+          "npx",
+          "-y",
+          "@hypermodo/hyperkb",
+          "mcp"
+        ]
+      }
     }
   }
 }

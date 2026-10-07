@@ -140,9 +140,11 @@ Add to `opencode.json` (or parent folder `opencode.json` for multi-repo suites):
 {
   "$schema": "https://opencode.ai/config.json",
   "mcp": {
-    "hyperkb": {
-      "type": "local",
-      "command": ["npx", "-y", "@hypermodo/hyperkb", "mcp"]
+    "servers": {
+      "hyperkb": {
+        "type": "local",
+        "command": ["npx", "-y", "@hypermodo/hyperkb", "mcp"]
+      }
     }
   }
 }
@@ -215,16 +217,13 @@ hyperkb audit [--kb] [--directives]
 
 # Manage directives and invariants
 hyperkb directive list
-hyperkb directive new
 
 # Manage authority grants for autonomous agents
-hyperkb grant list
 hyperkb grant issue <grantee> --scopes "src/**" --actions ProposeDecision,AcceptDecision
 hyperkb grant revoke <grant-id>
 
 # Agent telemetry & session briefings
 hyperkb session briefing
-hyperkb session list
 
 # Launch Model Context Protocol (MCP) server
 hyperkb mcp

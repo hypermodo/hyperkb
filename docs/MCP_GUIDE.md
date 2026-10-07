@@ -32,9 +32,11 @@ Leave `--root` omitted (defaults to current directory `.`):
   {
     "$schema": "https://opencode.ai/config.json",
     "mcp": {
-      "hyperkb": {
-        "type": "local",
-        "command": ["npx", "-y", "@hypermodo/hyperkb", "mcp"]
+      "servers": {
+        "hyperkb": {
+          "type": "local",
+          "command": ["npx", "-y", "@hypermodo/hyperkb", "mcp"]
+        }
       }
     }
   }
@@ -81,16 +83,18 @@ Place the configuration in the **group parent directory** (`workspace-group/`):
   {
     "$schema": "https://opencode.ai/config.json",
     "mcp": {
-      "hyperkb": {
-        "type": "local",
-        "command": [
-          "npx",
-          "-y",
-          "@hypermodo/hyperkb",
-          "mcp",
-          "--root",
-          "/absolute/path/to/workspace-group/system-kb"
-        ]
+      "servers": {
+        "hyperkb": {
+          "type": "local",
+          "command": [
+            "npx",
+            "-y",
+            "@hypermodo/hyperkb",
+            "mcp",
+            "--root",
+            "/absolute/path/to/workspace-group/system-kb"
+          ]
+        }
       }
     }
   }
@@ -144,16 +148,18 @@ Place the configuration in your **global user config**:
   {
     "$schema": "https://opencode.ai/config.json",
     "mcp": {
-      "hyperkb": {
-        "type": "local",
-        "command": [
-          "npx",
-          "-y",
-          "@hypermodo/hyperkb",
-          "mcp",
-          "--root",
-          "/path/to/global-system-kb"
-        ]
+      "servers": {
+        "hyperkb": {
+          "type": "local",
+          "command": [
+            "npx",
+            "-y",
+            "@hypermodo/hyperkb",
+            "mcp",
+            "--root",
+            "/path/to/global-system-kb"
+          ]
+        }
       }
     }
   }
