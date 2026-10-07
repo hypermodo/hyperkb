@@ -265,6 +265,7 @@ fn run_loop(
         };
 
         if event::poll(poll_timeout)? {
+            let old_proj_idx = app.selected_project_idx;
             needs_redraw = true;
             match event::read()? {
                 Event::Key(key) => {
@@ -646,7 +647,20 @@ fn run_loop(
                             KeyCode::Char('3') => app.switch_tab(ActiveTab::Directives),
                             KeyCode::Char('4') => app.switch_tab(ActiveTab::Sessions),
                             KeyCode::Char('5') => app.switch_tab(ActiveTab::Settings),
-                            KeyCode::Tab => app.toggle_pane(),
+                            KeyCode::Tab => {
+                                if app.active_tab == ActiveTab::Work && app.work_tab_mode == crate::ui::app::WorkTabMode::Console {
+                                    app.next_diagnostic_file();
+                                } else {
+                                    app.toggle_pane();
+                                }
+                            }
+                            KeyCode::BackTab => {
+                                if app.active_tab == ActiveTab::Work && app.work_tab_mode == crate::ui::app::WorkTabMode::Console {
+                                    app.prev_diagnostic_file();
+                                } else {
+                                    app.toggle_pane();
+                                }
+                            }
                             KeyCode::Down | KeyCode::Char('j') => {
                                 app.next();
                                 if app.active_tab == ActiveTab::Work && app.work_tab_mode == crate::ui::app::WorkTabMode::Projects {
@@ -743,8 +757,22 @@ fn run_loop(
                             KeyCode::End => app.scroll_to_bottom(),
                             KeyCode::Char('g') => app.scroll_to_top(),
                             KeyCode::Char('G') => app.scroll_to_bottom(),
-                            KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => app.page_down(),
-                            KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => app.page_up(),
+                            KeyCode::Char('J') => app.scroll_preview_down(6),
+                            KeyCode::Char('K') => app.scroll_preview_up(6),
+                            KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                                if app.active_tab == ActiveTab::Work && app.work_tab_mode == crate::ui::app::WorkTabMode::Projects && app.focused_pane == crate::ui::app::FocusedPane::Detail {
+                                    app.scroll_preview_down(6);
+                                } else {
+                                    app.page_down();
+                                }
+                            }
+                            KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                                if app.active_tab == ActiveTab::Work && app.work_tab_mode == crate::ui::app::WorkTabMode::Projects && app.focused_pane == crate::ui::app::FocusedPane::Detail {
+                                    app.scroll_preview_up(6);
+                                } else {
+                                    app.page_up();
+                                }
+                            }
                             KeyCode::Char(' ') => {
                                 if app.active_tab == ActiveTab::Reader {
                                     app.page_down();
@@ -1007,6 +1035,8 @@ fn run_loop(
                         }
                     }
 
+                    let footer_h: u16 = if area.height >= 22 { 2 } else { 1 };
+
                     match mouse.kind {
                         MouseEventKind::Down(MouseButton::Left) => {
                             app.drag_start = Some((col, row));
@@ -1045,8 +1075,6 @@ fn run_loop(
                                 if app.status_message.is_some() {
                                     app.status_message = None;
                                 }
-
-                                let footer_h: u16 = if area.height >= 22 { 2 } else { 1 };
 
                                 // 1. Header clicks (row 0: tabs, row 1: context sub-bar)
                                 if row <= 2 {
@@ -1109,85 +1137,91 @@ fn run_loop(
                                             match app.active_tab {
                                                 ActiveTab::Work => {
                                                     if app.work_tab_mode == crate::ui::app::WorkTabMode::Projects {
-                                                        let item_idx = ((rel_row - 2) / 3) as usize;
+                                                        let item_idx = app.projects_list_state.offset() + ((rel_row - 2) / 3) as usize;
                                                         if item_idx < app.projects.len() {
                                                             app.set_selected_project(item_idx, db);
                                                         }
                                                     } else {
-                                                        let item_idx = ((rel_row - 2) / 3) as usize;
+                                                        let item_idx = app.risks_list_state.offset() + ((rel_row - 2) / 3) as usize;
                                                         if item_idx < app.active_risks.len() {
                                                             app.selected_risk_idx = item_idx;
                                                         }
                                                     }
                                                 }
-                                                    ActiveTab::Directives => {
-                                                        let item_idx = ((rel_row - 2) / 3) as usize;
-                                                        if item_idx < app.directives.len() {
-                                                            app.selected_directive_idx = item_idx;
-                                                        }
+                                                ActiveTab::Directives => {
+                                                    let item_idx = app.directives_list_state.offset() + ((rel_row - 2) / 3) as usize;
+                                                    if item_idx < app.directives.len() {
+                                                        app.selected_directive_idx = item_idx;
                                                     }
-                                                    ActiveTab::Sessions => {
-                                                        let item_idx = ((rel_row - 2) / 3) as usize;
-                                                        if item_idx < app.sessions.len() {
-                                                            app.selected_session_idx = item_idx;
-                                                        }
+                                                }
+                                                ActiveTab::Sessions => {
+                                                    let item_idx = app.sessions_list_state.offset() + ((rel_row - 2) / 3) as usize;
+                                                    if item_idx < app.filtered_sessions().len() {
+                                                        app.selected_session_idx = item_idx;
                                                     }
-                                                    ActiveTab::Settings => {
-                                                        let item_idx = ((rel_row - 2) / 3) as usize;
-                                                        if item_idx < 8 {
-                                                            app.settings_selected_idx = item_idx;
-                                                        }
+                                                }
+                                                ActiveTab::Settings => {
+                                                    let item_idx = ((rel_row - 2) / 3) as usize;
+                                                    if item_idx < 8 {
+                                                        app.settings_selected_idx = item_idx;
                                                     }
-                                                    ActiveTab::Explore => {
-                                                        if app.explore_tree_mode {
-                                                            let tree_idx = ((rel_row - 2) / 2) as usize;
-                                                            let tree = app.build_explore_tree();
-                                                            if tree_idx < tree.len() {
-                                                                if app.selected_tree_idx == tree_idx {
-                                                                    app.open_selected();
-                                                                } else {
-                                                                    app.selected_tree_idx = tree_idx;
-                                                                    if let ExploreTreeItem::Doc { doc_idx, .. } = &tree[tree_idx] {
-                                                                        app.selected_doc_idx = *doc_idx;
-                                                                    }
+                                                }
+                                                ActiveTab::Explore => {
+                                                    if app.explore_tree_mode {
+                                                        let tree_idx = app.tree_list_state.offset() + ((rel_row - 2) / 2) as usize;
+                                                        let tree = app.build_explore_tree();
+                                                        if tree_idx < tree.len() {
+                                                            if app.selected_tree_idx == tree_idx {
+                                                                app.open_selected();
+                                                            } else {
+                                                                app.selected_tree_idx = tree_idx;
+                                                                if let ExploreTreeItem::Doc { doc_idx, .. } = &tree[tree_idx] {
+                                                                    app.selected_doc_idx = *doc_idx;
                                                                 }
                                                             }
-                                                        } else {
-                                                            let item_idx = ((rel_row - 2) / 3) as usize;
-                                                            if item_idx < app.documents.len() {
-                                                                app.selected_doc_idx = item_idx;
-                                                            }
+                                                        }
+                                                    } else {
+                                                        let item_idx = app.documents_list_state.offset() + ((rel_row - 2) / 3) as usize;
+                                                        if item_idx < app.documents.len() {
+                                                            app.selected_doc_idx = item_idx;
                                                         }
                                                     }
-                                                    _ => {}
+                                                }
+                                                _ => {}
+                                            }
+                                        }
+                                    } else {
+                                        app.focused_pane = crate::ui::app::FocusedPane::Detail;
+                                        if app.active_tab == ActiveTab::Work && app.work_tab_mode == crate::ui::app::WorkTabMode::Projects {
+                                            let overview_h: u16 = if area.height < 28 { 5 } else { 8 };
+                                            let rem_h = area.height.saturating_sub(footer_h).saturating_sub(3).saturating_sub(overview_h);
+                                            let task_box_h = rem_h * 55 / 100;
+                                            let task_start_y = overview_h + 1;
+                                            let task_end_y = overview_h + task_box_h;
+                                            if rel_row >= task_start_y && rel_row < task_end_y {
+                                                let task_idx = app.project_tasks_list_state.offset() + ((rel_row - task_start_y) / 2) as usize;
+                                                if task_idx < app.project_tasks.len() {
+                                                    app.selected_project_task_idx = task_idx;
+                                                    app.cockpit_preview_scroll = 0;
                                                 }
                                             }
-                                        } else {
-                                            app.focused_pane = crate::ui::app::FocusedPane::Detail;
-                                            if app.active_tab == ActiveTab::Work && app.work_tab_mode == crate::ui::app::WorkTabMode::Projects {
-                                                if rel_row >= 9 {
-                                                    let task_idx = ((rel_row - 9) / 2) as usize;
-                                                    if task_idx < app.project_tasks.len() {
-                                                        app.selected_project_task_idx = task_idx;
-                                                    }
-                                                }
-                                            } else if app.active_tab == ActiveTab::Settings && app.settings_selected_idx == 7 {
-                                                if rel_row >= 15 {
-                                                    let clicked_harness = ((rel_row - 15) / 5) as usize;
-                                                    if clicked_harness < app.harnesses.len() {
-                                                        app.selected_harness_idx = clicked_harness;
-                                                        let sel_id = app.harnesses[clicked_harness].id.clone();
-                                                        app.manifest.harnesses.active_harness_id = Some(sel_id);
-                                                        app.settings_dirty = true;
-                                                        app.status_message = Some(format!(
-                                                            "Active AI Harness: {}",
-                                                            app.harnesses[clicked_harness].name
-                                                        ));
-                                                    }
+                                        } else if app.active_tab == ActiveTab::Settings && app.settings_selected_idx == 7 {
+                                            if rel_row >= 5 {
+                                                let clicked_harness = ((rel_row - 5) / 2) as usize;
+                                                if clicked_harness < app.harnesses.len() {
+                                                    app.selected_harness_idx = clicked_harness;
+                                                    let sel_id = app.harnesses[clicked_harness].id.clone();
+                                                    app.manifest.harnesses.active_harness_id = Some(sel_id);
+                                                    app.settings_dirty = true;
+                                                    app.status_message = Some(format!(
+                                                        "Active AI Harness: {}",
+                                                        app.harnesses[clicked_harness].name
+                                                    ));
                                                 }
                                             }
                                         }
                                     }
+                                }
                                 // 3. Footer clicks
                                 else if row >= area.height.saturating_sub(footer_h) && col >= area.width.saturating_sub(12) {
                                     app.should_quit = true;
@@ -1197,32 +1231,64 @@ fn run_loop(
                         MouseEventKind::ScrollDown => {
                             if app.show_help {
                                 app.help_scroll += 2;
-                            } else if app.active_tab == ActiveTab::Work && app.work_tab_mode == crate::ui::app::WorkTabMode::Console {
-                                app.diagnostic_scroll += 2;
                             } else {
-                                let list_width = (area.width * 38 / 100).clamp(36, 68);
+                                let list_width = match app.active_tab {
+                                    ActiveTab::Work => {
+                                        if app.work_tab_mode == crate::ui::app::WorkTabMode::Projects {
+                                            area.width * 38 / 100
+                                        } else {
+                                            area.width * 45 / 100
+                                        }
+                                    }
+                                    ActiveTab::Reader => 0,
+                                    ActiveTab::Settings => (area.width * 40 / 100).clamp(38, 65),
+                                    _ => (area.width * 38 / 100).clamp(36, 68),
+                                };
                                 if col < list_width {
                                     app.next();
-                                } else if app.active_tab == ActiveTab::Work && app.work_tab_mode == crate::ui::app::WorkTabMode::Projects && row >= (area.height / 2) {
-                                    app.cockpit_preview_scroll += 2;
                                 } else {
-                                    app.page_down();
+                                    let rel_row = row.saturating_sub(3);
+                                    let overview_h: u16 = if area.height < 28 { 5 } else { 8 };
+                                    let rem_h = area.height.saturating_sub(footer_h).saturating_sub(3).saturating_sub(overview_h);
+                                    let task_box_h = rem_h * 55 / 100;
+                                    let task_end_y = overview_h + task_box_h;
+                                    if app.active_tab == ActiveTab::Work && app.work_tab_mode == crate::ui::app::WorkTabMode::Projects && rel_row < task_end_y {
+                                        app.next_project_task();
+                                    } else {
+                                        app.scroll_preview_down(3);
+                                    }
                                 }
                             }
                         }
                         MouseEventKind::ScrollUp => {
                             if app.show_help {
                                 app.help_scroll = app.help_scroll.saturating_sub(2);
-                            } else if app.active_tab == ActiveTab::Work && app.work_tab_mode == crate::ui::app::WorkTabMode::Console {
-                                app.diagnostic_scroll = app.diagnostic_scroll.saturating_sub(2);
                             } else {
-                                let list_width = (area.width * 38 / 100).clamp(36, 68);
+                                let list_width = match app.active_tab {
+                                    ActiveTab::Work => {
+                                        if app.work_tab_mode == crate::ui::app::WorkTabMode::Projects {
+                                            area.width * 38 / 100
+                                        } else {
+                                            area.width * 45 / 100
+                                        }
+                                    }
+                                    ActiveTab::Reader => 0,
+                                    ActiveTab::Settings => (area.width * 40 / 100).clamp(38, 65),
+                                    _ => (area.width * 38 / 100).clamp(36, 68),
+                                };
                                 if col < list_width {
                                     app.prev();
-                                } else if app.active_tab == ActiveTab::Work && app.work_tab_mode == crate::ui::app::WorkTabMode::Projects && row >= (area.height / 2) {
-                                    app.cockpit_preview_scroll = app.cockpit_preview_scroll.saturating_sub(2);
                                 } else {
-                                    app.page_up();
+                                    let rel_row = row.saturating_sub(3);
+                                    let overview_h: u16 = if area.height < 28 { 5 } else { 8 };
+                                    let rem_h = area.height.saturating_sub(footer_h).saturating_sub(3).saturating_sub(overview_h);
+                                    let task_box_h = rem_h * 55 / 100;
+                                    let task_end_y = overview_h + task_box_h;
+                                    if app.active_tab == ActiveTab::Work && app.work_tab_mode == crate::ui::app::WorkTabMode::Projects && rel_row < task_end_y {
+                                        app.prev_project_task();
+                                    } else {
+                                        app.scroll_preview_up(3);
+                                    }
                                 }
                             }
                         }
@@ -1251,6 +1317,14 @@ fn run_loop(
                     }
                 }
                 _ => {}
+            }
+
+            if app.active_tab == ActiveTab::Work
+                && app.work_tab_mode == crate::ui::app::WorkTabMode::Projects
+                && app.selected_project_idx != old_proj_idx
+            {
+                app.refresh_project_tasks(db);
+                app.sync_list_states();
             }
         }
     }

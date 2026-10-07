@@ -209,6 +209,7 @@ pub enum ExploreTreeItem {
 pub struct App {
     pub should_quit: bool,
     pub active_tab: ActiveTab,
+    pub previous_tab: ActiveTab,
     pub focused_pane: FocusedPane,
     pub collection_id: String,
     pub profile_id: String,
@@ -375,6 +376,7 @@ impl App {
         Self {
             should_quit: false,
             active_tab: ActiveTab::Work,
+            previous_tab: ActiveTab::Work,
             focused_pane: FocusedPane::List,
             collection_id: collection_id.to_string(),
             profile_id: profile_id.to_string(),
@@ -976,6 +978,9 @@ impl App {
     }
 
     pub fn switch_tab(&mut self, tab: ActiveTab) {
+        if self.active_tab != tab && self.active_tab != ActiveTab::Reader {
+            self.previous_tab = self.active_tab;
+        }
         self.active_tab = tab;
         self.focused_pane = FocusedPane::List;
         self.reader_scroll_offset = 0;
@@ -995,58 +1000,65 @@ impl App {
                     WorkTabMode::Projects => {
                         if self.focused_pane == FocusedPane::Detail {
                             if !self.project_tasks.is_empty() {
-                                self.selected_project_task_idx = (self.selected_project_task_idx + 1) % self.project_tasks.len();
-                                self.cockpit_preview_scroll = 0;
+                                if self.selected_project_task_idx < self.project_tasks.len() - 1 {
+                                    self.selected_project_task_idx += 1;
+                                    self.cockpit_preview_scroll = 0;
+                                } else {
+                                    let max = self.cockpit_preview_max_scroll();
+                                    self.cockpit_preview_scroll = (self.cockpit_preview_scroll + 2).min(max);
+                                }
                             } else {
-                                self.cockpit_preview_scroll += 2;
+                                let max = self.cockpit_preview_max_scroll();
+                                self.cockpit_preview_scroll = (self.cockpit_preview_scroll + 2).min(max);
                             }
                         } else if !self.projects.is_empty() {
-                            self.selected_project_idx = (self.selected_project_idx + 1) % self.projects.len();
-                            self.selected_project_task_idx = 0;
-                            self.cockpit_preview_scroll = 0;
+                            if self.selected_project_idx < self.projects.len() - 1 {
+                                self.selected_project_idx += 1;
+                                self.selected_project_task_idx = 0;
+                                self.cockpit_preview_scroll = 0;
+                            }
                         }
                     }
                     WorkTabMode::Console => {
                         if self.focused_pane == FocusedPane::Detail {
-                            self.diagnostic_scroll += 2;
-                        } else if let Some(entry) = self.diagnostic_stream.get_mut(self.selected_diagnostic_idx) {
-                            if entry.file_targets.len() > 1 {
-                                entry.selected_file_idx = (entry.selected_file_idx + 1) % entry.file_targets.len();
-                            } else if !self.diagnostic_stream.is_empty() {
-                                self.selected_diagnostic_idx = (self.selected_diagnostic_idx + 1) % self.diagnostic_stream.len();
-                                self.diagnostic_scroll = 0;
-                            }
+                            let max = self.diagnostic_max_scroll();
+                            self.diagnostic_scroll = (self.diagnostic_scroll + 2).min(max);
+                        } else if !self.diagnostic_stream.is_empty() && self.selected_diagnostic_idx < self.diagnostic_stream.len() - 1 {
+                            self.selected_diagnostic_idx += 1;
+                            self.diagnostic_scroll = 0;
                         }
                     }
                     WorkTabMode::Risks => {
-                        if !self.active_risks.is_empty() {
-                            self.selected_risk_idx = (self.selected_risk_idx + 1) % self.active_risks.len();
+                        if !self.active_risks.is_empty() && self.selected_risk_idx < self.active_risks.len() - 1 {
+                            self.selected_risk_idx += 1;
                         }
                     }
                 }
             }
             ActiveTab::Explore => {
                 if self.focused_pane == FocusedPane::Detail {
-                    self.preview_scroll_offset += 2;
+                    let max = self.preview_max_scroll();
+                    self.preview_scroll_offset = (self.preview_scroll_offset + 2).min(max);
                 } else if self.explore_tree_mode {
                     let tree = self.build_explore_tree();
-                    if !tree.is_empty() {
-                        self.selected_tree_idx = (self.selected_tree_idx + 1) % tree.len();
+                    if !tree.is_empty() && self.selected_tree_idx < tree.len() - 1 {
+                        self.selected_tree_idx += 1;
                         if let ExploreTreeItem::Doc { doc_idx, .. } = &tree[self.selected_tree_idx] {
                             self.selected_doc_idx = *doc_idx;
                         }
                         self.preview_scroll_offset = 0;
                     }
-                } else if !self.documents.is_empty() {
-                    self.selected_doc_idx = (self.selected_doc_idx + 1) % self.documents.len();
+                } else if !self.documents.is_empty() && self.selected_doc_idx < self.documents.len() - 1 {
+                    self.selected_doc_idx += 1;
                     self.preview_scroll_offset = 0;
                 }
             }
             ActiveTab::Directives => {
                 if self.focused_pane == FocusedPane::Detail {
-                    self.directive_preview_scroll += 2;
-                } else if !self.directives.is_empty() {
-                    self.selected_directive_idx = (self.selected_directive_idx + 1) % self.directives.len();
+                    let max = self.directive_preview_max_scroll();
+                    self.directive_preview_scroll = (self.directive_preview_scroll + 2).min(max);
+                } else if !self.directives.is_empty() && self.selected_directive_idx < self.directives.len() - 1 {
+                    self.selected_directive_idx += 1;
                     self.directive_preview_scroll = 0;
                 }
             }
@@ -1055,17 +1067,19 @@ impl App {
                     GovernanceTabMode::Sessions => {
                         let flen = self.filtered_sessions().len();
                         if self.focused_pane == FocusedPane::Detail {
-                            self.session_preview_scroll += 2;
-                        } else if flen > 0 {
-                            self.selected_session_idx = (self.selected_session_idx + 1) % flen;
+                            let max = self.session_preview_max_scroll();
+                            self.session_preview_scroll = (self.session_preview_scroll + 2).min(max);
+                        } else if flen > 0 && self.selected_session_idx < flen - 1 {
+                            self.selected_session_idx += 1;
                             self.session_preview_scroll = 0;
                         }
                     }
                     GovernanceTabMode::Grants => {
                         if self.focused_pane == FocusedPane::Detail {
-                            self.session_preview_scroll += 2;
-                        } else if !self.grants.is_empty() {
-                            self.selected_grant_idx = (self.selected_grant_idx + 1) % self.grants.len();
+                            let max = self.session_preview_max_scroll();
+                            self.session_preview_scroll = (self.session_preview_scroll + 2).min(max);
+                        } else if !self.grants.is_empty() && self.selected_grant_idx < self.grants.len() - 1 {
+                            self.selected_grant_idx += 1;
                             self.session_preview_scroll = 0;
                         }
                     }
@@ -1073,8 +1087,8 @@ impl App {
             }
             ActiveTab::Settings => {
                 if self.focused_pane == FocusedPane::Detail {
-                    if self.settings_selected_idx == 7 && !self.harnesses.is_empty() {
-                        self.selected_harness_idx = (self.selected_harness_idx + 1) % self.harnesses.len();
+                    if self.settings_selected_idx == 7 && !self.harnesses.is_empty() && self.selected_harness_idx < self.harnesses.len() - 1 {
+                        self.selected_harness_idx += 1;
                     } else if self.settings_selected_idx == 4 {
                         self.next_theme();
                     } else if self.settings_selected_idx <= 3 {
@@ -1098,21 +1112,17 @@ impl App {
                     WorkTabMode::Projects => {
                         if self.focused_pane == FocusedPane::Detail {
                             if !self.project_tasks.is_empty() {
-                                if self.selected_project_task_idx == 0 {
-                                    self.selected_project_task_idx = self.project_tasks.len().saturating_sub(1);
-                                } else {
+                                if self.selected_project_task_idx > 0 {
                                     self.selected_project_task_idx -= 1;
+                                    self.cockpit_preview_scroll = 0;
+                                } else {
+                                    self.cockpit_preview_scroll = self.cockpit_preview_scroll.saturating_sub(2);
                                 }
-                                self.cockpit_preview_scroll = 0;
                             } else {
                                 self.cockpit_preview_scroll = self.cockpit_preview_scroll.saturating_sub(2);
                             }
-                        } else if !self.projects.is_empty() {
-                            if self.selected_project_idx == 0 {
-                                self.selected_project_idx = self.projects.len().saturating_sub(1);
-                            } else {
-                                self.selected_project_idx -= 1;
-                            }
+                        } else if !self.projects.is_empty() && self.selected_project_idx > 0 {
+                            self.selected_project_idx -= 1;
                             self.selected_project_task_idx = 0;
                             self.cockpit_preview_scroll = 0;
                         }
@@ -1120,30 +1130,14 @@ impl App {
                     WorkTabMode::Console => {
                         if self.focused_pane == FocusedPane::Detail {
                             self.diagnostic_scroll = self.diagnostic_scroll.saturating_sub(2);
-                        } else if let Some(entry) = self.diagnostic_stream.get_mut(self.selected_diagnostic_idx) {
-                            if entry.file_targets.len() > 1 {
-                                if entry.selected_file_idx == 0 {
-                                    entry.selected_file_idx = entry.file_targets.len().saturating_sub(1);
-                                } else {
-                                    entry.selected_file_idx -= 1;
-                                }
-                            } else if !self.diagnostic_stream.is_empty() {
-                                if self.selected_diagnostic_idx == 0 {
-                                    self.selected_diagnostic_idx = self.diagnostic_stream.len().saturating_sub(1);
-                                } else {
-                                    self.selected_diagnostic_idx -= 1;
-                                }
-                                self.diagnostic_scroll = 0;
-                            }
+                        } else if !self.diagnostic_stream.is_empty() && self.selected_diagnostic_idx > 0 {
+                            self.selected_diagnostic_idx -= 1;
+                            self.diagnostic_scroll = 0;
                         }
                     }
                     WorkTabMode::Risks => {
-                        if !self.active_risks.is_empty() {
-                            if self.selected_risk_idx == 0 {
-                                self.selected_risk_idx = self.active_risks.len() - 1;
-                            } else {
-                                self.selected_risk_idx -= 1;
-                            }
+                        if !self.active_risks.is_empty() && self.selected_risk_idx > 0 {
+                            self.selected_risk_idx -= 1;
                         }
                     }
                 }
@@ -1153,35 +1147,23 @@ impl App {
                     self.preview_scroll_offset = self.preview_scroll_offset.saturating_sub(2);
                 } else if self.explore_tree_mode {
                     let tree = self.build_explore_tree();
-                    if !tree.is_empty() {
-                        if self.selected_tree_idx == 0 {
-                            self.selected_tree_idx = tree.len() - 1;
-                        } else {
-                            self.selected_tree_idx -= 1;
-                        }
+                    if !tree.is_empty() && self.selected_tree_idx > 0 {
+                        self.selected_tree_idx -= 1;
                         if let ExploreTreeItem::Doc { doc_idx, .. } = &tree[self.selected_tree_idx] {
                             self.selected_doc_idx = *doc_idx;
                         }
                         self.preview_scroll_offset = 0;
                     }
-                } else if !self.documents.is_empty() {
-                    if self.selected_doc_idx == 0 {
-                        self.selected_doc_idx = self.documents.len() - 1;
-                    } else {
-                        self.selected_doc_idx -= 1;
-                    }
+                } else if !self.documents.is_empty() && self.selected_doc_idx > 0 {
+                    self.selected_doc_idx -= 1;
                     self.preview_scroll_offset = 0;
                 }
             }
             ActiveTab::Directives => {
                 if self.focused_pane == FocusedPane::Detail {
                     self.directive_preview_scroll = self.directive_preview_scroll.saturating_sub(2);
-                } else if !self.directives.is_empty() {
-                    if self.selected_directive_idx == 0 {
-                        self.selected_directive_idx = self.directives.len() - 1;
-                    } else {
-                        self.selected_directive_idx -= 1;
-                    }
+                } else if !self.directives.is_empty() && self.selected_directive_idx > 0 {
+                    self.selected_directive_idx -= 1;
                     self.directive_preview_scroll = 0;
                 }
             }
@@ -1191,24 +1173,16 @@ impl App {
                         let flen = self.filtered_sessions().len();
                         if self.focused_pane == FocusedPane::Detail {
                             self.session_preview_scroll = self.session_preview_scroll.saturating_sub(2);
-                        } else if flen > 0 {
-                            if self.selected_session_idx == 0 {
-                                self.selected_session_idx = flen - 1;
-                            } else {
-                                self.selected_session_idx -= 1;
-                            }
+                        } else if flen > 0 && self.selected_session_idx > 0 {
+                            self.selected_session_idx -= 1;
                             self.session_preview_scroll = 0;
                         }
                     }
                     GovernanceTabMode::Grants => {
                         if self.focused_pane == FocusedPane::Detail {
                             self.session_preview_scroll = self.session_preview_scroll.saturating_sub(2);
-                        } else if !self.grants.is_empty() {
-                            if self.selected_grant_idx == 0 {
-                                self.selected_grant_idx = self.grants.len() - 1;
-                            } else {
-                                self.selected_grant_idx -= 1;
-                            }
+                        } else if !self.grants.is_empty() && self.selected_grant_idx > 0 {
+                            self.selected_grant_idx -= 1;
                             self.session_preview_scroll = 0;
                         }
                     }
@@ -1216,12 +1190,8 @@ impl App {
             }
             ActiveTab::Settings => {
                 if self.focused_pane == FocusedPane::Detail {
-                    if self.settings_selected_idx == 7 && !self.harnesses.is_empty() {
-                        if self.selected_harness_idx == 0 {
-                            self.selected_harness_idx = self.harnesses.len() - 1;
-                        } else {
-                            self.selected_harness_idx -= 1;
-                        }
+                    if self.settings_selected_idx == 7 && !self.harnesses.is_empty() && self.selected_harness_idx > 0 {
+                        self.selected_harness_idx -= 1;
                     } else if self.settings_selected_idx == 4 {
                         self.prev_theme();
                     } else if self.settings_selected_idx <= 3 {
@@ -1507,7 +1477,7 @@ impl App {
             }
             ActiveTab::Explore => {
                 if self.focused_pane == FocusedPane::Detail {
-                    self.preview_scroll_offset = usize::MAX / 2;
+                    self.preview_scroll_offset = self.preview_max_scroll();
                 } else if self.explore_tree_mode {
                     let tree = self.build_explore_tree();
                     if !tree.is_empty() {
@@ -1524,7 +1494,7 @@ impl App {
             }
             ActiveTab::Directives => {
                 if self.focused_pane == FocusedPane::Detail {
-                    self.directive_preview_scroll = usize::MAX / 2;
+                    self.directive_preview_scroll = self.directive_preview_max_scroll();
                 } else if !self.directives.is_empty() {
                     self.selected_directive_idx = self.directives.len() - 1;
                     self.directive_preview_scroll = 0;
@@ -1535,7 +1505,7 @@ impl App {
                     GovernanceTabMode::Sessions => {
                         let flen = self.filtered_sessions().len();
                         if self.focused_pane == FocusedPane::Detail {
-                            self.session_preview_scroll = usize::MAX / 2;
+                            self.session_preview_scroll = self.session_preview_max_scroll();
                         } else if flen > 0 {
                             self.selected_session_idx = flen - 1;
                             self.session_preview_scroll = 0;
@@ -1543,7 +1513,7 @@ impl App {
                     }
                     GovernanceTabMode::Grants => {
                         if self.focused_pane == FocusedPane::Detail {
-                            self.session_preview_scroll = usize::MAX / 2;
+                            self.session_preview_scroll = self.session_preview_max_scroll();
                         } else if !self.grants.is_empty() {
                             self.selected_grant_idx = self.grants.len() - 1;
                             self.session_preview_scroll = 0;
@@ -1555,26 +1525,38 @@ impl App {
                 self.settings_selected_idx = 7;
             }
             ActiveTab::Reader => {
-                self.reader_scroll_offset = usize::MAX / 2;
+                self.reader_scroll_offset = self.reader_max_scroll();
             }
         }
         self.sync_list_states();
     }
 
+    pub fn next_project_task(&mut self) {
+        if !self.project_tasks.is_empty() && self.selected_project_task_idx < self.project_tasks.len() - 1 {
+            self.selected_project_task_idx += 1;
+            self.cockpit_preview_scroll = 0;
+            self.sync_list_states();
+        }
+    }
+
+    pub fn prev_project_task(&mut self) {
+        if self.selected_project_task_idx > 0 {
+            self.selected_project_task_idx -= 1;
+            self.cockpit_preview_scroll = 0;
+            self.sync_list_states();
+        }
+    }
+
     pub fn next_diagnostic_entry(&mut self) {
-        if !self.diagnostic_stream.is_empty() {
-            self.selected_diagnostic_idx = (self.selected_diagnostic_idx + 1) % self.diagnostic_stream.len();
+        if !self.diagnostic_stream.is_empty() && self.selected_diagnostic_idx < self.diagnostic_stream.len() - 1 {
+            self.selected_diagnostic_idx += 1;
             self.diagnostic_scroll = 0;
         }
     }
 
     pub fn prev_diagnostic_entry(&mut self) {
-        if !self.diagnostic_stream.is_empty() {
-            if self.selected_diagnostic_idx == 0 {
-                self.selected_diagnostic_idx = self.diagnostic_stream.len().saturating_sub(1);
-            } else {
-                self.selected_diagnostic_idx -= 1;
-            }
+        if self.selected_diagnostic_idx > 0 {
+            self.selected_diagnostic_idx -= 1;
             self.diagnostic_scroll = 0;
         }
     }
@@ -1582,7 +1564,7 @@ impl App {
     pub fn next_diagnostic_file(&mut self) {
         if let Some(entry) = self.diagnostic_stream.get_mut(self.selected_diagnostic_idx) {
             if !entry.file_targets.is_empty() {
-                entry.selected_file_idx = (entry.selected_file_idx + 1) % entry.file_targets.len();
+                entry.selected_file_idx = (entry.selected_file_idx + 1).min(entry.file_targets.len().saturating_sub(1));
             }
         }
     }
@@ -1590,11 +1572,7 @@ impl App {
     pub fn prev_diagnostic_file(&mut self) {
         if let Some(entry) = self.diagnostic_stream.get_mut(self.selected_diagnostic_idx) {
             if !entry.file_targets.is_empty() {
-                if entry.selected_file_idx == 0 {
-                    entry.selected_file_idx = entry.file_targets.len().saturating_sub(1);
-                } else {
-                    entry.selected_file_idx -= 1;
-                }
+                entry.selected_file_idx = entry.selected_file_idx.saturating_sub(1);
             }
         }
     }
@@ -1618,6 +1596,7 @@ impl App {
             }
             if let Some(doc) = self.documents.get(self.selected_doc_idx) {
                 self.current_document = Some(doc.clone());
+                self.previous_tab = self.active_tab;
                 self.active_tab = ActiveTab::Reader;
                 self.reader_scroll_offset = 0;
             }
@@ -1645,12 +1624,14 @@ impl App {
                     is_tombstone: false,
                 };
                 self.current_document = Some(doc);
+                self.previous_tab = self.active_tab;
                 self.active_tab = ActiveTab::Reader;
                 self.reader_scroll_offset = 0;
             }
         } else if self.active_tab == ActiveTab::Work && self.work_tab_mode == WorkTabMode::Projects {
             if let Some(task) = self.project_tasks.get(self.selected_project_task_idx) {
                 self.current_document = Some(task.clone());
+                self.previous_tab = self.active_tab;
                 self.active_tab = ActiveTab::Reader;
                 self.reader_scroll_offset = 0;
             } else if let Some(proj) = self.projects.get(self.selected_project_idx) {
@@ -1679,6 +1660,7 @@ impl App {
                         is_tombstone: false,
                     };
                     self.current_document = Some(doc);
+                    self.previous_tab = self.active_tab;
                     self.active_tab = ActiveTab::Reader;
                     self.reader_scroll_offset = 0;
                 }
@@ -1704,7 +1686,7 @@ impl App {
         } else if self.active_tab == ActiveTab::Settings && self.focused_pane == FocusedPane::Detail {
             self.focused_pane = FocusedPane::List;
         } else if self.active_tab == ActiveTab::Reader {
-            self.active_tab = ActiveTab::Explore;
+            self.active_tab = self.previous_tab;
         }
     }
 
@@ -1745,6 +1727,114 @@ impl App {
         self.reader_scroll_offset = self.reader_max_scroll();
     }
 
+    pub fn cockpit_preview_max_scroll(&self) -> usize {
+        if let Some(doc) = self.project_tasks.get(self.selected_project_task_idx) {
+            let (term_width, term_height) = crossterm::terminal::size().unwrap_or((80, 24));
+            let preview_width = (term_width as usize * 62 / 100).saturating_sub(6).max(20);
+            let formatted = crate::ui::markdown::MarkdownFormatter::format_markdown_with_theme(&doc.content, preview_width, &self.theme);
+            let visible_lines = (term_height as usize / 2).saturating_sub(4).max(4);
+            formatted.len().saturating_sub(visible_lines)
+        } else {
+            0
+        }
+    }
+
+    pub fn preview_max_scroll(&self) -> usize {
+        if let Some(doc) = self.documents.get(self.selected_doc_idx) {
+            let (term_width, term_height) = crossterm::terminal::size().unwrap_or((80, 24));
+            let preview_width = (term_width as usize * 62 / 100).saturating_sub(6).max(20);
+            let formatted = crate::ui::markdown::MarkdownFormatter::format_markdown_with_theme(&doc.content, preview_width, &self.theme);
+            let visible_lines = (term_height as usize).saturating_sub(8).max(4);
+            formatted.len().saturating_sub(visible_lines)
+        } else {
+            0
+        }
+    }
+
+    pub fn directive_preview_max_scroll(&self) -> usize {
+        if let Some(dir) = self.directives.get(self.selected_directive_idx) {
+            let (term_width, term_height) = crossterm::terminal::size().unwrap_or((80, 24));
+            let preview_width = (term_width as usize * 62 / 100).saturating_sub(6).max(20);
+            let md = dir.to_markdown();
+            let formatted = crate::ui::markdown::MarkdownFormatter::format_markdown_with_theme(&md, preview_width, &self.theme);
+            let visible_lines = (term_height as usize).saturating_sub(8).max(4);
+            formatted.len().saturating_sub(visible_lines)
+        } else {
+            0
+        }
+    }
+
+    pub fn session_preview_max_scroll(&self) -> usize {
+        let (_, term_height) = crossterm::terminal::size().unwrap_or((80, 24));
+        let visible_lines = (term_height as usize).saturating_sub(8).max(4);
+        (self.selected_session_events.len() * 3).saturating_sub(visible_lines)
+    }
+
+    pub fn diagnostic_max_scroll(&self) -> usize {
+        if let Some(entry) = self.diagnostic_stream.get(self.selected_diagnostic_idx) {
+            let (_, term_height) = crossterm::terminal::size().unwrap_or((80, 24));
+            let visible_lines = (term_height as usize).saturating_sub(12).max(4);
+            entry.lines.len().saturating_sub(visible_lines)
+        } else {
+            0
+        }
+    }
+
+    pub fn scroll_preview_down(&mut self, delta: usize) {
+        match self.active_tab {
+            ActiveTab::Work => {
+                if self.work_tab_mode == WorkTabMode::Console {
+                    let max = self.diagnostic_max_scroll();
+                    self.diagnostic_scroll = (self.diagnostic_scroll + delta).min(max);
+                } else {
+                    let max = self.cockpit_preview_max_scroll();
+                    self.cockpit_preview_scroll = (self.cockpit_preview_scroll + delta).min(max);
+                }
+            }
+            ActiveTab::Explore => {
+                let max = self.preview_max_scroll();
+                self.preview_scroll_offset = (self.preview_scroll_offset + delta).min(max);
+            }
+            ActiveTab::Directives => {
+                let max = self.directive_preview_max_scroll();
+                self.directive_preview_scroll = (self.directive_preview_scroll + delta).min(max);
+            }
+            ActiveTab::Sessions => {
+                let max = self.session_preview_max_scroll();
+                self.session_preview_scroll = (self.session_preview_scroll + delta).min(max);
+            }
+            ActiveTab::Reader => {
+                self.scroll_reader_down(delta);
+            }
+            _ => {}
+        }
+    }
+
+    pub fn scroll_preview_up(&mut self, delta: usize) {
+        match self.active_tab {
+            ActiveTab::Work => {
+                if self.work_tab_mode == WorkTabMode::Console {
+                    self.diagnostic_scroll = self.diagnostic_scroll.saturating_sub(delta);
+                } else {
+                    self.cockpit_preview_scroll = self.cockpit_preview_scroll.saturating_sub(delta);
+                }
+            }
+            ActiveTab::Explore => {
+                self.preview_scroll_offset = self.preview_scroll_offset.saturating_sub(delta);
+            }
+            ActiveTab::Directives => {
+                self.directive_preview_scroll = self.directive_preview_scroll.saturating_sub(delta);
+            }
+            ActiveTab::Sessions => {
+                self.session_preview_scroll = self.session_preview_scroll.saturating_sub(delta);
+            }
+            ActiveTab::Reader => {
+                self.scroll_reader_up(delta);
+            }
+            _ => {}
+        }
+    }
+
     pub fn prune_stale_sessions(&mut self, db: &crate::storage::Database) {
         if let Ok(count) = Queries::prune_stale_sessions(db.conn(), &self.collection_id) {
             self.status_message = Some(format!("✔ Cleaned up {} inactive session(s)", count));
@@ -1753,14 +1843,16 @@ impl App {
     }
 
     pub fn next_setting(&mut self) {
-        self.settings_selected_idx = (self.settings_selected_idx + 1) % 8;
+        if self.settings_selected_idx < 7 {
+            self.settings_selected_idx += 1;
+            self.sync_list_states();
+        }
     }
 
     pub fn prev_setting(&mut self) {
-        if self.settings_selected_idx == 0 {
-            self.settings_selected_idx = 7;
-        } else {
+        if self.settings_selected_idx > 0 {
             self.settings_selected_idx -= 1;
+            self.sync_list_states();
         }
     }
 
@@ -3961,9 +4053,11 @@ mod tests {
         app.next();
         assert_eq!(app.selected_project_idx, 1);
         app.next();
+        assert_eq!(app.selected_project_idx, 1);
+        app.prev();
         assert_eq!(app.selected_project_idx, 0);
         app.prev();
-        assert_eq!(app.selected_project_idx, 1);
+        assert_eq!(app.selected_project_idx, 0);
 
         // Test cycle work tab mode
         app.cycle_work_tab_mode(&db);
@@ -4107,12 +4201,12 @@ mod tests {
         app.adjust_setting(1);
         assert_eq!(app.settings_selected_idx, 7);
 
-        // Full cycle of 8 settings
+        // Full cycle of 8 settings - boundary clamping stops at 7
         app.settings_selected_idx = 0;
         for _ in 0..8 {
             app.next_setting();
         }
-        assert_eq!(app.settings_selected_idx, 0);
+        assert_eq!(app.settings_selected_idx, 7);
     }
 
     #[test]
@@ -4376,19 +4470,59 @@ mod tests {
         assert_eq!(app.selected_project_task_idx, 12);
         assert_eq!(app.project_tasks_list_state.selected(), Some(12));
 
-        // Scroll preview when tasks are exhausted or empty
-        app.project_tasks.clear();
-        app.sync_list_states();
-        assert_eq!(app.project_tasks_list_state.selected(), None);
-        assert_eq!(app.cockpit_preview_scroll, 0);
+        // Scroll preview for selected task document
+        let long_body = (1..=40).map(|i| format!("Line {}", i)).collect::<Vec<_>>().join("\n");
+        app.project_tasks[12].content = long_body;
+        app.cockpit_preview_scroll = 0;
 
-        app.next();
+        app.scroll_preview_down(2);
         assert_eq!(app.cockpit_preview_scroll, 2);
-        app.page_down();
+        app.scroll_preview_down(8);
         assert_eq!(app.cockpit_preview_scroll, 10);
-        app.prev();
+        app.scroll_preview_up(2);
         assert_eq!(app.cockpit_preview_scroll, 8);
         app.scroll_to_top();
         assert_eq!(app.cockpit_preview_scroll, 0);
+    }
+
+    #[test]
+    fn test_previous_tab_restoration_and_task_boundary_clamping() {
+        let mut app = App::new("test", "test");
+        assert_eq!(app.active_tab, ActiveTab::Work);
+        assert_eq!(app.previous_tab, ActiveTab::Work);
+
+        // Switch to Directives tab
+        app.switch_tab(ActiveTab::Directives);
+        assert_eq!(app.active_tab, ActiveTab::Directives);
+        assert_eq!(app.previous_tab, ActiveTab::Work);
+
+        // Open reader mode
+        app.active_tab = ActiveTab::Reader;
+        assert_eq!(app.active_tab, ActiveTab::Reader);
+        // Exiting reader via go_back restores previous tab!
+        app.go_back();
+        assert_eq!(app.active_tab, ActiveTab::Work);
+
+        // Test project task navigation and boundary clamping
+        let mut t1 = make_test_doc("task-1", "projects/core/tasks/task-1.md", "Task 1");
+        t1.kind = DocumentKind::Task;
+        t1.status = DocumentStatus::InProgress;
+        let mut t2 = make_test_doc("task-2", "projects/core/tasks/task-2.md", "Task 2");
+        t2.kind = DocumentKind::Task;
+        t2.status = DocumentStatus::Pending;
+        app.project_tasks = vec![t1, t2];
+
+        app.selected_project_task_idx = 0;
+        app.prev_project_task();
+        assert_eq!(app.selected_project_task_idx, 0); // clamped, does not underflow
+
+        app.next_project_task();
+        assert_eq!(app.selected_project_task_idx, 1);
+
+        app.next_project_task();
+        assert_eq!(app.selected_project_task_idx, 1); // clamped, does not overflow or wrap to 0!
+
+        app.prev_project_task();
+        assert_eq!(app.selected_project_task_idx, 0);
     }
 }
