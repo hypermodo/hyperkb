@@ -4,14 +4,17 @@ use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, List, ListItem, Padding, Paragraph, Wrap},
+    widgets::{
+        Block, Borders, List, ListItem, Padding, Paragraph, Scrollbar, ScrollbarOrientation,
+        ScrollbarState, Wrap,
+    },
     Frame,
 };
 
 pub struct SettingsView;
 
 impl SettingsView {
-    pub fn render(frame: &mut Frame, app: &App, area: Rect) {
+    pub fn render(frame: &mut Frame, app: &mut App, area: Rect) {
         let list_width = (area.width * 40 / 100).clamp(38, 65);
         let chunks = Layout::default()
             .direction(Direction::Horizontal)
@@ -22,8 +25,8 @@ impl SettingsView {
         Self::render_setting_detail(frame, app, chunks[1]);
     }
 
-    fn render_settings_list(frame: &mut Frame, app: &App, area: Rect) {
-        let t = &app.theme;
+    fn render_settings_list(frame: &mut Frame, app: &mut App, area: Rect) {
+        let t = app.theme;
         let border_color = if app.focused_pane == FocusedPane::List {
             t.border_focused()
         } else {
@@ -96,8 +99,21 @@ impl SettingsView {
                 Span::styled("Action", Style::default().fg(t.text_muted())),
             ]));
 
-        let list = List::new(items).block(list_block);
-        frame.render_widget(list, area);
+        let list = List::new(items).block(list_block).highlight_style(t.selected_row());
+        frame.render_stateful_widget(list, area, &mut app.settings_list_state);
+
+        let total_settings = settings.len();
+        if total_settings > 0 {
+            let mut scrollbar_state = ScrollbarState::new(total_settings.saturating_sub(1))
+                .position(app.settings_selected_idx);
+            let scrollbar = Scrollbar::default()
+                .orientation(ScrollbarOrientation::VerticalRight)
+                .begin_symbol(Some("▲"))
+                .end_symbol(Some("▼"))
+                .track_symbol(Some("│"))
+                .thumb_symbol("█");
+            frame.render_stateful_widget(scrollbar, area, &mut scrollbar_state);
+        }
     }
 
     fn render_setting_detail(frame: &mut Frame, app: &App, area: Rect) {

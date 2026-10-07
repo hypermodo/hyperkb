@@ -3,14 +3,17 @@ use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, List, ListItem, Padding, Paragraph, Wrap},
+    widgets::{
+        Block, Borders, List, ListItem, Padding, Paragraph, Scrollbar, ScrollbarOrientation,
+        ScrollbarState, Wrap,
+    },
     Frame,
 };
 
 pub struct DirectivesView;
 
 impl DirectivesView {
-    pub fn render(frame: &mut Frame, app: &App, area: Rect) {
+    pub fn render(frame: &mut Frame, app: &mut App, area: Rect) {
         let list_width = (area.width * 38 / 100).clamp(36, 68);
         let chunks = Layout::default()
             .direction(Direction::Horizontal)
@@ -21,8 +24,8 @@ impl DirectivesView {
         Self::render_directive_preview(frame, app, chunks[1]);
     }
 
-    fn render_directives_list(frame: &mut Frame, app: &App, area: Rect) {
-        let t = &app.theme;
+    fn render_directives_list(frame: &mut Frame, app: &mut App, area: Rect) {
+        let t = app.theme;
         let border_color = if app.focused_pane == FocusedPane::List {
             t.border_focused()
         } else {
@@ -115,12 +118,25 @@ impl DirectivesView {
             frame.render_widget(p, area);
         } else {
             let list = List::new(items).block(list_block);
-            frame.render_widget(list, area);
+            frame.render_stateful_widget(list, area, &mut app.directives_list_state);
+
+            let total_dirs = app.directives.len();
+            if total_dirs > 0 {
+                let mut scrollbar_state = ScrollbarState::new(total_dirs.saturating_sub(1))
+                    .position(app.selected_directive_idx);
+                let scrollbar = Scrollbar::default()
+                    .orientation(ScrollbarOrientation::VerticalRight)
+                    .begin_symbol(Some("▲"))
+                    .end_symbol(Some("▼"))
+                    .track_symbol(Some("│"))
+                    .thumb_symbol("█");
+                frame.render_stateful_widget(scrollbar, area, &mut scrollbar_state);
+            }
         }
     }
 
     fn render_directive_preview(frame: &mut Frame, app: &App, area: Rect) {
-        let t = &app.theme;
+        let t = app.theme;
         let border_color = if app.focused_pane == FocusedPane::Detail {
             t.border_focused()
         } else {
@@ -207,14 +223,30 @@ impl DirectivesView {
             text.push(Line::from(""));
 
             let preview_width = area.width.saturating_sub(6) as usize;
-            let formatted_body = crate::ui::markdown::MarkdownFormatter::format_markdown_with_theme(&dir.content, preview_width, t);
+            let formatted_body = crate::ui::markdown::MarkdownFormatter::format_markdown_with_theme(&dir.content, preview_width, &t);
             text.extend(formatted_body);
+
+            let total_lines = text.len();
+            let visible_lines = area.height.saturating_sub(4) as usize;
+            let max_scroll = total_lines.saturating_sub(visible_lines);
+            let scroll = app.directive_preview_scroll.min(max_scroll);
 
             let paragraph = Paragraph::new(text)
                 .block(block)
-                .scroll((app.directive_preview_scroll as u16, 0))
+                .scroll((scroll as u16, 0))
                 .wrap(Wrap { trim: false });
             frame.render_widget(paragraph, area);
+
+            if total_lines > visible_lines {
+                let mut scrollbar_state = ScrollbarState::new(max_scroll).position(scroll);
+                let scrollbar = Scrollbar::default()
+                    .orientation(ScrollbarOrientation::VerticalRight)
+                    .begin_symbol(Some("▲"))
+                    .end_symbol(Some("▼"))
+                    .track_symbol(Some("│"))
+                    .thumb_symbol("█");
+                frame.render_stateful_widget(scrollbar, area, &mut scrollbar_state);
+            }
         } else {
             let empty_preview = vec![
                 Line::from(""),

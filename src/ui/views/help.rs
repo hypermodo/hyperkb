@@ -3,7 +3,10 @@ use ratatui::{
     layout::Rect,
     style::{Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Clear, Padding, Paragraph, Wrap},
+    widgets::{
+        Block, Borders, Clear, Padding, Paragraph, Scrollbar, ScrollbarOrientation,
+        ScrollbarState, Wrap,
+    },
     Frame,
 };
 
@@ -250,12 +253,27 @@ impl HelpModal {
                 Span::styled("[Esc] or [?] ", t.key_badge()),
             ]));
 
+        let visible_lines = modal_area.height.saturating_sub(2) as usize;
+        let max_scroll = total_lines.saturating_sub(visible_lines);
+        let scroll = app.help_scroll.min(max_scroll);
+
         let p = Paragraph::new(text)
             .block(block)
-            .scroll((app.help_scroll as u16, 0))
+            .scroll((scroll as u16, 0))
             .wrap(Wrap { trim: false });
 
         frame.render_widget(p, modal_area);
+
+        if total_lines > visible_lines {
+            let mut scrollbar_state = ScrollbarState::new(max_scroll).position(scroll);
+            let scrollbar = Scrollbar::default()
+                .orientation(ScrollbarOrientation::VerticalRight)
+                .begin_symbol(Some("▲"))
+                .end_symbol(Some("▼"))
+                .track_symbol(Some("│"))
+                .thumb_symbol("█");
+            frame.render_stateful_widget(scrollbar, modal_area, &mut scrollbar_state);
+        }
     }
 
     pub fn help_text_plain() -> String {

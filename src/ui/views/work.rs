@@ -1,17 +1,21 @@
 use crate::domain::{DocumentKind, DocumentStatus};
 use crate::ui::app::{App, FocusedPane, WorkTabMode};
+use crate::ui::markdown::MarkdownFormatter;
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, List, ListItem, Padding, Paragraph, Wrap},
+    widgets::{
+        Block, Borders, List, ListItem, Padding, Paragraph, Scrollbar, ScrollbarOrientation,
+        ScrollbarState, Wrap,
+    },
     Frame,
 };
 
 pub struct WorkView;
 
 impl WorkView {
-    pub fn render(frame: &mut Frame, app: &App, area: Rect) {
+    pub fn render(frame: &mut Frame, app: &mut App, area: Rect) {
         match app.work_tab_mode {
             WorkTabMode::Projects => Self::render_projects_view(frame, app, area),
             WorkTabMode::Risks => Self::render_risks_view(frame, app, area),
@@ -19,7 +23,7 @@ impl WorkView {
         }
     }
 
-    fn render_projects_view(frame: &mut Frame, app: &App, area: Rect) {
+    fn render_projects_view(frame: &mut Frame, app: &mut App, area: Rect) {
         if app.projects.is_empty() {
             Self::render_empty_projects_state(frame, app, area);
             return;
@@ -35,7 +39,7 @@ impl WorkView {
     }
 
     fn render_empty_projects_state(frame: &mut Frame, app: &App, area: Rect) {
-        let t = &app.theme;
+        let t = app.theme;
         let block = Block::default()
             .borders(Borders::ALL)
             .border_style(Style::default().fg(t.border()))
@@ -71,8 +75,8 @@ impl WorkView {
         frame.render_widget(paragraph, area);
     }
 
-    fn render_projects_list(frame: &mut Frame, app: &App, area: Rect) {
-        let t = &app.theme;
+    fn render_projects_list(frame: &mut Frame, app: &mut App, area: Rect) {
+        let t = app.theme;
         let border_color = if app.focused_pane == FocusedPane::List {
             t.border_focused()
         } else {
@@ -133,6 +137,7 @@ impl WorkView {
             })
             .collect();
 
+        let list_title = format!(" Projects Cockpit ({}) [Tab: Pane] ", app.projects.len());
         let list = List::new(items)
             .block(
                 Block::default()
@@ -140,18 +145,28 @@ impl WorkView {
                     .border_style(Style::default().fg(border_color))
                     .style(Style::default().bg(t.bg_panel()).fg(t.text_primary()))
                     .padding(Padding::new(1, 1, 1, 1))
-                    .title(Span::styled(
-                        format!(" Projects Cockpit ({}) [Tab: Pane] ", app.projects.len()),
-                        t.title(),
-                    )),
+                    .title(Span::styled(list_title, t.title())),
             )
             .highlight_style(t.selected_row());
 
-        frame.render_widget(list, area);
+        frame.render_stateful_widget(list, area, &mut app.projects_list_state);
+
+        let total_projects = app.projects.len();
+        if total_projects > 0 {
+            let mut scrollbar_state = ScrollbarState::new(total_projects.saturating_sub(1))
+                .position(app.selected_project_idx);
+            let scrollbar = Scrollbar::default()
+                .orientation(ScrollbarOrientation::VerticalRight)
+                .begin_symbol(Some("▲"))
+                .end_symbol(Some("▼"))
+                .track_symbol(Some("│"))
+                .thumb_symbol("█");
+            frame.render_stateful_widget(scrollbar, area, &mut scrollbar_state);
+        }
     }
 
-    fn render_project_cockpit(frame: &mut Frame, app: &App, area: Rect) {
-        let t = &app.theme;
+    fn render_project_cockpit(frame: &mut Frame, app: &mut App, area: Rect) {
+        let t = app.theme;
         let border_color = if app.focused_pane == FocusedPane::Detail {
             t.border_focused()
         } else {
@@ -159,7 +174,7 @@ impl WorkView {
         };
 
         let proj = match app.projects.get(app.selected_project_idx) {
-            Some(p) => p,
+            Some(p) => p.clone(),
             None => {
                 let block = Block::default()
                     .borders(Borders::ALL)
@@ -174,12 +189,11 @@ impl WorkView {
             }
         };
 
-        // Split vertically into:
-        // 1. Overview card (9 lines)
-        // 2. Task Funnel & Document list (remaining)
+        // Compact overview card on short screens (< 28 lines), expanded on tall screens
+        let overview_h = if area.height < 28 { 5 } else { 8 };
         let main_chunks = Layout::default()
             .direction(Direction::Vertical)
-            .constraints([Constraint::Length(9), Constraint::Min(8)])
+            .constraints([Constraint::Length(overview_h), Constraint::Min(8)])
             .split(area);
 
         // --- 1. Overview Card ---
@@ -215,43 +229,44 @@ impl WorkView {
             line1_spans.push(Span::styled("  [▲ CHURN WARNING] ", t.badge_risk()));
         }
 
-        // Line 2: Critical Path and Exit Criteria
-        let mut line2_spans = vec![
-            Span::styled("Critical Path: ", Style::default().fg(t.text_muted()).add_modifier(Modifier::BOLD)),
-        ];
-        if let Some(ref lock) = proj.active_task {
-            line2_spans.push(Span::styled(format!("🔒 {}    ", lock), Style::default().fg(t.accent()).add_modifier(Modifier::BOLD)));
-        } else if proj.tasks_in_progress > 0 {
-            line2_spans.push(Span::styled("▶ Auto (in-progress task)    ", Style::default().fg(t.status_accepted())));
-        } else {
-            line2_spans.push(Span::styled("○ None (unlocked)    ", Style::default().fg(t.text_muted())));
-        }
+        let mut overview_text = vec![Line::from(line1_spans)];
 
-        line2_spans.push(Span::styled("Exit Criteria: ", Style::default().fg(t.text_muted()).add_modifier(Modifier::BOLD)));
-        if let Some(ref ec) = proj.exit_criteria {
-            if proj.exit_verified {
-                line2_spans.push(Span::styled(format!("🎯 [✔ VERIFIED] {}", ec), Style::default().fg(t.status_accepted())));
+        if overview_h >= 8 {
+            let mut line2_spans = vec![
+                Span::styled("Critical Path: ", Style::default().fg(t.text_muted()).add_modifier(Modifier::BOLD)),
+            ];
+            if let Some(ref lock) = proj.active_task {
+                line2_spans.push(Span::styled(format!("🔒 {}    ", lock), Style::default().fg(t.accent()).add_modifier(Modifier::BOLD)));
+            } else if proj.tasks_in_progress > 0 {
+                line2_spans.push(Span::styled("▶ Auto (in-progress task)    ", Style::default().fg(t.status_accepted())));
             } else {
-                line2_spans.push(Span::styled(format!("🎯 [○ PENDING] {}", ec), Style::default().fg(t.status_proposed())));
+                line2_spans.push(Span::styled("○ None (unlocked)    ", Style::default().fg(t.text_muted())));
             }
-        } else {
-            line2_spans.push(Span::styled("○ None declared", Style::default().fg(t.text_muted())));
+
+            line2_spans.push(Span::styled("Exit Criteria: ", Style::default().fg(t.text_muted()).add_modifier(Modifier::BOLD)));
+            if let Some(ref ec) = proj.exit_criteria {
+                if proj.exit_verified {
+                    line2_spans.push(Span::styled(format!("🎯 [✔ VERIFIED] {}", ec), Style::default().fg(t.status_accepted())));
+                } else {
+                    line2_spans.push(Span::styled(format!("🎯 [○ PENDING] {}", ec), Style::default().fg(t.status_proposed())));
+                }
+            } else {
+                line2_spans.push(Span::styled("○ None declared", Style::default().fg(t.text_muted())));
+            }
+
+            overview_text.push(Line::from(line2_spans));
+            overview_text.push(Line::from(""));
         }
 
-        let overview_text = vec![
-            Line::from(line1_spans),
-            Line::from(line2_spans),
-            Line::from(""),
-            Line::from(vec![
-                Span::styled(format!("[ Total: {} ]  ", proj.total_documents), Style::default().fg(t.text_primary()).add_modifier(Modifier::BOLD)),
-                Span::styled(format!("[ In-Progress: {} ]  ", proj.tasks_in_progress), Style::default().fg(t.status_accepted()).add_modifier(Modifier::BOLD)),
-                Span::styled(format!("[ Blocked: {} ]  ", proj.tasks_blocked), if proj.tasks_blocked > 0 { Style::default().fg(t.status_superseded()).add_modifier(Modifier::BOLD) } else { Style::default().fg(t.text_muted()) }),
-                Span::styled(format!("[ Pending: {} ]  ", proj.tasks_pending), Style::default().fg(t.status_proposed()).add_modifier(Modifier::BOLD)),
-                Span::styled(format!("[ Done: {} ]  ", proj.tasks_completed), Style::default().fg(t.text_muted())),
-                Span::styled(format!("[ Risks: {} ]  ", proj.open_risks), if proj.open_risks > 0 { Style::default().fg(t.status_superseded()) } else { Style::default().fg(t.text_muted()) }),
-                Span::styled(format!("[ Decs: {} ]", proj.decisions_count), Style::default().fg(t.accent())),
-            ]),
-        ];
+        overview_text.push(Line::from(vec![
+            Span::styled(format!("[ Total: {} ]  ", proj.total_documents), Style::default().fg(t.text_primary()).add_modifier(Modifier::BOLD)),
+            Span::styled(format!("[ In-Progress: {} ]  ", proj.tasks_in_progress), Style::default().fg(t.status_accepted()).add_modifier(Modifier::BOLD)),
+            Span::styled(format!("[ Blocked: {} ]  ", proj.tasks_blocked), if proj.tasks_blocked > 0 { Style::default().fg(t.status_superseded()).add_modifier(Modifier::BOLD) } else { Style::default().fg(t.text_muted()) }),
+            Span::styled(format!("[ Pending: {} ]  ", proj.tasks_pending), Style::default().fg(t.status_proposed()).add_modifier(Modifier::BOLD)),
+            Span::styled(format!("[ Done: {} ]  ", proj.tasks_completed), Style::default().fg(t.text_muted())),
+            Span::styled(format!("[ Risks: {} ]  ", proj.open_risks), if proj.open_risks > 0 { Style::default().fg(t.status_superseded()) } else { Style::default().fg(t.text_muted()) }),
+            Span::styled(format!("[ Decs: {} ]", proj.decisions_count), Style::default().fg(t.accent())),
+        ]));
 
         let overview_p = Paragraph::new(overview_text).block(overview_block);
         frame.render_widget(overview_p, main_chunks[0]);
@@ -259,7 +274,7 @@ impl WorkView {
         // --- 2. Task Funnel & Document Inspector ---
         let funnel_chunks = Layout::default()
             .direction(Direction::Vertical)
-            .constraints([Constraint::Percentage(58), Constraint::Percentage(42)])
+            .constraints([Constraint::Percentage(55), Constraint::Percentage(45)])
             .split(main_chunks[1]);
 
         // Task List
@@ -331,7 +346,20 @@ impl WorkView {
             let task_list = List::new(task_items)
                 .block(task_block)
                 .highlight_style(t.selected_row());
-            frame.render_widget(task_list, funnel_chunks[0]);
+            frame.render_stateful_widget(task_list, funnel_chunks[0], &mut app.project_tasks_list_state);
+
+            let total_tasks = app.project_tasks.len();
+            if total_tasks > 0 {
+                let mut scrollbar_state = ScrollbarState::new(total_tasks.saturating_sub(1))
+                    .position(app.selected_project_task_idx);
+                let scrollbar = Scrollbar::default()
+                    .orientation(ScrollbarOrientation::VerticalRight)
+                    .begin_symbol(Some("▲"))
+                    .end_symbol(Some("▼"))
+                    .track_symbol(Some("│"))
+                    .thumb_symbol("█");
+                frame.render_stateful_widget(scrollbar, funnel_chunks[0], &mut scrollbar_state);
+            }
         }
 
         // Preview snippet below
@@ -340,21 +368,42 @@ impl WorkView {
             .border_style(Style::default().fg(t.border()))
             .style(Style::default().bg(t.bg_panel()).fg(t.text_primary()))
             .padding(Padding::new(2, 2, 0, 0))
-            .title(Span::styled(" Document Snippet / Summary ", t.title()));
+            .title(Span::styled(" Document Snippet / Summary [Scroll: PgUp/PgDn/Wheel] ", t.title()));
 
         if let Some(doc) = app.project_tasks.get(app.selected_project_task_idx) {
+            let preview_width = funnel_chunks[1].width.saturating_sub(4) as usize;
+            let formatted_lines = MarkdownFormatter::format_markdown_with_theme(&doc.content, preview_width, &t);
+            let total_lines = formatted_lines.len();
+            let visible_lines = funnel_chunks[1].height.saturating_sub(3) as usize;
+            let max_scroll = total_lines.saturating_sub(visible_lines);
+            let scroll_offset = app.cockpit_preview_scroll.min(max_scroll);
+
             let mut preview_lines = vec![
                 Line::from(vec![
                     Span::styled("File:  ", Style::default().fg(t.text_muted()).add_modifier(Modifier::BOLD)),
                     Span::styled(&doc.path, Style::default().fg(t.accent())),
+                    Span::styled(format!("  ({}/{} lines)", (scroll_offset + 1).min(total_lines), total_lines), Style::default().fg(t.text_muted())),
                 ]),
                 Line::from(""),
             ];
-            for line in doc.content.lines().take(8) {
-                preview_lines.push(Line::from(Span::styled(line.to_string(), Style::default().fg(t.text_primary()))));
+
+            for line in formatted_lines.iter().skip(scroll_offset).take(visible_lines) {
+                preview_lines.push(line.clone());
             }
-            let preview_p = Paragraph::new(preview_lines).block(preview_block).wrap(Wrap { trim: true });
+
+            let preview_p = Paragraph::new(preview_lines).block(preview_block).wrap(Wrap { trim: false });
             frame.render_widget(preview_p, funnel_chunks[1]);
+
+            if total_lines > visible_lines {
+                let mut scrollbar_state = ScrollbarState::new(max_scroll).position(scroll_offset);
+                let scrollbar = Scrollbar::default()
+                    .orientation(ScrollbarOrientation::VerticalRight)
+                    .begin_symbol(Some("▲"))
+                    .end_symbol(Some("▼"))
+                    .track_symbol(Some("│"))
+                    .thumb_symbol("█");
+                frame.render_stateful_widget(scrollbar, funnel_chunks[1], &mut scrollbar_state);
+            }
         } else {
             let empty_preview = Paragraph::new(vec![
                 Line::from(""),
@@ -365,7 +414,7 @@ impl WorkView {
         }
     }
 
-    fn render_risks_view(frame: &mut Frame, app: &App, area: Rect) {
+    fn render_risks_view(frame: &mut Frame, app: &mut App, area: Rect) {
         if app.active_risks.is_empty() {
             Self::render_empty_state(frame, app, area);
             return;
@@ -381,7 +430,7 @@ impl WorkView {
     }
 
     fn render_empty_state(frame: &mut Frame, app: &App, area: Rect) {
-        let t = &app.theme;
+        let t = app.theme;
         let block = Block::default()
             .borders(Borders::ALL)
             .border_style(Style::default().fg(t.border()))
@@ -416,8 +465,8 @@ impl WorkView {
         frame.render_widget(paragraph, area);
     }
 
-    fn render_risk_list(frame: &mut Frame, app: &App, area: Rect) {
-        let t = &app.theme;
+    fn render_risk_list(frame: &mut Frame, app: &mut App, area: Rect) {
+        let t = app.theme;
         let border_color = if app.focused_pane == FocusedPane::List {
             t.border_focused()
         } else {
@@ -464,11 +513,24 @@ impl WorkView {
             )
             .highlight_style(t.selected_row());
 
-        frame.render_widget(list, area);
+        frame.render_stateful_widget(list, area, &mut app.risks_list_state);
+
+        let total_risks = app.active_risks.len();
+        if total_risks > 0 {
+            let mut scrollbar_state = ScrollbarState::new(total_risks.saturating_sub(1))
+                .position(app.selected_risk_idx);
+            let scrollbar = Scrollbar::default()
+                .orientation(ScrollbarOrientation::VerticalRight)
+                .begin_symbol(Some("▲"))
+                .end_symbol(Some("▼"))
+                .track_symbol(Some("│"))
+                .thumb_symbol("█");
+            frame.render_stateful_widget(scrollbar, area, &mut scrollbar_state);
+        }
     }
 
     fn render_risk_detail(frame: &mut Frame, app: &App, area: Rect) {
-        let t = &app.theme;
+        let t = app.theme;
         let border_color = if app.focused_pane == FocusedPane::Detail {
             t.border_focused()
         } else {
@@ -540,7 +602,7 @@ impl WorkView {
     }
 
     fn render_diagnostic_stream(frame: &mut Frame, app: &App, area: Rect) {
-        let t = &app.theme;
+        let t = app.theme;
         let border_color = if !app.repl_active {
             t.border_focused()
         } else {
@@ -664,10 +726,26 @@ impl WorkView {
             }
         }
 
+        let total_lines = text.len();
+        let visible_lines = area.height.saturating_sub(4) as usize;
+        let max_scroll = total_lines.saturating_sub(visible_lines);
+        let scroll = app.diagnostic_scroll.min(max_scroll);
+
         let p = Paragraph::new(text)
             .block(block)
-            .scroll((app.diagnostic_scroll as u16, 0))
+            .scroll((scroll as u16, 0))
             .wrap(Wrap { trim: false });
         frame.render_widget(p, area);
+
+        if total_lines > visible_lines {
+            let mut scrollbar_state = ScrollbarState::new(max_scroll).position(scroll);
+            let scrollbar = Scrollbar::default()
+                .orientation(ScrollbarOrientation::VerticalRight)
+                .begin_symbol(Some("▲"))
+                .end_symbol(Some("▼"))
+                .track_symbol(Some("│"))
+                .thumb_symbol("█");
+            frame.render_stateful_widget(scrollbar, area, &mut scrollbar_state);
+        }
     }
 }

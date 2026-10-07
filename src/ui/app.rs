@@ -4,6 +4,7 @@ use crate::domain::{
 };
 use crate::storage::{Database, Queries};
 use crate::ui::theme::ThemeMode;
+use ratatui::widgets::ListState;
 use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -299,6 +300,19 @@ pub struct App {
     pub project_tasks: Vec<Document>,
     pub selected_project_task_idx: usize,
     pub project_task_scroll_offset: usize,
+    pub cockpit_preview_scroll: usize,
+    pub last_project_status_refresh: std::time::Instant,
+
+    // Stateful List Viewports (Ratatui ListState)
+    pub projects_list_state: ListState,
+    pub project_tasks_list_state: ListState,
+    pub documents_list_state: ListState,
+    pub tree_list_state: ListState,
+    pub directives_list_state: ListState,
+    pub sessions_list_state: ListState,
+    pub grants_list_state: ListState,
+    pub risks_list_state: ListState,
+    pub settings_list_state: ListState,
 
     // Live Diagnostic Output Stream & Command Input
     pub diagnostic_stream: Vec<DiagnosticEntry>,
@@ -425,6 +439,53 @@ impl App {
             project_tasks: Vec::new(),
             selected_project_task_idx: 0,
             project_task_scroll_offset: 0,
+            cockpit_preview_scroll: 0,
+            last_project_status_refresh: std::time::Instant::now().checked_sub(std::time::Duration::from_secs(60)).unwrap_or_else(std::time::Instant::now),
+            projects_list_state: {
+                let mut s = ListState::default();
+                s.select(Some(0));
+                s
+            },
+            project_tasks_list_state: {
+                let mut s = ListState::default();
+                s.select(Some(0));
+                s
+            },
+            documents_list_state: {
+                let mut s = ListState::default();
+                s.select(Some(0));
+                s
+            },
+            tree_list_state: {
+                let mut s = ListState::default();
+                s.select(Some(0));
+                s
+            },
+            directives_list_state: {
+                let mut s = ListState::default();
+                s.select(Some(0));
+                s
+            },
+            sessions_list_state: {
+                let mut s = ListState::default();
+                s.select(Some(0));
+                s
+            },
+            grants_list_state: {
+                let mut s = ListState::default();
+                s.select(Some(0));
+                s
+            },
+            risks_list_state: {
+                let mut s = ListState::default();
+                s.select(Some(0));
+                s
+            },
+            settings_list_state: {
+                let mut s = ListState::default();
+                s.select(Some(0));
+                s
+            },
             diagnostic_stream: vec![init_entry],
             selected_diagnostic_idx: 0,
             diagnostic_scroll: 0,
@@ -560,10 +621,69 @@ impl App {
     }
 
     /// Loads initial data from the database.
+    pub fn sync_list_states(&mut self) {
+        if self.projects.is_empty() {
+            self.projects_list_state.select(None);
+        } else {
+            self.projects_list_state.select(Some(self.selected_project_idx.min(self.projects.len() - 1)));
+        }
+
+        if self.project_tasks.is_empty() {
+            self.project_tasks_list_state.select(None);
+        } else {
+            self.project_tasks_list_state.select(Some(self.selected_project_task_idx.min(self.project_tasks.len() - 1)));
+        }
+
+        if self.documents.is_empty() {
+            self.documents_list_state.select(None);
+        } else {
+            self.documents_list_state.select(Some(self.selected_doc_idx.min(self.documents.len() - 1)));
+        }
+
+        let tree_len = if self.explore_tree_mode {
+            self.build_explore_tree().len()
+        } else {
+            0
+        };
+        if tree_len == 0 {
+            self.tree_list_state.select(None);
+        } else {
+            self.tree_list_state.select(Some(self.selected_tree_idx.min(tree_len - 1)));
+        }
+
+        if self.directives.is_empty() {
+            self.directives_list_state.select(None);
+        } else {
+            self.directives_list_state.select(Some(self.selected_directive_idx.min(self.directives.len() - 1)));
+        }
+
+        let flen = self.filtered_sessions().len();
+        if flen == 0 {
+            self.sessions_list_state.select(None);
+        } else {
+            self.sessions_list_state.select(Some(self.selected_session_idx.min(flen - 1)));
+        }
+
+        if self.grants.is_empty() {
+            self.grants_list_state.select(None);
+        } else {
+            self.grants_list_state.select(Some(self.selected_grant_idx.min(self.grants.len() - 1)));
+        }
+
+        if self.active_risks.is_empty() {
+            self.risks_list_state.select(None);
+        } else {
+            self.risks_list_state.select(Some(self.selected_risk_idx.min(self.active_risks.len() - 1)));
+        }
+
+        self.settings_list_state.select(Some(self.settings_selected_idx));
+    }
+
+    /// Loads initial data from the database.
     pub fn refresh_data(&mut self, db: &Database) {
         let opts = BrowseOptions {
             category: self.selected_category.clone(),
-            limit: 100,
+            limit: 5000,
             offset: 0,
             ..Default::default()
         };
@@ -587,7 +707,7 @@ impl App {
             }
         }
 
-        if let Ok(sess) = Queries::list_sessions(db.conn(), &self.collection_id, 20) {
+        if let Ok(sess) = Queries::list_sessions(db.conn(), &self.collection_id, 100) {
             self.sessions = sess;
             let flen = self.filtered_sessions().len();
             if self.selected_session_idx >= flen && flen > 0 {
@@ -610,23 +730,40 @@ impl App {
             }
         }
 
+        let now = std::time::Instant::now();
+        let refresh_all_statuses = now.duration_since(self.last_project_status_refresh) >= std::time::Duration::from_secs(10);
+        if refresh_all_statuses {
+            self.last_project_status_refresh = now;
+        }
+
         if let Ok(mut projects) = Queries::list_projects(db.conn(), &self.collection_id, false) {
-            for proj in &mut projects {
-                if let Ok(status) = crate::core::StatusEngine::get_project_status(&self.root, &proj.name) {
-                    proj.health = format!("{:?}", status.health).to_lowercase();
-                    proj.active_task = status.active_task;
-                    if let Some(ref ec) = status.exit_criteria {
-                        proj.exit_criteria = Some(ec.command.clone());
-                        proj.exit_verified = ec.verified_at.is_some();
+            let sel_idx = self.selected_project_idx;
+            for (idx, proj) in projects.iter_mut().enumerate() {
+                if refresh_all_statuses || idx == sel_idx {
+                    if let Ok(status) = crate::core::StatusEngine::get_project_status(&self.root, &proj.name) {
+                        proj.health = format!("{:?}", status.health).to_lowercase();
+                        proj.active_task = status.active_task;
+                        if let Some(ref ec) = status.exit_criteria {
+                            proj.exit_criteria = Some(ec.command.clone());
+                            proj.exit_verified = ec.verified_at.is_some();
+                        }
+                    }
+                    proj.churn_warning = crate::domain::telemetry::compute_project_churn(
+                        db.conn(),
+                        &self.collection_id,
+                        &proj.name,
+                        proj.tasks_completed,
+                        proj.open_tasks_count(),
+                    );
+                } else if let Some(existing) = self.projects.get(idx) {
+                    if existing.name == proj.name {
+                        proj.health = existing.health.clone();
+                        proj.active_task = existing.active_task.clone();
+                        proj.exit_criteria = existing.exit_criteria.clone();
+                        proj.exit_verified = existing.exit_verified;
+                        proj.churn_warning = existing.churn_warning;
                     }
                 }
-                proj.churn_warning = crate::domain::telemetry::compute_project_churn(
-                    db.conn(),
-                    &self.collection_id,
-                    &proj.name,
-                    proj.tasks_completed,
-                    proj.open_tasks_count(),
-                );
             }
             self.projects = projects;
             if self.selected_project_idx >= self.projects.len() && !self.projects.is_empty() {
@@ -634,13 +771,14 @@ impl App {
             }
             self.refresh_project_tasks(db);
         }
+        self.sync_list_states();
     }
 
     pub fn refresh_project_tasks(&mut self, db: &Database) {
         if let Some(proj) = self.projects.get(self.selected_project_idx) {
             let opts = BrowseOptions {
                 project: Some(proj.name.clone()),
-                limit: 200,
+                limit: 1000,
                 ..Default::default()
             };
             if let Ok((docs, _)) = Queries::browse(db.conn(), &[self.collection_id.clone()], &opts) {
@@ -653,12 +791,14 @@ impl App {
             self.project_tasks.clear();
             self.selected_project_task_idx = 0;
         }
+        self.sync_list_states();
     }
 
     pub fn set_selected_project(&mut self, idx: usize, db: &Database) {
         if !self.projects.is_empty() {
             self.selected_project_idx = idx.min(self.projects.len() - 1);
             self.selected_project_task_idx = 0;
+            self.cockpit_preview_scroll = 0;
             self.refresh_project_tasks(db);
         }
     }
@@ -856,10 +996,14 @@ impl App {
                         if self.focused_pane == FocusedPane::Detail {
                             if !self.project_tasks.is_empty() {
                                 self.selected_project_task_idx = (self.selected_project_task_idx + 1) % self.project_tasks.len();
+                                self.cockpit_preview_scroll = 0;
+                            } else {
+                                self.cockpit_preview_scroll += 2;
                             }
                         } else if !self.projects.is_empty() {
                             self.selected_project_idx = (self.selected_project_idx + 1) % self.projects.len();
                             self.selected_project_task_idx = 0;
+                            self.cockpit_preview_scroll = 0;
                         }
                     }
                     WorkTabMode::Console => {
@@ -944,6 +1088,7 @@ impl App {
                 self.scroll_reader_down(2);
             }
         }
+        self.sync_list_states();
     }
 
     pub fn prev(&mut self) {
@@ -958,6 +1103,9 @@ impl App {
                                 } else {
                                     self.selected_project_task_idx -= 1;
                                 }
+                                self.cockpit_preview_scroll = 0;
+                            } else {
+                                self.cockpit_preview_scroll = self.cockpit_preview_scroll.saturating_sub(2);
                             }
                         } else if !self.projects.is_empty() {
                             if self.selected_project_idx == 0 {
@@ -966,6 +1114,7 @@ impl App {
                                 self.selected_project_idx -= 1;
                             }
                             self.selected_project_task_idx = 0;
+                            self.cockpit_preview_scroll = 0;
                         }
                     }
                     WorkTabMode::Console => {
@@ -1086,15 +1235,35 @@ impl App {
                 self.scroll_reader_up(2);
             }
         }
+        self.sync_list_states();
     }
 
     pub fn page_down(&mut self) {
         match self.active_tab {
             ActiveTab::Work => {
-                if self.work_tab_mode == WorkTabMode::Console {
-                    self.diagnostic_scroll += 10;
-                } else {
-                    self.next();
+                match self.work_tab_mode {
+                    WorkTabMode::Projects => {
+                        if self.focused_pane == FocusedPane::Detail {
+                            if self.project_tasks.len() > 1 {
+                                self.selected_project_task_idx = (self.selected_project_task_idx + 6).min(self.project_tasks.len() - 1);
+                                self.cockpit_preview_scroll = 0;
+                            } else {
+                                self.cockpit_preview_scroll += 8;
+                            }
+                        } else if !self.projects.is_empty() {
+                            self.selected_project_idx = (self.selected_project_idx + 8).min(self.projects.len().saturating_sub(1));
+                            self.selected_project_task_idx = 0;
+                            self.cockpit_preview_scroll = 0;
+                        }
+                    }
+                    WorkTabMode::Console => {
+                        self.diagnostic_scroll += 10;
+                    }
+                    WorkTabMode::Risks => {
+                        if !self.active_risks.is_empty() {
+                            self.selected_risk_idx = (self.selected_risk_idx + 8).min(self.active_risks.len() - 1);
+                        }
+                    }
                 }
             }
             ActiveTab::Explore => {
@@ -1150,15 +1319,35 @@ impl App {
                 self.scroll_reader_down(12);
             }
         }
+        self.sync_list_states();
     }
 
     pub fn page_up(&mut self) {
         match self.active_tab {
             ActiveTab::Work => {
-                if self.work_tab_mode == WorkTabMode::Console {
-                    self.diagnostic_scroll = self.diagnostic_scroll.saturating_sub(10);
-                } else {
-                    self.prev();
+                match self.work_tab_mode {
+                    WorkTabMode::Projects => {
+                        if self.focused_pane == FocusedPane::Detail {
+                            if self.project_tasks.len() > 1 {
+                                self.selected_project_task_idx = self.selected_project_task_idx.saturating_sub(6);
+                                self.cockpit_preview_scroll = 0;
+                            } else {
+                                self.cockpit_preview_scroll = self.cockpit_preview_scroll.saturating_sub(8);
+                            }
+                        } else if !self.projects.is_empty() {
+                            self.selected_project_idx = self.selected_project_idx.saturating_sub(8);
+                            self.selected_project_task_idx = 0;
+                            self.cockpit_preview_scroll = 0;
+                        }
+                    }
+                    WorkTabMode::Console => {
+                        self.diagnostic_scroll = self.diagnostic_scroll.saturating_sub(10);
+                    }
+                    WorkTabMode::Risks => {
+                        if !self.active_risks.is_empty() {
+                            self.selected_risk_idx = self.selected_risk_idx.saturating_sub(8);
+                        }
+                    }
                 }
             }
             ActiveTab::Explore => {
@@ -1212,6 +1401,164 @@ impl App {
                 self.scroll_reader_up(12);
             }
         }
+        self.sync_list_states();
+    }
+
+    pub fn scroll_to_top(&mut self) {
+        match self.active_tab {
+            ActiveTab::Work => {
+                match self.work_tab_mode {
+                    WorkTabMode::Projects => {
+                        if self.focused_pane == FocusedPane::Detail {
+                            self.selected_project_task_idx = 0;
+                            self.cockpit_preview_scroll = 0;
+                        } else {
+                            self.selected_project_idx = 0;
+                            self.selected_project_task_idx = 0;
+                            self.cockpit_preview_scroll = 0;
+                        }
+                    }
+                    WorkTabMode::Console => {
+                        self.diagnostic_scroll = 0;
+                    }
+                    WorkTabMode::Risks => {
+                        self.selected_risk_idx = 0;
+                    }
+                }
+            }
+            ActiveTab::Explore => {
+                if self.focused_pane == FocusedPane::Detail {
+                    self.preview_scroll_offset = 0;
+                } else if self.explore_tree_mode {
+                    self.selected_tree_idx = 0;
+                    let tree = self.build_explore_tree();
+                    if let Some(ExploreTreeItem::Doc { doc_idx, .. }) = tree.get(0) {
+                        self.selected_doc_idx = *doc_idx;
+                    }
+                    self.preview_scroll_offset = 0;
+                } else {
+                    self.selected_doc_idx = 0;
+                    self.preview_scroll_offset = 0;
+                }
+            }
+            ActiveTab::Directives => {
+                if self.focused_pane == FocusedPane::Detail {
+                    self.directive_preview_scroll = 0;
+                } else {
+                    self.selected_directive_idx = 0;
+                    self.directive_preview_scroll = 0;
+                }
+            }
+            ActiveTab::Sessions => {
+                match self.governance_tab_mode {
+                    GovernanceTabMode::Sessions => {
+                        if self.focused_pane == FocusedPane::Detail {
+                            self.session_preview_scroll = 0;
+                        } else {
+                            self.selected_session_idx = 0;
+                            self.session_preview_scroll = 0;
+                        }
+                    }
+                    GovernanceTabMode::Grants => {
+                        if self.focused_pane == FocusedPane::Detail {
+                            self.session_preview_scroll = 0;
+                        } else {
+                            self.selected_grant_idx = 0;
+                            self.session_preview_scroll = 0;
+                        }
+                    }
+                }
+            }
+            ActiveTab::Settings => {
+                self.settings_selected_idx = 0;
+            }
+            ActiveTab::Reader => {
+                self.reader_scroll_offset = 0;
+            }
+        }
+        self.sync_list_states();
+    }
+
+    pub fn scroll_to_bottom(&mut self) {
+        match self.active_tab {
+            ActiveTab::Work => {
+                match self.work_tab_mode {
+                    WorkTabMode::Projects => {
+                        if self.focused_pane == FocusedPane::Detail {
+                            if !self.project_tasks.is_empty() {
+                                self.selected_project_task_idx = self.project_tasks.len() - 1;
+                            }
+                            self.cockpit_preview_scroll = 0;
+                        } else if !self.projects.is_empty() {
+                            self.selected_project_idx = self.projects.len() - 1;
+                            self.selected_project_task_idx = 0;
+                            self.cockpit_preview_scroll = 0;
+                        }
+                    }
+                    WorkTabMode::Console => {
+                        self.diagnostic_scroll = usize::MAX / 2;
+                    }
+                    WorkTabMode::Risks => {
+                        if !self.active_risks.is_empty() {
+                            self.selected_risk_idx = self.active_risks.len() - 1;
+                        }
+                    }
+                }
+            }
+            ActiveTab::Explore => {
+                if self.focused_pane == FocusedPane::Detail {
+                    self.preview_scroll_offset = usize::MAX / 2;
+                } else if self.explore_tree_mode {
+                    let tree = self.build_explore_tree();
+                    if !tree.is_empty() {
+                        self.selected_tree_idx = tree.len() - 1;
+                        if let Some(ExploreTreeItem::Doc { doc_idx, .. }) = tree.last() {
+                            self.selected_doc_idx = *doc_idx;
+                        }
+                        self.preview_scroll_offset = 0;
+                    }
+                } else if !self.documents.is_empty() {
+                    self.selected_doc_idx = self.documents.len() - 1;
+                    self.preview_scroll_offset = 0;
+                }
+            }
+            ActiveTab::Directives => {
+                if self.focused_pane == FocusedPane::Detail {
+                    self.directive_preview_scroll = usize::MAX / 2;
+                } else if !self.directives.is_empty() {
+                    self.selected_directive_idx = self.directives.len() - 1;
+                    self.directive_preview_scroll = 0;
+                }
+            }
+            ActiveTab::Sessions => {
+                match self.governance_tab_mode {
+                    GovernanceTabMode::Sessions => {
+                        let flen = self.filtered_sessions().len();
+                        if self.focused_pane == FocusedPane::Detail {
+                            self.session_preview_scroll = usize::MAX / 2;
+                        } else if flen > 0 {
+                            self.selected_session_idx = flen - 1;
+                            self.session_preview_scroll = 0;
+                        }
+                    }
+                    GovernanceTabMode::Grants => {
+                        if self.focused_pane == FocusedPane::Detail {
+                            self.session_preview_scroll = usize::MAX / 2;
+                        } else if !self.grants.is_empty() {
+                            self.selected_grant_idx = self.grants.len() - 1;
+                            self.session_preview_scroll = 0;
+                        }
+                    }
+                }
+            }
+            ActiveTab::Settings => {
+                self.settings_selected_idx = 7;
+            }
+            ActiveTab::Reader => {
+                self.reader_scroll_offset = usize::MAX / 2;
+            }
+        }
+        self.sync_list_states();
     }
 
     pub fn next_diagnostic_entry(&mut self) {
@@ -3934,5 +4281,100 @@ mod tests {
         assert_ne!(app.theme, orig_theme);
         app.adjust_setting(-1);
         assert_eq!(app.theme, orig_theme);
+    }
+
+    #[test]
+    fn test_high_cardinality_stateful_lists_and_cockpit_scrolling() {
+        let mut app = App::new("test", "test");
+        app.active_tab = ActiveTab::Work;
+        app.work_tab_mode = WorkTabMode::Projects;
+
+        // Populate 60 projects (simulating large repository like ZDP)
+        app.projects = (0..60)
+            .map(|i| ProjectSummary {
+                name: format!("pkg-{}", i),
+                path: format!("projects/pkg-{}", i),
+                total_documents: 10,
+                tasks_in_progress: 1,
+                tasks_completed: 5,
+                tasks_blocked: 0,
+                tasks_pending: 4,
+                open_risks: 0,
+                decisions_count: 2,
+                health: "healthy".to_string(),
+                active_task: None,
+                exit_criteria: None,
+                exit_verified: false,
+                churn_warning: false,
+                has_status_doc: true,
+            })
+            .collect();
+
+        // Populate 20 tasks
+        app.project_tasks = (0..20)
+            .map(|i| {
+                let mut d = make_test_doc(
+                    &format!("doc-{}", i),
+                    &format!("projects/pkg-0/tasks/task-{}.md", i),
+                    &format!("Task {}", i),
+                );
+                d.kind = DocumentKind::Task;
+                d.status = DocumentStatus::InProgress;
+                d.content = format!("# Task {}\n\n| Col A | Col B |\n|---|---|\n| 1 | 2 |\n", i);
+                d
+            })
+            .collect();
+
+        app.sync_list_states();
+        assert_eq!(app.projects_list_state.selected(), Some(0));
+        assert_eq!(app.project_tasks_list_state.selected(), Some(0));
+
+        // Test paging down projects list
+        app.page_down();
+        assert_eq!(app.selected_project_idx, 8);
+        assert_eq!(app.projects_list_state.selected(), Some(8));
+
+        app.page_down();
+        assert_eq!(app.selected_project_idx, 16);
+        assert_eq!(app.projects_list_state.selected(), Some(16));
+
+        // Test scroll to bottom (End / G)
+        app.scroll_to_bottom();
+        assert_eq!(app.selected_project_idx, 59);
+        assert_eq!(app.projects_list_state.selected(), Some(59));
+
+        // Test scroll to top (Home / g)
+        app.scroll_to_top();
+        assert_eq!(app.selected_project_idx, 0);
+        assert_eq!(app.projects_list_state.selected(), Some(0));
+
+        // Switch focus to Detail pane (tasks & snippet preview)
+        app.focused_pane = FocusedPane::Detail;
+        assert_eq!(app.selected_project_task_idx, 0);
+        assert_eq!(app.cockpit_preview_scroll, 0);
+
+        // Page down tasks
+        app.page_down();
+        assert_eq!(app.selected_project_task_idx, 6);
+        assert_eq!(app.project_tasks_list_state.selected(), Some(6));
+
+        app.page_down();
+        assert_eq!(app.selected_project_task_idx, 12);
+        assert_eq!(app.project_tasks_list_state.selected(), Some(12));
+
+        // Scroll preview when tasks are exhausted or empty
+        app.project_tasks.clear();
+        app.sync_list_states();
+        assert_eq!(app.project_tasks_list_state.selected(), None);
+        assert_eq!(app.cockpit_preview_scroll, 0);
+
+        app.next();
+        assert_eq!(app.cockpit_preview_scroll, 2);
+        app.page_down();
+        assert_eq!(app.cockpit_preview_scroll, 10);
+        app.prev();
+        assert_eq!(app.cockpit_preview_scroll, 8);
+        app.scroll_to_top();
+        assert_eq!(app.cockpit_preview_scroll, 0);
     }
 }

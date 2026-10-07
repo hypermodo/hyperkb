@@ -3,14 +3,17 @@ use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, List, ListItem, Padding, Paragraph, Wrap},
+    widgets::{
+        Block, Borders, List, ListItem, Padding, Paragraph, Scrollbar, ScrollbarOrientation,
+        ScrollbarState, Wrap,
+    },
     Frame,
 };
 
 pub struct SessionsView;
 
 impl SessionsView {
-    pub fn render(frame: &mut Frame, app: &App, area: Rect) {
+    pub fn render(frame: &mut Frame, app: &mut App, area: Rect) {
         let list_width = (area.width * 38 / 100).clamp(36, 68);
         let chunks = Layout::default()
             .direction(Direction::Horizontal)
@@ -29,15 +32,19 @@ impl SessionsView {
         }
     }
 
-    fn render_sessions_list(frame: &mut Frame, app: &App, area: Rect) {
-        let t = &app.theme;
+    fn render_sessions_list(frame: &mut Frame, app: &mut App, area: Rect) {
+        let t = app.theme;
         let border_color = if app.focused_pane == FocusedPane::List {
             t.border_focused()
         } else {
             t.border()
         };
 
-        let filtered = app.filtered_sessions();
+        let filtered: Vec<(usize, crate::domain::AgentSession)> = app
+            .filtered_sessions()
+            .into_iter()
+            .map(|(idx, s)| (idx, s.clone()))
+            .collect();
         let filter_label = app.session_harness_filter.as_deref().unwrap_or("ALL");
 
         let items: Vec<ListItem> = filtered
@@ -148,10 +155,11 @@ impl SessionsView {
             })
             .collect();
 
-        let sel_count = if filtered.is_empty() {
+        let total_sessions = filtered.len();
+        let sel_count = if total_sessions == 0 {
             "0 runs".to_string()
         } else {
-            format!("{} of {} selected", app.selected_session_idx + 1, filtered.len())
+            format!("{} of {} selected", app.selected_session_idx + 1, total_sessions)
         };
         let list_title = format!(" Agent Runs [{}] [{}] ", filter_label.to_uppercase(), sel_count);
         let list_block = Block::default()
@@ -191,8 +199,20 @@ impl SessionsView {
             let p = Paragraph::new(empty_text).block(list_block);
             frame.render_widget(p, area);
         } else {
-            let list = List::new(items).block(list_block);
-            frame.render_widget(list, area);
+            let list = List::new(items).block(list_block).highlight_style(t.selected_row());
+            frame.render_stateful_widget(list, area, &mut app.sessions_list_state);
+
+            if total_sessions > 0 {
+                let mut scrollbar_state = ScrollbarState::new(total_sessions.saturating_sub(1))
+                    .position(app.selected_session_idx);
+                let scrollbar = Scrollbar::default()
+                    .orientation(ScrollbarOrientation::VerticalRight)
+                    .begin_symbol(Some("▲"))
+                    .end_symbol(Some("▼"))
+                    .track_symbol(Some("│"))
+                    .thumb_symbol("█");
+                frame.render_stateful_widget(scrollbar, area, &mut scrollbar_state);
+            }
         }
     }
 
@@ -536,11 +556,27 @@ impl SessionsView {
                 }
             }
 
+            let total_lines = text.len();
+            let visible_lines = area.height.saturating_sub(4) as usize;
+            let max_scroll = total_lines.saturating_sub(visible_lines);
+            let scroll = app.session_preview_scroll.min(max_scroll);
+
             let paragraph = Paragraph::new(text)
                 .block(block)
-                .scroll((app.session_preview_scroll as u16, 0))
+                .scroll((scroll as u16, 0))
                 .wrap(Wrap { trim: false });
             frame.render_widget(paragraph, area);
+
+            if total_lines > visible_lines {
+                let mut scrollbar_state = ScrollbarState::new(max_scroll).position(scroll);
+                let scrollbar = Scrollbar::default()
+                    .orientation(ScrollbarOrientation::VerticalRight)
+                    .begin_symbol(Some("▲"))
+                    .end_symbol(Some("▼"))
+                    .track_symbol(Some("│"))
+                    .thumb_symbol("█");
+                frame.render_stateful_widget(scrollbar, area, &mut scrollbar_state);
+            }
         } else {
             let empty_card = vec![
                 Line::from(""),
@@ -554,8 +590,8 @@ impl SessionsView {
         }
     }
 
-    fn render_grants_list(frame: &mut Frame, app: &App, area: Rect) {
-        let t = &app.theme;
+    fn render_grants_list(frame: &mut Frame, app: &mut App, area: Rect) {
+        let t = app.theme;
         let border_color = if app.focused_pane == FocusedPane::List {
             t.border_focused()
         } else {
@@ -650,8 +686,21 @@ impl SessionsView {
             let p = Paragraph::new(empty_text).block(list_block);
             frame.render_widget(p, area);
         } else {
-            let list = List::new(items).block(list_block);
-            frame.render_widget(list, area);
+            let list = List::new(items).block(list_block).highlight_style(t.selected_row());
+            frame.render_stateful_widget(list, area, &mut app.grants_list_state);
+
+            let total_grants = app.grants.len();
+            if total_grants > 0 {
+                let mut scrollbar_state = ScrollbarState::new(total_grants.saturating_sub(1))
+                    .position(app.selected_grant_idx);
+                let scrollbar = Scrollbar::default()
+                    .orientation(ScrollbarOrientation::VerticalRight)
+                    .begin_symbol(Some("▲"))
+                    .end_symbol(Some("▼"))
+                    .track_symbol(Some("│"))
+                    .thumb_symbol("█");
+                frame.render_stateful_widget(scrollbar, area, &mut scrollbar_state);
+            }
         }
     }
 
@@ -814,11 +863,27 @@ impl SessionsView {
                 )),
             ];
 
+            let total_lines = text.len();
+            let visible_lines = area.height.saturating_sub(4) as usize;
+            let max_scroll = total_lines.saturating_sub(visible_lines);
+            let scroll = app.session_preview_scroll.min(max_scroll);
+
             let paragraph = Paragraph::new(text)
                 .block(block)
-                .scroll((app.session_preview_scroll as u16, 0))
+                .scroll((scroll as u16, 0))
                 .wrap(Wrap { trim: false });
             frame.render_widget(paragraph, area);
+
+            if total_lines > visible_lines {
+                let mut scrollbar_state = ScrollbarState::new(max_scroll).position(scroll);
+                let scrollbar = Scrollbar::default()
+                    .orientation(ScrollbarOrientation::VerticalRight)
+                    .begin_symbol(Some("▲"))
+                    .end_symbol(Some("▼"))
+                    .track_symbol(Some("│"))
+                    .thumb_symbol("█");
+                frame.render_stateful_widget(scrollbar, area, &mut scrollbar_state);
+            }
         } else {
             let empty_card = vec![
                 Line::from(""),

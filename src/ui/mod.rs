@@ -127,7 +127,7 @@ fn run_loop(
             let mut highlighted_text: Option<String> = None;
             terminal.draw(|frame| {
                 let area = frame.area();
-                let t = &app.theme;
+                let t = app.theme;
 
                 // Clear entire frame and fill with active theme background color
                 frame.render_widget(Clear, area);
@@ -734,12 +734,15 @@ fn run_loop(
                                     } else {
                                         let _ = execute!(terminal.backend_mut(), DisableMouseCapture);
                                         let _ = terminal.backend_mut().write_all(b"\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1005l\x1b[?1006l\x1b[?1015l");
-                                        let _ = terminal.backend_mut().flush();
                                     }
                                 }
                             }
                             KeyCode::PageDown => app.page_down(),
                             KeyCode::PageUp => app.page_up(),
+                            KeyCode::Home => app.scroll_to_top(),
+                            KeyCode::End => app.scroll_to_bottom(),
+                            KeyCode::Char('g') => app.scroll_to_top(),
+                            KeyCode::Char('G') => app.scroll_to_bottom(),
                             KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => app.page_down(),
                             KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => app.page_up(),
                             KeyCode::Char(' ') => {
@@ -1200,6 +1203,8 @@ fn run_loop(
                                 let list_width = (area.width * 38 / 100).clamp(36, 68);
                                 if col < list_width {
                                     app.next();
+                                } else if app.active_tab == ActiveTab::Work && app.work_tab_mode == crate::ui::app::WorkTabMode::Projects && row >= (area.height / 2) {
+                                    app.cockpit_preview_scroll += 2;
                                 } else {
                                     app.page_down();
                                 }
@@ -1214,6 +1219,8 @@ fn run_loop(
                                 let list_width = (area.width * 38 / 100).clamp(36, 68);
                                 if col < list_width {
                                     app.prev();
+                                } else if app.active_tab == ActiveTab::Work && app.work_tab_mode == crate::ui::app::WorkTabMode::Projects && row >= (area.height / 2) {
+                                    app.cockpit_preview_scroll = app.cockpit_preview_scroll.saturating_sub(2);
                                 } else {
                                     app.page_up();
                                 }

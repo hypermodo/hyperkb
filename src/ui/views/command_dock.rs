@@ -3,7 +3,10 @@ use ratatui::{
     layout::Rect,
     style::{Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Clear, Padding, Paragraph},
+    widgets::{
+        Block, Borders, Clear, Padding, Paragraph, Scrollbar, ScrollbarOrientation,
+        ScrollbarState,
+    },
     Frame,
 };
 
@@ -204,9 +207,16 @@ impl CommandDock {
             ]));
 
         let sel_idx = app.slash_menu_selected_idx.min(filtered.len().saturating_sub(1));
+        let visible_items = area.height.saturating_sub(2) as usize;
+        let start_idx = if sel_idx >= visible_items {
+            sel_idx.saturating_sub(visible_items - 1)
+        } else {
+            0
+        };
+
         let mut lines = Vec::new();
 
-        for (idx, cmd) in filtered.iter().enumerate() {
+        for (idx, cmd) in filtered.iter().enumerate().skip(start_idx).take(visible_items) {
             let is_sel = idx == sel_idx;
             if is_sel {
                 lines.push(Line::from(vec![
@@ -225,5 +235,17 @@ impl CommandDock {
 
         let p = Paragraph::new(lines).block(block);
         frame.render_widget(p, area);
+
+        if filtered.len() > visible_items {
+            let mut scrollbar_state = ScrollbarState::new(filtered.len().saturating_sub(1))
+                .position(sel_idx);
+            let scrollbar = Scrollbar::default()
+                .orientation(ScrollbarOrientation::VerticalRight)
+                .begin_symbol(Some("▲"))
+                .end_symbol(Some("▼"))
+                .track_symbol(Some("│"))
+                .thumb_symbol("█");
+            frame.render_stateful_widget(scrollbar, area, &mut scrollbar_state);
+        }
     }
 }

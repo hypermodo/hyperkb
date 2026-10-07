@@ -4,14 +4,17 @@ use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, List, ListItem, Padding, Paragraph, Wrap},
+    widgets::{
+        Block, Borders, List, ListItem, Padding, Paragraph, Scrollbar, ScrollbarOrientation,
+        ScrollbarState, Wrap,
+    },
     Frame,
 };
 
 pub struct ExploreView;
 
 impl ExploreView {
-    pub fn render(frame: &mut Frame, app: &App, area: Rect) {
+    pub fn render(frame: &mut Frame, app: &mut App, area: Rect) {
         let list_width = (area.width * 38 / 100).clamp(36, 68);
         let chunks = Layout::default()
             .direction(Direction::Horizontal)
@@ -27,8 +30,8 @@ impl ExploreView {
         }
     }
 
-    fn render_document_list(frame: &mut Frame, app: &App, area: Rect) {
-        let t = &app.theme;
+    fn render_document_list(frame: &mut Frame, app: &mut App, area: Rect) {
+        let t = app.theme;
         let border_color = if app.focused_pane == FocusedPane::List {
             t.border_focused()
         } else {
@@ -45,8 +48,10 @@ impl ExploreView {
                 let (badge_text, badge_style) = match doc.status {
                     DocumentStatus::Accepted => ("● ACCEPTED ", t.badge_accepted()),
                     DocumentStatus::Proposed => ("○ PROPOSED ", t.badge_proposed()),
-                    DocumentStatus::Pending => ("⏳ PENDING ", t.badge_proposed()),
-                    DocumentStatus::InProgress => ("⚡ ACTIVE ", Style::default().fg(t.accent()).add_modifier(Modifier::BOLD)),
+                    DocumentStatus::Pending => ("○ PENDING ", t.badge_proposed()),
+                    DocumentStatus::InProgress => {
+                        ("▶ IN PROGRESS ", t.badge_accepted())
+                    }
                     DocumentStatus::Completed => ("✔ DONE ", t.badge_resolved()),
                     DocumentStatus::Blocked => ("✖ BLOCKED ", t.badge_conflict()),
                     DocumentStatus::Open => ("▲ OPEN ", t.badge_risk()),
@@ -105,11 +110,24 @@ impl ExploreView {
             )
             .highlight_style(t.selected_row());
 
-        frame.render_widget(list, area);
+        frame.render_stateful_widget(list, area, &mut app.documents_list_state);
+
+        let total_docs = app.documents.len();
+        if total_docs > 0 {
+            let mut scrollbar_state = ScrollbarState::new(total_docs.saturating_sub(1))
+                .position(app.selected_doc_idx);
+            let scrollbar = Scrollbar::default()
+                .orientation(ScrollbarOrientation::VerticalRight)
+                .begin_symbol(Some("▲"))
+                .end_symbol(Some("▼"))
+                .track_symbol(Some("│"))
+                .thumb_symbol("█");
+            frame.render_stateful_widget(scrollbar, area, &mut scrollbar_state);
+        }
     }
 
     fn render_document_preview(frame: &mut Frame, app: &App, area: Rect) {
-        let t = &app.theme;
+        let t = app.theme;
         let border_color = if app.focused_pane == FocusedPane::Detail {
             t.border_focused()
         } else {
@@ -166,14 +184,30 @@ impl ExploreView {
             text.push(Line::from(""));
 
             let preview_width = area.width.saturating_sub(6) as usize;
-            let formatted_body = crate::ui::markdown::MarkdownFormatter::format_markdown_with_theme(&doc.content, preview_width, t);
+            let formatted_body = crate::ui::markdown::MarkdownFormatter::format_markdown_with_theme(&doc.content, preview_width, &t);
             text.extend(formatted_body);
+
+            let total_lines = text.len();
+            let visible_lines = area.height.saturating_sub(4) as usize;
+            let max_scroll = total_lines.saturating_sub(visible_lines);
+            let scroll = app.preview_scroll_offset.min(max_scroll);
 
             let paragraph = Paragraph::new(text)
                 .block(block)
-                .scroll((app.preview_scroll_offset as u16, 0))
+                .scroll((scroll as u16, 0))
                 .wrap(Wrap { trim: false });
             frame.render_widget(paragraph, area);
+
+            if total_lines > visible_lines {
+                let mut scrollbar_state = ScrollbarState::new(max_scroll).position(scroll);
+                let scrollbar = Scrollbar::default()
+                    .orientation(ScrollbarOrientation::VerticalRight)
+                    .begin_symbol(Some("▲"))
+                    .end_symbol(Some("▼"))
+                    .track_symbol(Some("│"))
+                    .thumb_symbol("█");
+                frame.render_stateful_widget(scrollbar, area, &mut scrollbar_state);
+            }
         } else {
             let empty_text = vec![
                 Line::from(""),
@@ -186,8 +220,8 @@ impl ExploreView {
         }
     }
 
-    fn render_tree_view(frame: &mut Frame, app: &App, area: Rect) {
-        let t = &app.theme;
+    fn render_tree_view(frame: &mut Frame, app: &mut App, area: Rect) {
+        let t = app.theme;
         let border_color = if app.focused_pane == FocusedPane::List {
             t.border_focused()
         } else {
@@ -267,11 +301,24 @@ impl ExploreView {
             )
             .highlight_style(t.selected_row());
 
-        frame.render_widget(list, area);
+        frame.render_stateful_widget(list, area, &mut app.tree_list_state);
+
+        let total_tree = tree.len();
+        if total_tree > 0 {
+            let mut scrollbar_state = ScrollbarState::new(total_tree.saturating_sub(1))
+                .position(app.selected_tree_idx);
+            let scrollbar = Scrollbar::default()
+                .orientation(ScrollbarOrientation::VerticalRight)
+                .begin_symbol(Some("▲"))
+                .end_symbol(Some("▼"))
+                .track_symbol(Some("│"))
+                .thumb_symbol("█");
+            frame.render_stateful_widget(scrollbar, area, &mut scrollbar_state);
+        }
     }
 
     fn render_tree_preview(frame: &mut Frame, app: &App, area: Rect) {
-        let t = &app.theme;
+        let t = app.theme;
         if let Some(item) = app.selected_tree_item() {
             match item {
                 ExploreTreeItem::Doc { .. } => {
