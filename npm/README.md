@@ -55,31 +55,44 @@ hyperkb mcp
 
 ---
 
-## 🤖 AI Harness Setup
+## 🤖 AI Harness Setup & Deployment Topologies
+
+HyperKB supports three generic topologies across all AI coding harnesses (**OpenCode, Claude Code, Google Antigravity, Cursor, VS Code, Codex, Aider**):
+
+1. **Embedded (Per-Repo)**: `hyperkb.json` lives in the repository root. Leave `--root` omitted.
+2. **Multi-Repo Suite (Shared Parent Hub)**: Place harness config in the parent directory (`workspace-group/opencode.json` or `.mcp.json`) pointing `--root` to the shared `system-kb/`. All child repos automatically inherit it with zero per-repo configuration!
+3. **Global Machine Hub**: Place harness config in global settings (`~/.config/opencode/opencode.json` or `~/.claude/mcp.json`) with `--root /path/to/global-system-kb`.
 
 ### OpenCode
-Add to `opencode.json` (or `~/.config/opencode/opencode.json`):
-
+Add to `opencode.json` (or parent folder `opencode.json` for multi-repo suites):
 ```json
 {
   "$schema": "https://opencode.ai/config.json",
   "mcp": {
     "hyperkb": {
-      "command": "npx",
-      "args": ["@hypermodo/hyperkb", "mcp"]
+      "type": "local",
+      "command": [
+        "npx",
+        "-y",
+        "@hypermodo/hyperkb",
+        "mcp"
+      ]
     }
   }
 }
 ```
+*(For shared multi-repo parent directories or global hubs, append `"--root", "/path/to/system-kb"` to the `command` array).*
 
-### Claude Code
+### Claude Code CLI
 Add to `.mcp.json` or run:
 ```bash
 claude mcp add hyperkb npx -y @hypermodo/hyperkb mcp
+# Or with explicit shared hub:
+# claude mcp add hyperkb npx -y @hypermodo/hyperkb mcp --root /path/to/system-kb
 ```
 
 ### Cursor & VS Code
-Add to `.cursor/mcp.json`:
+Add to `.cursor/mcp.json` (or workspace root for multi-repo):
 ```json
 {
   "mcpServers": {
@@ -92,7 +105,7 @@ Add to `.cursor/mcp.json`:
 ```
 
 ### Google Antigravity IDE
-Add to `mcp_config.json`:
+Add to `.agents/mcp_config.json`:
 ```json
 {
   "mcpServers": {

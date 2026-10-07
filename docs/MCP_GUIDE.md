@@ -4,63 +4,166 @@ HyperKB includes a native **Model Context Protocol (MCP)** stdio server built di
 
 ---
 
-## 🚀 Configuration Examples
+## 🌐 Supported Deployment Topologies
 
-### 1. Claude Code CLI
-Add to `~/.claude/mcp.json` or `.mcp.json` in your repository root:
+HyperKB supports three generic deployment topologies across all AI coding harnesses (**OpenCode, Claude Code, Google Antigravity, Cursor, VS Code, Codex, and Aider**):
 
-```json
-{
-  "mcpServers": {
-    "hyperkb": {
-      "command": "hyperkb",
-      "args": ["mcp", "--root", "."]
-    }
-  }
-}
+```
+Topology 1: Embedded (Per-Repo)       Topology 2: Multi-Repo Suite (Parent Hub)      Topology 3: Global Machine Hub
+my-repo/                              workspace-group/                               ~/.config/ (or global path)
+├── hyperkb.json                      ├── system-kb/ (shared hub)                    ├── opencode/opencode.json
+├── decisions/                        ├── service-a/ (child repo 1)                  └── ~/.claude/mcp.json
+├── directives/                       └── service-b/ (child repo 2)                            │
+└── src/                                        │                                              ▼
+        │                                       ▼                             /shared/global-system-kb/
+        ▼                     Inherits parent config with --root system-kb    Universal machine-wide invariants
+Self-contained in git
 ```
 
-### 2. Antigravity & Agentic IDEs
-Add to `.agents/mcp_config.json`:
+---
 
-```json
-{
-  "mcpServers": {
-    "hyperkb": {
-      "command": "hyperkb",
-      "args": ["--root", ".", "mcp"]
+### Scenario 1: Embedded Topology (One KB per Repository)
+*Best for standalone repositories, monolithic applications, or open-source projects where ADRs and invariants travel in git alongside the code.*
+
+Leave `--root` omitted (defaults to current directory `.`):
+
+- **OpenCode** (`my-repo/opencode.json`):
+  ```json
+  {
+    "$schema": "https://opencode.ai/config.json",
+    "mcp": {
+      "hyperkb": {
+        "type": "local",
+        "command": ["npx", "-y", "@hypermodo/hyperkb", "mcp"]
+      }
     }
   }
-}
-```
-
-### 3. Cursor & OpenCode
-Add to `opencode.json` (or Cursor MCP settings):
-```json
-{
-  "mcp": {
-    "hyperkb": {
-      "command": "npx",
-      "args": ["@hypermodo/hyperkb", "mcp"]
+  ```
+- **Claude Code CLI** (run in repo or add to `my-repo/.mcp.json`):
+  ```bash
+  claude mcp add hyperkb npx -y @hypermodo/hyperkb mcp
+  ```
+- **Cursor & VS Code** (`my-repo/.cursor/mcp.json`):
+  ```json
+  {
+    "mcpServers": {
+      "hyperkb": {
+        "command": "npx",
+        "args": ["-y", "@hypermodo/hyperkb", "mcp"]
+      }
     }
   }
-}
-```
-*(If installed locally via `npm install -D @hypermodo/hyperkb`, `npx` launches `./node_modules/.bin/hyperkb` instantly with zero Rust or Cargo required).*
-
-### 4. Centralized Knowledge Hub (Monorepos & Multi-Repo)
-If your knowledge base lives in a central repo (e.g. `/Volumes/ExtSSD/Workspace/ZDP/ZDP-SYSTEM-KB`) while your code lives in a separate subproject, point `--root` to the knowledge hub:
-
-```json
-{
-  "mcpServers": {
-    "hyperkb": {
-      "command": "hyperkb",
-      "args": ["mcp", "--root", "/Volumes/ExtSSD/Workspace/ZDP/ZDP-SYSTEM-KB"]
+  ```
+- **Google Antigravity IDE** (`my-repo/.agents/mcp_config.json`):
+  ```json
+  {
+    "mcpServers": {
+      "hyperkb": {
+        "command": "npx",
+        "args": ["-y", "@hypermodo/hyperkb", "mcp"]
+      }
     }
   }
-}
-```
+  ```
+
+---
+
+### Scenario 2: Multi-Repo Suite Topology (Shared Parent Hub)
+*Best for microservice ecosystems or product suites where multiple child repositories share architectural invariants, decisions, and risks, while keeping different organizational groups strictly segregated.*
+
+Inside `system-kb/projects/<repo-name>`, HyperKB automatically scopes tasks and status to the active child repo, while directives and risks remain shared across the entire suite.
+
+Place the configuration in the **group parent directory** (`workspace-group/`):
+
+- **OpenCode** (`workspace-group/opencode.json`):
+  *(OpenCode automatically walks up parent directories; all child repos inherit this configuration with zero config needed inside child repos).*
+  ```json
+  {
+    "$schema": "https://opencode.ai/config.json",
+    "mcp": {
+      "hyperkb": {
+        "type": "local",
+        "command": [
+          "npx",
+          "-y",
+          "@hypermodo/hyperkb",
+          "mcp",
+          "--root",
+          "/absolute/path/to/workspace-group/system-kb"
+        ]
+      }
+    }
+  }
+  ```
+- **Claude Code CLI** (`workspace-group/.mcp.json`):
+  ```json
+  {
+    "mcpServers": {
+      "hyperkb": {
+        "command": "npx",
+        "args": [
+          "-y",
+          "@hypermodo/hyperkb",
+          "mcp",
+          "--root",
+          "/absolute/path/to/workspace-group/system-kb"
+        ]
+      }
+    }
+  }
+  ```
+- **Cursor / VS Code & Google Antigravity** (in workspace root `.cursor/mcp.json` or `.agents/mcp_config.json`):
+  ```json
+  {
+    "mcpServers": {
+      "hyperkb": {
+        "command": "npx",
+        "args": [
+          "-y",
+          "@hypermodo/hyperkb",
+          "mcp",
+          "--root",
+          "/absolute/path/to/workspace-group/system-kb"
+        ]
+      }
+    }
+  }
+  ```
+- **Codex / Aider / Headless Agents**:
+  Run `hyperkb init-harness all` inside child repos to generate thin pointer files (`AGENTS.md`, `CLAUDE.md`, `GEMINI.md`) that point to `../system-kb`. HyperKB's native root resolver also automatically auto-discovers sibling hubs named `*-SYSTEM-KB`, `*-KB`, or `kb/`.
+
+---
+
+### Scenario 3: Global Machine Hub (One KB for All Repos)
+*Best for solo developers or architects wanting unified personal knowledge, private notes, and global rules across every folder on their workstation.*
+
+Place the configuration in your **global user config**:
+
+- **OpenCode** (`~/.config/opencode/opencode.json`):
+  ```json
+  {
+    "$schema": "https://opencode.ai/config.json",
+    "mcp": {
+      "hyperkb": {
+        "type": "local",
+        "command": [
+          "npx",
+          "-y",
+          "@hypermodo/hyperkb",
+          "mcp",
+          "--root",
+          "/path/to/global-system-kb"
+        ]
+      }
+    }
+  }
+  ```
+- **Claude Code CLI**: Add globally via `~/.claude/mcp.json`:
+  ```bash
+  claude mcp add hyperkb npx -y @hypermodo/hyperkb mcp --root /path/to/global-system-kb
+  ```
+- **Cursor / VS Code**: Add to Global User Settings (`settings.json`).
+- **Antigravity IDE**: Add to global Antigravity MCP settings.
 
 ---
 

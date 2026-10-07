@@ -125,32 +125,39 @@ cargo install --path .
 
 ---
 
-## 🤖 AI Harness & Model Context Protocol (MCP) Setup
+## 🤖 AI Harness Setup & Deployment Topologies
 
-HyperKB runs a high-performance MCP stdio server over JSON-RPC 2.0. All 20+ governance tools and ergonomic `/hkb-` commands are available across all major AI coding harnesses:
+HyperKB supports three generic topologies across all AI coding harnesses (**OpenCode, Claude Code, Google Antigravity, Cursor, VS Code, Codex, Aider**):
+- **1. Embedded (Per-Repo)**: `hyperkb.json` in repository root. Omit `--root` (defaults to `.`).
+- **2. Multi-Repo Suite (Parent Directory Hub)**: Place configuration in the parent directory (`workspace-group/opencode.json` or `.mcp.json`) pointing `--root` to the shared `system-kb/`. All child repos automatically inherit it with zero per-repo configuration!
+- **3. Global Machine Hub**: Configure in global user settings with `--root /path/to/global-system-kb`.
+
+*(See [docs/MCP_GUIDE.md](docs/MCP_GUIDE.md) for complete multi-repo diagrams and deep architectural details).*
 
 ### OpenCode
-Add to `opencode.json` (or `~/.config/opencode/opencode.json`):
+Add to `opencode.json` (or parent folder `opencode.json` for multi-repo suites):
 ```json
 {
   "$schema": "https://opencode.ai/config.json",
   "mcp": {
     "hyperkb": {
-      "command": "npx",
-      "args": ["@hypermodo/hyperkb", "mcp"]
+      "type": "local",
+      "command": ["npx", "-y", "@hypermodo/hyperkb", "mcp"]
     }
   }
 }
 ```
+*(For shared multi-repo parent directories or global hubs, append `"--root", "/path/to/system-kb"` to `command`).*
 
 ### Claude Code CLI
 Add to `.mcp.json` or run:
 ```bash
 claude mcp add hyperkb npx -y @hypermodo/hyperkb mcp
+# Or with shared parent hub: claude mcp add hyperkb npx -y @hypermodo/hyperkb mcp --root /path/to/system-kb
 ```
 
 ### Cursor & VS Code
-Add to `.cursor/mcp.json`:
+Add to `.cursor/mcp.json` (or workspace root for multi-repo):
 ```json
 {
   "mcpServers": {
@@ -163,7 +170,7 @@ Add to `.cursor/mcp.json`:
 ```
 
 ### Google Antigravity IDE
-Add to `mcp_config.json`:
+Add to `.agents/mcp_config.json`:
 ```json
 {
   "mcpServers": {
