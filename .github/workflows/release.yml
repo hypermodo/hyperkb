@@ -99,10 +99,14 @@ jobs:
           if [ "${{ matrix.os }}" = "windows-latest" ]; then
             ARCHIVE="hyperkb-${TAG}-${{ matrix.target }}.zip"
             (cd package_staging && 7z a "../${ARCHIVE}" hyperkb.exe)
-            shasum -a 256 "${ARCHIVE}" > "${ARCHIVE}.sha256"
           else
             ARCHIVE="hyperkb-${TAG}-${{ matrix.target }}.tar.gz"
             tar -czf "${ARCHIVE}" -C package_staging hyperkb
+          fi
+
+          if command -v sha256sum >/dev/null 2>&1; then
+            sha256sum "${ARCHIVE}" > "${ARCHIVE}.sha256"
+          else
             shasum -a 256 "${ARCHIVE}" > "${ARCHIVE}.sha256"
           fi
           
