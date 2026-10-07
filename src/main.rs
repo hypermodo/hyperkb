@@ -20,7 +20,7 @@ struct Cli {
     #[command(subcommand)]
     command: Option<Commands>,
 
-    #[arg(short, long, default_value = ".")]
+    #[arg(short, long, default_value = ".", global = true)]
     root: PathBuf,
 }
 

@@ -1,6 +1,6 @@
 [package]
 name = "hyperkb"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 authors = ["HyperModo"]
 description = "Fast, resource-efficient local developer knowledge and proactive risk prevention engine"

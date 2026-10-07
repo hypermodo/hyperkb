@@ -115,7 +115,7 @@ HyperKB is available as a zero-cargo, multi-platform precompiled distribution vi
 Pre-compiled binaries for **macOS (Apple Silicon & Intel)**, **Linux (x64 & ARM64 MUSL)**, and **Windows (x64)** are attached to every [GitHub Release](https://github.com/hypermodo/hyperkb/releases):
 ```bash
 # macOS Apple Silicon
-curl -sL https://github.com/hypermodo/hyperkb/releases/download/v0.1.0/hyperkb-v0.1.0-aarch64-apple-darwin.tar.gz | tar -xz && sudo mv hyperkb /usr/local/bin/
+curl -sL https://github.com/hypermodo/hyperkb/releases/download/v0.1.1/hyperkb-v0.1.1-aarch64-apple-darwin.tar.gz | tar -xz && sudo mv hyperkb /usr/local/bin/
 ```
 
 ### Method 3: Build from Source (Cargo)
