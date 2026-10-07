@@ -93,6 +93,108 @@ $$\text{Score} = \text{clamp}(100 - P_{\text{loops}} - P_{\text{friction}} - P_{
 
 ---
 
+## 📦 Installation & Quick Start
+
+HyperKB is available as a zero-cargo, multi-platform precompiled distribution via **GitHub Packages** (`@hypermodo/hyperkb`), standalone release archives on [GitHub Releases](https://github.com/hypermodo/hyperkb/releases), or via Cargo.
+
+### Method 1: Zero-Cargo via GitHub Packages (Recommended)
+1. **One-Time Setup (`~/.npmrc`)**:
+   ```bash
+   echo "@hypermodo:registry=https://npm.pkg.github.com" >> ~/.npmrc
+   npm config set //npm.pkg.github.com/:_authToken $(gh auth token)
+   ```
+2. **Add to Project or Run with NPX**:
+   ```bash
+   npm install -D @hypermodo/hyperkb   # Save as project dependency
+   npx -y @hypermodo/hyperkb brief      # Instant context briefing (<35 lines)
+   npx -y @hypermodo/hyperkb status     # Active project status & task lock
+   npx -y @hypermodo/hyperkb mcp        # Run as MCP stdio server
+   ```
+
+### Method 2: Standalone Release Binaries
+Pre-compiled binaries for **macOS (Apple Silicon & Intel)**, **Linux (x64 & ARM64 MUSL)**, and **Windows (x64)** are attached to every [GitHub Release](https://github.com/hypermodo/hyperkb/releases):
+```bash
+# macOS Apple Silicon
+curl -sL https://github.com/hypermodo/hyperkb/releases/download/v0.1.0/hyperkb-v0.1.0-aarch64-apple-darwin.tar.gz | tar -xz && sudo mv hyperkb /usr/local/bin/
+```
+
+### Method 3: Build from Source (Cargo)
+```bash
+cargo install --path .
+```
+
+---
+
+## 🤖 AI Harness & Model Context Protocol (MCP) Setup
+
+HyperKB runs a high-performance MCP stdio server over JSON-RPC 2.0. All 20+ governance tools and ergonomic `/hkb-` commands are available across all major AI coding harnesses:
+
+### OpenCode
+Add to `opencode.json` (or `~/.config/opencode/opencode.json`):
+```json
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "hyperkb": {
+      "command": "npx",
+      "args": ["@hypermodo/hyperkb", "mcp"]
+    }
+  }
+}
+```
+
+### Claude Code CLI
+Add to `.mcp.json` or run:
+```bash
+claude mcp add hyperkb npx -y @hypermodo/hyperkb mcp
+```
+
+### Cursor & VS Code
+Add to `.cursor/mcp.json`:
+```json
+{
+  "mcpServers": {
+    "hyperkb": {
+      "command": "npx",
+      "args": ["-y", "@hypermodo/hyperkb", "mcp"]
+    }
+  }
+}
+```
+
+### Google Antigravity IDE
+Add to `mcp_config.json`:
+```json
+{
+  "mcpServers": {
+    "hyperkb": {
+      "command": "npx",
+      "args": ["-y", "@hypermodo/hyperkb", "mcp"]
+    }
+  }
+}
+```
+
+---
+
+## 💬 In-Harness Ergonomic Commands (MCP Prompts)
+
+All connected harnesses gain instant access to HyperKB commands prefixed with `hkb-` (designed in kebab-case so typing requires no Shift key and prevents namespace collisions with harness-native slash commands):
+
+| Command | Aliases | Description |
+| :--- | :--- | :--- |
+| `/hkb-brief` | `/hkb_brief`, `/brief` | Inject thin warm-start context briefing (<35 lines) enforcing Rule of 5 and critical path lock. |
+| `/hkb-status` | `/hkb_status`, `/status` | Render active project health, task lock (`🔒 <task>`), blockers, and exit criteria. |
+| `/hkb-verify` | `/hkb_verify`, `/verify` | Run deterministic exit criteria verification script for active project. |
+| `/hkb-task-next` | `/hkb-next`, `/task_next` | Progress active critical path task directly from conversation. |
+| `/hkb-defer` | `/hkb_defer`, `/defer` | Formally jail tangential side-quests into project `BACKLOG.md` with rationale. |
+| `/hkb-metrics` | `/hkb_metrics`, `/metrics` | Display 4-phase velocity scorecard, friction warnings, and review loop oscillations. |
+| `/hkb-claude` | `/claude` | Query Anthropic Claude peer model with active repo governance context. |
+| `/hkb-chatgpt` | `/chatgpt` | Query OpenAI ChatGPT peer model with active repo governance context. |
+| `/hkb-gemini` | `/gemini` | Query Google Gemini peer model with active repo governance context. |
+
+---
+
 ## 🚀 CLI Commands
 
 HyperKB includes a high-performance CLI for CI/CD pipelines, pre-commit hooks, and terminal workflows:
@@ -104,11 +206,11 @@ hyperkb check-work [--diff]
 # Audit knowledge base and directive hygiene
 hyperkb audit [--kb] [--directives]
 
-# Manage directives
+# Manage directives and invariants
 hyperkb directive list
 hyperkb directive new
 
-# Manage authority grants
+# Manage authority grants for autonomous agents
 hyperkb grant list
 hyperkb grant issue <grantee> --scopes "src/**" --actions ProposeDecision,AcceptDecision
 hyperkb grant revoke <grant-id>
@@ -123,34 +225,13 @@ hyperkb mcp
 
 ---
 
-## 🤖 Model Context Protocol (MCP) Integration
-
-HyperKB includes a native MCP stdio server. Configure it in Claude Desktop, Cursor, or Antigravity:
-
-```json
-{
-  "mcpServers": {
-    "hyperkb": {
-      "command": "hyperkb",
-      "args": ["mcp"],
-      "env": {
-        "HYPERKB_COLLECTION": "default",
-        "HYPERKB_PROFILE": "local"
-      }
-    }
-  }
-}
-```
-
----
-
 ## 🛠 Building & Testing
 
 ```bash
 # Check code hygiene and compilation
 cargo check
 
-# Run complete test suite (81 tests)
+# Run complete test suite (111 tests across macOS, Linux, and Windows)
 cargo test
 
 # Build optimized production binary (< 3.2 MB)
