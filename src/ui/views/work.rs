@@ -29,9 +29,10 @@ impl WorkView {
             return;
         }
 
+        let list_width = app.list_width(area.width);
         let chunks = Layout::default()
             .direction(Direction::Horizontal)
-            .constraints([Constraint::Percentage(38), Constraint::Percentage(62)])
+            .constraints([Constraint::Length(list_width), Constraint::Min(40)])
             .split(area);
 
         Self::render_projects_list(frame, app, chunks[0]);
@@ -258,17 +259,31 @@ impl WorkView {
             overview_text.push(Line::from(""));
         }
 
-        overview_text.push(Line::from(vec![
-            Span::styled(format!("[ Total: {} ]  ", proj.total_documents), Style::default().fg(t.text_primary()).add_modifier(Modifier::BOLD)),
-            Span::styled(format!("[ In-Progress: {} ]  ", proj.tasks_in_progress), Style::default().fg(t.status_accepted()).add_modifier(Modifier::BOLD)),
-            Span::styled(format!("[ Blocked: {} ]  ", proj.tasks_blocked), if proj.tasks_blocked > 0 { Style::default().fg(t.status_superseded()).add_modifier(Modifier::BOLD) } else { Style::default().fg(t.text_muted()) }),
-            Span::styled(format!("[ Pending: {} ]  ", proj.tasks_pending), Style::default().fg(t.status_proposed()).add_modifier(Modifier::BOLD)),
-            Span::styled(format!("[ Done: {} ]  ", proj.tasks_completed), Style::default().fg(t.text_muted())),
-            Span::styled(format!("[ Risks: {} ]  ", proj.open_risks), if proj.open_risks > 0 { Style::default().fg(t.status_superseded()) } else { Style::default().fg(t.text_muted()) }),
-            Span::styled(format!("[ Decs: {} ]", proj.decisions_count), Style::default().fg(t.accent())),
-        ]));
+        if main_chunks[0].width < 110 {
+            overview_text.push(Line::from(vec![
+                Span::styled(format!("[ Total: {} ]  ", proj.total_documents), Style::default().fg(t.text_primary()).add_modifier(Modifier::BOLD)),
+                Span::styled(format!("[ In-Progress: {} ]  ", proj.tasks_in_progress), Style::default().fg(t.status_accepted()).add_modifier(Modifier::BOLD)),
+                Span::styled(format!("[ Blocked: {} ]  ", proj.tasks_blocked), if proj.tasks_blocked > 0 { Style::default().fg(t.status_superseded()).add_modifier(Modifier::BOLD) } else { Style::default().fg(t.text_muted()) }),
+                Span::styled(format!("[ Pending: {} ]", proj.tasks_pending), Style::default().fg(t.status_proposed()).add_modifier(Modifier::BOLD)),
+            ]));
+            overview_text.push(Line::from(vec![
+                Span::styled(format!("[ Done: {} ]  ", proj.tasks_completed), Style::default().fg(t.text_muted())),
+                Span::styled(format!("[ Risks: {} ]  ", proj.open_risks), if proj.open_risks > 0 { Style::default().fg(t.status_superseded()) } else { Style::default().fg(t.text_muted()) }),
+                Span::styled(format!("[ Decs: {} ]", proj.decisions_count), Style::default().fg(t.accent())),
+            ]));
+        } else {
+            overview_text.push(Line::from(vec![
+                Span::styled(format!("[ Total: {} ]  ", proj.total_documents), Style::default().fg(t.text_primary()).add_modifier(Modifier::BOLD)),
+                Span::styled(format!("[ In-Progress: {} ]  ", proj.tasks_in_progress), Style::default().fg(t.status_accepted()).add_modifier(Modifier::BOLD)),
+                Span::styled(format!("[ Blocked: {} ]  ", proj.tasks_blocked), if proj.tasks_blocked > 0 { Style::default().fg(t.status_superseded()).add_modifier(Modifier::BOLD) } else { Style::default().fg(t.text_muted()) }),
+                Span::styled(format!("[ Pending: {} ]  ", proj.tasks_pending), Style::default().fg(t.status_proposed()).add_modifier(Modifier::BOLD)),
+                Span::styled(format!("[ Done: {} ]  ", proj.tasks_completed), Style::default().fg(t.text_muted())),
+                Span::styled(format!("[ Risks: {} ]  ", proj.open_risks), if proj.open_risks > 0 { Style::default().fg(t.status_superseded()) } else { Style::default().fg(t.text_muted()) }),
+                Span::styled(format!("[ Decs: {} ]", proj.decisions_count), Style::default().fg(t.accent())),
+            ]));
+        }
 
-        let overview_p = Paragraph::new(overview_text).block(overview_block);
+        let overview_p = Paragraph::new(overview_text).block(overview_block).wrap(Wrap { trim: true });
         frame.render_widget(overview_p, main_chunks[0]);
 
         // --- 2. Task Funnel & Document Inspector ---
@@ -374,7 +389,7 @@ impl WorkView {
             let preview_width = funnel_chunks[1].width.saturating_sub(4) as usize;
             let formatted_lines = MarkdownFormatter::format_markdown_with_theme(&doc.content, preview_width, &t);
             let total_lines = formatted_lines.len();
-            let visible_lines = funnel_chunks[1].height.saturating_sub(3) as usize;
+            let visible_lines = funnel_chunks[1].height.saturating_sub(4) as usize;
             let max_scroll = total_lines.saturating_sub(visible_lines);
             let scroll_offset = app.cockpit_preview_scroll.min(max_scroll);
 
@@ -420,9 +435,10 @@ impl WorkView {
             return;
         }
 
+        let list_width = app.list_width(area.width);
         let chunks = Layout::default()
             .direction(Direction::Horizontal)
-            .constraints([Constraint::Percentage(45), Constraint::Percentage(55)])
+            .constraints([Constraint::Length(list_width), Constraint::Min(40)])
             .split(area);
 
         Self::render_risk_list(frame, app, chunks[0]);
@@ -542,9 +558,21 @@ impl WorkView {
             .border_style(Style::default().fg(border_color))
             .style(Style::default().bg(t.bg_panel()).fg(t.text_primary()))
             .padding(Padding::new(2, 2, 1, 1))
-            .title(Span::styled(" Risk Context & Evidence ", t.title()));
+            .title(Span::styled(" Risk Context & Evidence [Scroll: PgUp/PgDn/Wheel] ", t.title()));
 
         if let Some(risk) = app.selected_risk() {
+            let rule_len = (area.width.saturating_sub(6) as usize).max(10);
+            let paths_header = if rule_len > 24 {
+                format!("────── Matched File Paths {}", "─".repeat(rule_len.saturating_sub(25)))
+            } else {
+                "─".repeat(rule_len)
+            };
+            let doc_header = if rule_len > 34 {
+                format!("────── Document Rationale / Evidence {}", "─".repeat(rule_len.saturating_sub(35)))
+            } else {
+                "─".repeat(rule_len)
+            };
+
             let mut text = vec![
                 Line::from(vec![
                     Span::styled("Title:          ", Style::default().fg(t.text_muted()).add_modifier(Modifier::BOLD)),
@@ -564,10 +592,7 @@ impl WorkView {
                     ),
                 ]),
                 Line::from(""),
-                Line::from(Span::styled(
-                    "────── Matched File Paths ─────────────────────────────────",
-                    Style::default().fg(t.border()),
-                )),
+                Line::from(Span::styled(paths_header, Style::default().fg(t.border()))),
                 Line::from(""),
             ];
 
@@ -579,17 +604,34 @@ impl WorkView {
                 text.push(Line::from(""));
             }
 
-            text.push(Line::from(Span::styled(
-                "────── Document Rationale / Evidence ─────────────────────",
-                Style::default().fg(t.border()),
-            )));
+            text.push(Line::from(Span::styled(doc_header, Style::default().fg(t.border()))));
             text.push(Line::from(""));
-            for line in risk.document.content.lines().take(20) {
-                text.push(Line::from(Span::styled(line.to_string(), Style::default().fg(t.text_primary()))));
-            }
 
-            let paragraph = Paragraph::new(text).block(block).wrap(Wrap { trim: true });
+            let preview_width = area.width.saturating_sub(6) as usize;
+            let formatted_body = MarkdownFormatter::format_markdown_with_theme(&risk.document.content, preview_width, &t);
+            text.extend(formatted_body);
+
+            let total_lines = text.len();
+            let visible_lines = area.height.saturating_sub(4) as usize;
+            let max_scroll = total_lines.saturating_sub(visible_lines);
+            let scroll = app.risk_detail_scroll.min(max_scroll);
+
+            let paragraph = Paragraph::new(text)
+                .block(block)
+                .scroll((scroll as u16, 0))
+                .wrap(Wrap { trim: false });
             frame.render_widget(paragraph, area);
+
+            if total_lines > visible_lines {
+                let mut scrollbar_state = ScrollbarState::new(max_scroll).position(scroll);
+                let scrollbar = Scrollbar::default()
+                    .orientation(ScrollbarOrientation::VerticalRight)
+                    .begin_symbol(Some("▲"))
+                    .end_symbol(Some("▼"))
+                    .track_symbol(Some("│"))
+                    .thumb_symbol("█");
+                frame.render_stateful_widget(scrollbar, area, &mut scrollbar_state);
+            }
         } else {
             let empty_preview = vec![
                 Line::from(""),
@@ -680,8 +722,9 @@ impl WorkView {
             ),
         ]));
 
+        let rule_len = (area.width.saturating_sub(6) as usize).max(10);
         text.push(Line::from(Span::styled(
-            "─────────────────────────────────────────────────────────────────────────────",
+            "─".repeat(rule_len),
             Style::default().fg(t.border()),
         )));
 
@@ -703,9 +746,14 @@ impl WorkView {
 
         // 3. Actionable Flagged Files Section
         if !entry.file_targets.is_empty() {
+            let flagged_header = if rule_len > 44 {
+                format!("────── Actionable Flagged Files [Press o to Open in Editor] {}", "─".repeat(rule_len.saturating_sub(45)))
+            } else {
+                "── Actionable Flagged Files [o: Open] ──".to_string()
+            };
             text.push(Line::from(""));
             text.push(Line::from(Span::styled(
-                "────── Actionable Flagged Files [Press o to Open in Editor] ─────────────",
+                flagged_header,
                 Style::default().fg(t.accent()),
             )));
 

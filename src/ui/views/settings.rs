@@ -15,7 +15,7 @@ pub struct SettingsView;
 
 impl SettingsView {
     pub fn render(frame: &mut Frame, app: &mut App, area: Rect) {
-        let list_width = (area.width * 40 / 100).clamp(38, 65);
+        let list_width = app.list_width(area.width);
         let chunks = Layout::default()
             .direction(Direction::Horizontal)
             .constraints([Constraint::Length(list_width), Constraint::Min(40)])
@@ -175,16 +175,15 @@ impl SettingsView {
             _ => ("Setting", "", ""),
         };
 
+        let card_w = (area.width.saturating_sub(6) as usize).clamp(36, 70);
         let mut text: Vec<Line> = Vec::new();
 
-        // 1. Setting Title
         text.push(Line::from(vec![
             Span::styled("Setting: ", Style::default().fg(t.text_muted()).add_modifier(Modifier::BOLD)),
             Span::styled(title, Style::default().fg(t.accent()).add_modifier(Modifier::BOLD)),
         ]));
         text.push(Line::from(""));
 
-        // 2. HERO CONTROL CARD (Prominent & Tangible)
         match app.settings_selected_idx {
             0..=3 => {
                 let (val, min, max, unit, step) = match app.settings_selected_idx {
@@ -200,13 +199,16 @@ impl SettingsView {
                     0.0
                 };
 
-                let track_len = 36usize;
+                let track_len = card_w.saturating_sub(24).clamp(8, 36);
                 let fill_len = ((track_len as f64) * ratio).round() as usize;
                 let filled_bar = "═".repeat(fill_len);
                 let empty_bar = "─".repeat(track_len.saturating_sub(fill_len));
                 let pct = (ratio * 100.0).round() as usize;
 
-                text.push(Line::from(Span::styled("┌── Value Control ───────────────────────────────────────────┐", Style::default().fg(t.accent()))));
+                let top_border = format!("┌── Value Control {}┐", "─".repeat(card_w.saturating_sub(19)));
+                let bot_border = format!("└{}┘", "─".repeat(card_w.saturating_sub(2)));
+
+                text.push(Line::from(Span::styled(top_border, Style::default().fg(t.accent()))));
                 text.push(Line::from(vec![
                     Span::styled("│  ", Style::default().fg(t.accent())),
                     Span::styled(" [ - ] ", t.key_badge()),
@@ -222,13 +224,16 @@ impl SettingsView {
                     Span::styled(empty_bar, Style::default().fg(t.border())),
                     Span::styled(format!("]  {:>3}%", pct), Style::default().fg(t.accent())),
                 ]));
+                let min_str = format!("Min: {} {}", min, unit);
+                let max_str = format!("Max: {} {}", max, unit);
+                let spaces_len = card_w.saturating_sub(min_str.len() + max_str.len() + 6);
                 text.push(Line::from(vec![
                     Span::styled("│  ", Style::default().fg(t.accent())),
-                    Span::styled(format!("Min: {} {}", min, unit), Style::default().fg(t.text_muted())),
-                    Span::styled("                             ", Style::default()),
-                    Span::styled(format!("Max: {} {}", max, unit), Style::default().fg(t.text_muted())),
+                    Span::styled(min_str, Style::default().fg(t.text_muted())),
+                    Span::styled(" ".repeat(spaces_len), Style::default()),
+                    Span::styled(max_str, Style::default().fg(t.text_muted())),
                 ]));
-                text.push(Line::from(Span::styled("└────────────────────────────────────────────────────────────┘", Style::default().fg(t.accent()))));
+                text.push(Line::from(Span::styled(bot_border, Style::default().fg(t.accent()))));
                 text.push(Line::from(vec![
                     Span::styled("  Use ", Style::default().fg(t.text_muted())),
                     Span::styled("[-]", t.key_badge()),
@@ -240,7 +245,9 @@ impl SettingsView {
                 ]));
             }
             4 => {
-                text.push(Line::from(Span::styled("┌── Theme Selection ─────────────────────────────────────────┐", Style::default().fg(t.accent()))));
+                let top_border = format!("┌── Theme Selection {}┐", "─".repeat(card_w.saturating_sub(21)));
+                let bot_border = format!("└{}┘", "─".repeat(card_w.saturating_sub(2)));
+                text.push(Line::from(Span::styled(top_border, Style::default().fg(t.accent()))));
                 for mode in ThemeMode::all() {
                     let is_active = *mode == app.theme;
                     let radio = if is_active { "● " } else { "○ " };
@@ -262,7 +269,7 @@ impl SettingsView {
                         active_badge,
                     ]));
                 }
-                text.push(Line::from(Span::styled("└────────────────────────────────────────────────────────────┘", Style::default().fg(t.accent()))));
+                text.push(Line::from(Span::styled(bot_border, Style::default().fg(t.accent()))));
                 text.push(Line::from(vec![
                     Span::styled("  Use ", Style::default().fg(t.text_muted())),
                     Span::styled("[- / +]", t.key_badge()),
@@ -272,7 +279,9 @@ impl SettingsView {
                 ]));
             }
             5 => {
-                text.push(Line::from(Span::styled("┌── Mouse Navigation Switch ─────────────────────────────────┐", Style::default().fg(t.accent()))));
+                let top_border = format!("┌── Mouse Navigation Switch {}┐", "─".repeat(card_w.saturating_sub(29)));
+                let bot_border = format!("└{}┘", "─".repeat(card_w.saturating_sub(2)));
+                text.push(Line::from(Span::styled(top_border, Style::default().fg(t.accent()))));
                 if app.mouse_capture {
                     text.push(Line::from(vec![
                         Span::styled("│  ", Style::default().fg(t.accent())),
@@ -286,7 +295,7 @@ impl SettingsView {
                         Span::styled("    [ ● DISABLED (Native Text Copy) ] ", t.badge_proposed()),
                     ]));
                 }
-                text.push(Line::from(Span::styled("└────────────────────────────────────────────────────────────┘", Style::default().fg(t.accent()))));
+                text.push(Line::from(Span::styled(bot_border, Style::default().fg(t.accent()))));
                 text.push(Line::from(vec![
                     Span::styled("  Press ", Style::default().fg(t.text_muted())),
                     Span::styled("[Space]", t.key_badge()),
@@ -298,7 +307,9 @@ impl SettingsView {
                 ]));
             }
             6 => {
-                text.push(Line::from(Span::styled("┌── Configured Taxonomy Domains ─────────────────────────────┐", Style::default().fg(t.accent()))));
+                let top_border = format!("┌── Configured Taxonomy Domains {}┐", "─".repeat(card_w.saturating_sub(33)));
+                let bot_border = format!("└{}┘", "─".repeat(card_w.saturating_sub(2)));
+                text.push(Line::from(Span::styled(top_border, Style::default().fg(t.accent()))));
                 for cat in &app.manifest.taxonomy.categories {
                     text.push(Line::from(vec![
                         Span::styled("│  • ", Style::default().fg(t.accent())),
@@ -310,14 +321,16 @@ impl SettingsView {
                         Span::styled(cat.description.clone(), Style::default().fg(t.text_muted())),
                     ]));
                 }
-                text.push(Line::from(Span::styled("└────────────────────────────────────────────────────────────┘", Style::default().fg(t.accent()))));
+                text.push(Line::from(Span::styled(bot_border, Style::default().fg(t.accent()))));
                 text.push(Line::from(vec![
                     Span::styled("  Add domain via CLI: ", Style::default().fg(t.text_muted())),
                     Span::styled("hyperkb taxonomy add <id> <name> <desc>", Style::default().fg(t.accent())),
                 ]));
             }
             7 => {
-                text.push(Line::from(Span::styled("┌── AI Harness Registry & Discovery ─────────────────────────┐", Style::default().fg(t.accent()))));
+                let top_border = format!("┌── AI Harness Registry & Discovery {}┐", "─".repeat(card_w.saturating_sub(37)));
+                let bot_border = format!("└{}┘", "─".repeat(card_w.saturating_sub(2)));
+                text.push(Line::from(Span::styled(top_border, Style::default().fg(t.accent()))));
                 if app.harnesses.is_empty() {
                     text.push(Line::from(vec![
                         Span::styled("│  ", Style::default().fg(t.accent())),
@@ -350,7 +363,7 @@ impl SettingsView {
                         }
                     }
                 }
-                text.push(Line::from(Span::styled("└────────────────────────────────────────────────────────────┘", Style::default().fg(t.accent()))));
+                text.push(Line::from(Span::styled(bot_border, Style::default().fg(t.accent()))));
                 text.push(Line::from(vec![
                     Span::styled("  Use ", Style::default().fg(t.text_muted())),
                     Span::styled("[↑ / ↓]", t.key_badge()),

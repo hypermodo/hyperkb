@@ -15,7 +15,7 @@ pub struct ExploreView;
 
 impl ExploreView {
     pub fn render(frame: &mut Frame, app: &mut App, area: Rect) {
-        let list_width = (area.width * 38 / 100).clamp(36, 68);
+        let list_width = app.list_width(area.width);
         let chunks = Layout::default()
             .direction(Direction::Horizontal)
             .constraints([Constraint::Length(list_width), Constraint::Min(40)])
@@ -176,11 +176,14 @@ impl ExploreView {
                 }
             }
 
+            let rule_len = (area.width.saturating_sub(6) as usize).max(10);
+            let content_header = if rule_len > 24 {
+                format!("────── Content Preview {}", "─".repeat(rule_len.saturating_sub(25)))
+            } else {
+                "─".repeat(rule_len)
+            };
             text.push(Line::from(""));
-            text.push(Line::from(Span::styled(
-                "────── Content Preview ──────────────────────────────────────",
-                Style::default().fg(t.border()),
-            )));
+            text.push(Line::from(Span::styled(content_header, Style::default().fg(t.border()))));
             text.push(Line::from(""));
 
             let preview_width = area.width.saturating_sub(6) as usize;
@@ -345,6 +348,13 @@ impl ExploreView {
                         clean == path
                     }).collect();
 
+                    let rule_len = (area.width.saturating_sub(6) as usize).max(10);
+                    let docs_header = if rule_len > 32 {
+                        format!("────── Documents in this Directory {}", "─".repeat(rule_len.saturating_sub(33)))
+                    } else {
+                        "─".repeat(rule_len)
+                    };
+
                     let mut text = vec![
                         Line::from(vec![
                             Span::styled("Directory: ", Style::default().fg(t.text_muted()).add_modifier(Modifier::BOLD)),
@@ -353,7 +363,7 @@ impl ExploreView {
                             Span::styled(format!("({} documents)", doc_count), Style::default().fg(t.accent())),
                         ]),
                         Line::from(""),
-                        Line::from(Span::styled("────── Documents in this Directory ──────────────────────────", Style::default().fg(t.border()))),
+                        Line::from(Span::styled(docs_header, Style::default().fg(t.border()))),
                         Line::from(""),
                     ];
 
@@ -377,7 +387,8 @@ impl ExploreView {
                         text.push(Line::from(""));
                     }
 
-                    text.push(Line::from(Span::styled("────────────────────────────────────────────────────────────", Style::default().fg(t.border()))));
+                    let rule_len = (area.width.saturating_sub(6) as usize).max(10);
+                    text.push(Line::from(Span::styled("─".repeat(rule_len), Style::default().fg(t.border()))));
                     text.push(Line::from(vec![
                         Span::styled("Press ", Style::default().fg(t.text_primary())),
                         Span::styled("[Enter]", t.key_badge()),
@@ -389,8 +400,27 @@ impl ExploreView {
                         Span::styled(" to switch back to List view.", Style::default().fg(t.text_primary())),
                     ]));
 
-                    let p = Paragraph::new(text).block(block).wrap(Wrap { trim: false });
+                    let total_lines = text.len();
+                    let visible_lines = area.height.saturating_sub(4) as usize;
+                    let max_scroll = total_lines.saturating_sub(visible_lines);
+                    let scroll = app.preview_scroll_offset.min(max_scroll);
+
+                    let p = Paragraph::new(text)
+                        .block(block)
+                        .scroll((scroll as u16, 0))
+                        .wrap(Wrap { trim: false });
                     frame.render_widget(p, area);
+
+                    if total_lines > visible_lines {
+                        let mut scrollbar_state = ScrollbarState::new(max_scroll).position(scroll);
+                        let scrollbar = Scrollbar::default()
+                            .orientation(ScrollbarOrientation::VerticalRight)
+                            .begin_symbol(Some("▲"))
+                            .end_symbol(Some("▼"))
+                            .track_symbol(Some("│"))
+                            .thumb_symbol("█");
+                        frame.render_stateful_widget(scrollbar, area, &mut scrollbar_state);
+                    }
                 }
             }
         } else {

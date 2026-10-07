@@ -14,7 +14,7 @@ pub struct SessionsView;
 
 impl SessionsView {
     pub fn render(frame: &mut Frame, app: &mut App, area: Rect) {
-        let list_width = (area.width * 38 / 100).clamp(36, 68);
+        let list_width = app.list_width(area.width);
         let chunks = Layout::default()
             .direction(Direction::Horizontal)
             .constraints([Constraint::Length(list_width), Constraint::Min(40)])
@@ -275,6 +275,7 @@ impl SessionsView {
             } else {
                 "100%".to_string()
             };
+            let rule_len = (area.width.saturating_sub(6) as usize).max(10);
 
             if app.show_scoring_methodology {
                 // Render Session Quality Score Heuristic Breakdown
@@ -320,7 +321,7 @@ impl SessionsView {
                     Line::from(Span::styled(format!("  • Re-iteration:       -{:.0}% (first_pass_clean: {})", first_pass_penalty * 100.0, sess.first_pass_clean), Style::default().fg(t.text_primary()))),
                     Line::from(Span::styled(format!("  • Tool Thrashing:     -{:.0}% (ratio: {:.1} calls/edit)", thrash_penalty * 100.0, edit_ratio), Style::default().fg(t.text_primary()))),
                     Line::from(Span::styled(format!("  • Hazard Mitigation:  +{:.0}% ({} risks prevented)", hazard_bonus * 100.0, sess.risks_prevented), Style::default().fg(t.text_primary()))),
-                    Line::from(Span::styled("  ──────────────────────────────────────────", Style::default().fg(t.border()))),
+                    Line::from(Span::styled("─".repeat(rule_len), Style::default().fg(t.border()))),
                     Line::from(vec![
                         Span::styled(format!("  • Net Quality Score:   {}% ", score_pct), Style::default().fg(score_color).add_modifier(Modifier::BOLD)),
                         Span::styled("(Heuristic Score)", Style::default().fg(t.status_accepted())),
@@ -403,7 +404,11 @@ impl SessionsView {
                 ]),
                 Line::from(""),
                 Line::from(Span::styled(
-                    "────── Validated Coding Effectiveness & Behavioral Score ────",
+                    if rule_len > 44 {
+                        format!("────── Validated Coding Effectiveness & Behavioral Score {}", "─".repeat(rule_len.saturating_sub(45)))
+                    } else {
+                        "─".repeat(rule_len)
+                    },
                     Style::default().fg(t.border()),
                 )),
                 Line::from(""),
@@ -474,7 +479,11 @@ impl SessionsView {
                 ]),
                 Line::from(""),
                 Line::from(Span::styled(
-                    "────── Run Telemetry & Quality Metrics ─────────────────────",
+                    if rule_len > 32 {
+                        format!("────── Run Telemetry & Quality Metrics {}", "─".repeat(rule_len.saturating_sub(33)))
+                    } else {
+                        "─".repeat(rule_len)
+                    },
                     Style::default().fg(t.border()),
                 )),
                 Line::from(""),
@@ -512,7 +521,11 @@ impl SessionsView {
 
             text.push(Line::from(""));
             text.push(Line::from(Span::styled(
-                "────── Chronological Action Ledger & Tool Execution Timeline ─────",
+                if rule_len > 48 {
+                    format!("────── Chronological Action Ledger & Tool Execution Timeline {}", "─".repeat(rule_len.saturating_sub(49)))
+                } else {
+                    "─".repeat(rule_len)
+                },
                 Style::default().fg(t.border()),
             )));
             text.push(Line::from(""));
@@ -771,6 +784,7 @@ impl SessionsView {
                     .collect()
             };
 
+            let rule_len = (area.width.saturating_sub(6) as usize).max(10);
             let text = vec![
                 Line::from(vec![
                     Span::styled("Grantee Agent: ", Style::default().fg(t.text_muted())),
@@ -814,7 +828,7 @@ impl SessionsView {
                 )),
                 Line::from(""),
                 Line::from(Span::styled(
-                    "────────────────────────────────────────────────────────────────────────────",
+                    "─".repeat(rule_len),
                     Style::default().fg(t.border()),
                 )),
                 Line::from(""),
@@ -848,7 +862,7 @@ impl SessionsView {
                 ]),
                 Line::from(""),
                 Line::from(Span::styled(
-                    "────────────────────────────────────────────────────────────────────────────",
+                    "─".repeat(rule_len),
                     Style::default().fg(t.border()),
                 )),
                 Line::from(""),

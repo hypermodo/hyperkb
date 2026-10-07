@@ -250,9 +250,9 @@ pub struct App {
     pub session_preview_scroll: usize,
     pub selected_session_events: Vec<crate::domain::SessionEventRecord>,
 
-    // Work / Risk state
     pub active_risks: Vec<RiskMatch>,
     pub selected_risk_idx: usize,
+    pub risk_detail_scroll: usize,
 
     // Reader & Preview scroll state
     pub current_document: Option<Document>,
@@ -404,6 +404,7 @@ impl App {
             selected_session_events: Vec::new(),
             active_risks: Vec::new(),
             selected_risk_idx: 0,
+            risk_detail_scroll: 0,
             current_document: None,
             reader_scroll_offset: 0,
             preview_scroll_offset: 0,
@@ -984,6 +985,7 @@ impl App {
         self.active_tab = tab;
         self.focused_pane = FocusedPane::List;
         self.reader_scroll_offset = 0;
+        self.risk_detail_scroll = 0;
     }
 
     pub fn toggle_pane(&mut self) {
@@ -1029,8 +1031,12 @@ impl App {
                         }
                     }
                     WorkTabMode::Risks => {
-                        if !self.active_risks.is_empty() && self.selected_risk_idx < self.active_risks.len() - 1 {
+                        if self.focused_pane == FocusedPane::Detail {
+                            let max = self.risk_detail_max_scroll();
+                            self.risk_detail_scroll = (self.risk_detail_scroll + 2).min(max);
+                        } else if !self.active_risks.is_empty() && self.selected_risk_idx < self.active_risks.len() - 1 {
                             self.selected_risk_idx += 1;
+                            self.risk_detail_scroll = 0;
                         }
                     }
                 }
@@ -1136,8 +1142,11 @@ impl App {
                         }
                     }
                     WorkTabMode::Risks => {
-                        if !self.active_risks.is_empty() && self.selected_risk_idx > 0 {
+                        if self.focused_pane == FocusedPane::Detail {
+                            self.risk_detail_scroll = self.risk_detail_scroll.saturating_sub(2);
+                        } else if !self.active_risks.is_empty() && self.selected_risk_idx > 0 {
                             self.selected_risk_idx -= 1;
+                            self.risk_detail_scroll = 0;
                         }
                     }
                 }
@@ -1230,8 +1239,12 @@ impl App {
                         self.diagnostic_scroll += 10;
                     }
                     WorkTabMode::Risks => {
-                        if !self.active_risks.is_empty() {
+                        if self.focused_pane == FocusedPane::Detail {
+                            let max = self.risk_detail_max_scroll();
+                            self.risk_detail_scroll = (self.risk_detail_scroll + 10).min(max);
+                        } else if !self.active_risks.is_empty() {
                             self.selected_risk_idx = (self.selected_risk_idx + 8).min(self.active_risks.len() - 1);
+                            self.risk_detail_scroll = 0;
                         }
                     }
                 }
@@ -1314,8 +1327,11 @@ impl App {
                         self.diagnostic_scroll = self.diagnostic_scroll.saturating_sub(10);
                     }
                     WorkTabMode::Risks => {
-                        if !self.active_risks.is_empty() {
+                        if self.focused_pane == FocusedPane::Detail {
+                            self.risk_detail_scroll = self.risk_detail_scroll.saturating_sub(10);
+                        } else if !self.active_risks.is_empty() {
                             self.selected_risk_idx = self.selected_risk_idx.saturating_sub(8);
+                            self.risk_detail_scroll = 0;
                         }
                     }
                 }
@@ -1392,7 +1408,12 @@ impl App {
                         self.diagnostic_scroll = 0;
                     }
                     WorkTabMode::Risks => {
-                        self.selected_risk_idx = 0;
+                        if self.focused_pane == FocusedPane::Detail {
+                            self.risk_detail_scroll = 0;
+                        } else {
+                            self.selected_risk_idx = 0;
+                            self.risk_detail_scroll = 0;
+                        }
                     }
                 }
             }
@@ -1469,8 +1490,11 @@ impl App {
                         self.diagnostic_scroll = usize::MAX / 2;
                     }
                     WorkTabMode::Risks => {
-                        if !self.active_risks.is_empty() {
+                        if self.focused_pane == FocusedPane::Detail {
+                            self.risk_detail_scroll = self.risk_detail_max_scroll();
+                        } else if !self.active_risks.is_empty() {
                             self.selected_risk_idx = self.active_risks.len() - 1;
+                            self.risk_detail_scroll = 0;
                         }
                     }
                 }
@@ -1739,7 +1763,66 @@ impl App {
         }
     }
 
+    pub fn list_width(&self, area_width: u16) -> u16 {
+        match self.active_tab {
+            ActiveTab::Work => {
+                match self.work_tab_mode {
+                    WorkTabMode::Projects => (area_width * 38 / 100).clamp(34, 70),
+                    WorkTabMode::Risks => (area_width * 45 / 100).clamp(38, 75),
+                    WorkTabMode::Console => 0,
+                }
+            }
+            ActiveTab::Explore | ActiveTab::Directives | ActiveTab::Sessions => {
+                (area_width * 38 / 100).clamp(36, 68)
+            }
+            ActiveTab::Settings => {
+                (area_width * 40 / 100).clamp(38, 65)
+            }
+            ActiveTab::Reader => 0,
+        }
+    }
+
+    pub fn risk_detail_max_scroll(&self) -> usize {
+        if let Some(risk) = self.selected_risk() {
+            let (term_width, term_height) = crossterm::terminal::size().unwrap_or((80, 24));
+            let preview_width = (term_width as usize * 55 / 100).saturating_sub(6).max(20);
+            let formatted_rationale = crate::ui::markdown::MarkdownFormatter::format_markdown_with_theme(&risk.document.content, preview_width, &self.theme);
+            let base_lines = 8 + (risk.matched_paths.len() * 2) + 2;
+            let total_lines = base_lines + formatted_rationale.len();
+            let visible_lines = (term_height as usize).saturating_sub(8).max(4);
+            total_lines.saturating_sub(visible_lines)
+        } else {
+            0
+        }
+    }
+
     pub fn preview_max_scroll(&self) -> usize {
+        if self.explore_tree_mode {
+            if let Some(item) = self.selected_tree_item() {
+                match item {
+                    crate::ui::app::ExploreTreeItem::Doc { path, .. } => {
+                        if let Some(doc) = self.documents.iter().find(|d| d.path == *path) {
+                            let (term_width, term_height) = crossterm::terminal::size().unwrap_or((80, 24));
+                            let preview_width = (term_width as usize * 62 / 100).saturating_sub(6).max(20);
+                            let formatted = crate::ui::markdown::MarkdownFormatter::format_markdown_with_theme(&doc.content, preview_width, &self.theme);
+                            let visible_lines = (term_height as usize).saturating_sub(8).max(4);
+                            return formatted.len().saturating_sub(visible_lines);
+                        }
+                    }
+                    crate::ui::app::ExploreTreeItem::Folder { path, .. } => {
+                        let matching_count = self.documents.iter().filter(|d| {
+                            let f = std::path::Path::new(&d.path).parent().map(|p| p.to_string_lossy().to_string()).unwrap_or_default();
+                            let clean = if f.is_empty() { "general" } else { &f };
+                            clean == path
+                        }).count();
+                        let total_lines = 4 + matching_count * 3 + 4;
+                        let (_, term_height) = crossterm::terminal::size().unwrap_or((80, 24));
+                        let visible_lines = (term_height as usize).saturating_sub(8).max(4);
+                        return total_lines.saturating_sub(visible_lines);
+                    }
+                }
+            }
+        }
         if let Some(doc) = self.documents.get(self.selected_doc_idx) {
             let (term_width, term_height) = crossterm::terminal::size().unwrap_or((80, 24));
             let preview_width = (term_width as usize * 62 / 100).saturating_sub(6).max(20);
@@ -1783,12 +1866,19 @@ impl App {
     pub fn scroll_preview_down(&mut self, delta: usize) {
         match self.active_tab {
             ActiveTab::Work => {
-                if self.work_tab_mode == WorkTabMode::Console {
-                    let max = self.diagnostic_max_scroll();
-                    self.diagnostic_scroll = (self.diagnostic_scroll + delta).min(max);
-                } else {
-                    let max = self.cockpit_preview_max_scroll();
-                    self.cockpit_preview_scroll = (self.cockpit_preview_scroll + delta).min(max);
+                match self.work_tab_mode {
+                    WorkTabMode::Console => {
+                        let max = self.diagnostic_max_scroll();
+                        self.diagnostic_scroll = (self.diagnostic_scroll + delta).min(max);
+                    }
+                    WorkTabMode::Projects => {
+                        let max = self.cockpit_preview_max_scroll();
+                        self.cockpit_preview_scroll = (self.cockpit_preview_scroll + delta).min(max);
+                    }
+                    WorkTabMode::Risks => {
+                        let max = self.risk_detail_max_scroll();
+                        self.risk_detail_scroll = (self.risk_detail_scroll + delta).min(max);
+                    }
                 }
             }
             ActiveTab::Explore => {
@@ -1813,10 +1903,16 @@ impl App {
     pub fn scroll_preview_up(&mut self, delta: usize) {
         match self.active_tab {
             ActiveTab::Work => {
-                if self.work_tab_mode == WorkTabMode::Console {
-                    self.diagnostic_scroll = self.diagnostic_scroll.saturating_sub(delta);
-                } else {
-                    self.cockpit_preview_scroll = self.cockpit_preview_scroll.saturating_sub(delta);
+                match self.work_tab_mode {
+                    WorkTabMode::Console => {
+                        self.diagnostic_scroll = self.diagnostic_scroll.saturating_sub(delta);
+                    }
+                    WorkTabMode::Projects => {
+                        self.cockpit_preview_scroll = self.cockpit_preview_scroll.saturating_sub(delta);
+                    }
+                    WorkTabMode::Risks => {
+                        self.risk_detail_scroll = self.risk_detail_scroll.saturating_sub(delta);
+                    }
                 }
             }
             ActiveTab::Explore => {
@@ -2012,7 +2108,19 @@ impl App {
                 }
             }
             ActiveTab::Work => {
-                if let Some(risk) = self.selected_risk() {
+                if self.work_tab_mode == WorkTabMode::Projects {
+                    if let Some(doc) = self.project_tasks.get(self.selected_project_task_idx) {
+                        (doc.content.clone(), format!("Task/Document '{}'", doc.title))
+                    } else if let Some(proj) = self.projects.get(self.selected_project_idx) {
+                        let text = format!(
+                            "Project: {}\nHealth: {}\nTasks In Progress: {}\nTasks Blocked: {}\nTasks Pending: {}\nTasks Completed: {}",
+                            proj.name, proj.health, proj.tasks_in_progress, proj.tasks_blocked, proj.tasks_pending, proj.tasks_completed
+                        );
+                        (text, format!("Project Summary '{}'", proj.name))
+                    } else {
+                        return Err("No project or task selected to copy".to_string());
+                    }
+                } else if let Some(risk) = self.selected_risk() {
                     let text = format!(
                         "Title: {}\nSeverity: {}\nPaths: {:?}\n\n{}",
                         risk.document.title,
@@ -4525,4 +4633,63 @@ mod tests {
         app.prev_project_task();
         assert_eq!(app.selected_project_task_idx, 0);
     }
+
+    #[test]
+    fn test_list_width_responsiveness_and_risk_detail_scrolling() {
+        let mut app = App::new("test", "test");
+        app.active_tab = ActiveTab::Work;
+        app.work_tab_mode = WorkTabMode::Projects;
+
+        assert_eq!(app.list_width(100), 38);
+        assert_eq!(app.list_width(200), 70);
+        assert_eq!(app.list_width(70), 34);
+
+        app.work_tab_mode = WorkTabMode::Risks;
+        assert_eq!(app.list_width(100), 45);
+        assert_eq!(app.list_width(200), 75);
+        assert_eq!(app.list_width(70), 38);
+
+        app.active_tab = ActiveTab::Explore;
+        assert_eq!(app.list_width(120), 45);
+        assert_eq!(app.list_width(200), 68);
+        assert_eq!(app.list_width(70), 36);
+
+        app.active_tab = ActiveTab::Reader;
+        assert_eq!(app.list_width(120), 0);
+
+        app.active_tab = ActiveTab::Work;
+        app.work_tab_mode = WorkTabMode::Risks;
+        app.focused_pane = FocusedPane::Detail;
+        app.active_risks = vec![RiskMatch {
+            document: make_test_doc("risk-1", "risks/risk-1.md", "Risk 1"),
+            matched_paths: vec!["src/main.rs".to_string()],
+            reason: "test".to_string(),
+            applicability: crate::domain::RiskApplicability::Applies,
+            acknowledged: false,
+            acknowledgement: None,
+            external_issue_freshness: None,
+            suppressed: false,
+            suppression_reason: None,
+        }];
+        app.active_risks[0].document.content = "line 1\nline 2\nline 3\nline 4\nline 5\nline 6\nline 7\nline 8\nline 9\nline 10\nline 11\nline 12\nline 13\nline 14\nline 15\nline 16\nline 17\nline 18\nline 19\nline 20".to_string();
+
+        assert_eq!(app.risk_detail_scroll, 0);
+        app.scroll_preview_down(5);
+        assert_eq!(app.risk_detail_scroll, 5);
+
+        app.scroll_preview_up(2);
+        assert_eq!(app.risk_detail_scroll, 3);
+
+        app.scroll_to_bottom();
+        assert_eq!(app.risk_detail_scroll, app.risk_detail_max_scroll());
+
+        app.scroll_to_top();
+        assert_eq!(app.risk_detail_scroll, 0);
+
+        app.scroll_preview_down(4);
+        assert_eq!(app.risk_detail_scroll, 4);
+        app.switch_tab(ActiveTab::Directives);
+        assert_eq!(app.risk_detail_scroll, 0);
+    }
 }
+

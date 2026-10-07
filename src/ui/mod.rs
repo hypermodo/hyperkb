@@ -169,19 +169,16 @@ fn run_loop(
 
                 let divider_x = match app.active_tab {
                     ActiveTab::Work => {
-                        if app.work_tab_mode == crate::ui::app::WorkTabMode::Projects && !app.projects.is_empty() {
-                            Some((area.width * 38 / 100).clamp(32, 60))
-                        } else if app.work_tab_mode == crate::ui::app::WorkTabMode::Risks && !app.active_risks.is_empty() {
-                            Some(area.width * 45 / 100)
+                        if (app.work_tab_mode == crate::ui::app::WorkTabMode::Projects && !app.projects.is_empty())
+                            || (app.work_tab_mode == crate::ui::app::WorkTabMode::Risks && !app.active_risks.is_empty())
+                        {
+                            Some(area.x + app.list_width(area.width))
                         } else {
                             None
                         }
                     }
-                    ActiveTab::Explore | ActiveTab::Directives | ActiveTab::Sessions => {
-                        Some((area.width * 38 / 100).clamp(36, 68))
-                    }
-                    ActiveTab::Settings => {
-                        Some((area.width * 40 / 100).clamp(38, 65))
+                    ActiveTab::Explore | ActiveTab::Directives | ActiveTab::Sessions | ActiveTab::Settings => {
+                        Some(area.x + app.list_width(area.width))
                     }
                     _ => None,
                 };
@@ -1117,18 +1114,7 @@ fn run_loop(
                                         app.repl_active = false;
                                     }
 
-                                    let list_width = match app.active_tab {
-                                        ActiveTab::Work => {
-                                            if app.work_tab_mode == crate::ui::app::WorkTabMode::Projects {
-                                                area.width * 38 / 100
-                                            } else {
-                                                area.width * 45 / 100
-                                            }
-                                        }
-                                        ActiveTab::Reader => 0,
-                                        ActiveTab::Settings => (area.width * 40 / 100).clamp(38, 65),
-                                        _ => (area.width * 38 / 100).clamp(36, 68),
-                                    };
+                                    let list_width = app.list_width(area.width);
 
                                     let rel_row = row.saturating_sub(3);
                                     if col < list_width {
@@ -1232,18 +1218,7 @@ fn run_loop(
                             if app.show_help {
                                 app.help_scroll += 2;
                             } else {
-                                let list_width = match app.active_tab {
-                                    ActiveTab::Work => {
-                                        if app.work_tab_mode == crate::ui::app::WorkTabMode::Projects {
-                                            area.width * 38 / 100
-                                        } else {
-                                            area.width * 45 / 100
-                                        }
-                                    }
-                                    ActiveTab::Reader => 0,
-                                    ActiveTab::Settings => (area.width * 40 / 100).clamp(38, 65),
-                                    _ => (area.width * 38 / 100).clamp(36, 68),
-                                };
+                                let list_width = app.list_width(area.width);
                                 if col < list_width {
                                     app.next();
                                 } else {
@@ -1264,18 +1239,7 @@ fn run_loop(
                             if app.show_help {
                                 app.help_scroll = app.help_scroll.saturating_sub(2);
                             } else {
-                                let list_width = match app.active_tab {
-                                    ActiveTab::Work => {
-                                        if app.work_tab_mode == crate::ui::app::WorkTabMode::Projects {
-                                            area.width * 38 / 100
-                                        } else {
-                                            area.width * 45 / 100
-                                        }
-                                    }
-                                    ActiveTab::Reader => 0,
-                                    ActiveTab::Settings => (area.width * 40 / 100).clamp(38, 65),
-                                    _ => (area.width * 38 / 100).clamp(36, 68),
-                                };
+                                let list_width = app.list_width(area.width);
                                 if col < list_width {
                                     app.prev();
                                 } else {

@@ -14,7 +14,7 @@ pub struct DirectivesView;
 
 impl DirectivesView {
     pub fn render(frame: &mut Frame, app: &mut App, area: Rect) {
-        let list_width = (area.width * 38 / 100).clamp(36, 68);
+        let list_width = app.list_width(area.width);
         let chunks = Layout::default()
             .direction(Direction::Horizontal)
             .constraints([Constraint::Length(list_width), Constraint::Min(40)])
@@ -215,9 +215,10 @@ impl DirectivesView {
                 )));
             }
 
+            let rule_len = (area.width.saturating_sub(6) as usize).max(10);
             text.push(Line::from(""));
             text.push(Line::from(Span::styled(
-                "────────────────────────────────────────────────────────────",
+                "─".repeat(rule_len),
                 Style::default().fg(t.border()),
             )));
             text.push(Line::from(""));

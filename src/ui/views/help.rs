@@ -31,6 +31,8 @@ impl HelpModal {
     pub fn render(frame: &mut Frame, app: &App, area: Rect) {
         let t = &app.theme;
         let modal_area = Self::modal_area(area);
+        let rule_len = (modal_area.width.saturating_sub(8) as usize).max(20);
+        let div_rule = "─".repeat(rule_len);
 
         let text = vec![
             Line::from(vec![
@@ -42,7 +44,7 @@ impl HelpModal {
             ]),
             Line::from(""),
             Line::from(Span::styled(
-                "────────────────────────────────────────────────────────────────────────────────────────",
+                div_rule.clone(),
                 Style::default().fg(t.border()),
             )),
             Line::from(""),
@@ -70,7 +72,7 @@ impl HelpModal {
             ]),
             Line::from(""),
             Line::from(Span::styled(
-                "────────────────────────────────────────────────────────────────────────────────────────",
+                div_rule.clone(),
                 Style::default().fg(t.border()),
             )),
             Line::from(""),
@@ -118,7 +120,7 @@ impl HelpModal {
             ]),
             Line::from(""),
             Line::from(Span::styled(
-                "────────────────────────────────────────────────────────────────────────────────────────",
+                div_rule.clone(),
                 Style::default().fg(t.border()),
             )),
             Line::from(""),
@@ -194,7 +196,7 @@ impl HelpModal {
             ]),
             Line::from(""),
             Line::from(Span::styled(
-                "────────────────────────────────────────────────────────────────────────────────────────",
+                div_rule.clone(),
                 Style::default().fg(t.border()),
             )),
             Line::from(""),
@@ -229,8 +231,15 @@ impl HelpModal {
         ];
 
         let total_lines = text.len();
-        let current_line = (app.help_scroll + 1).min(total_lines);
-        let scroll_pct = ((current_line as f64 / total_lines as f64) * 100.0) as usize;
+        let visible_lines = modal_area.height.saturating_sub(4) as usize;
+        let max_scroll = total_lines.saturating_sub(visible_lines);
+        let scroll = app.help_scroll.min(max_scroll);
+        let current_line = (scroll + 1).min(total_lines);
+        let scroll_pct = if max_scroll == 0 {
+            100
+        } else {
+            ((scroll as f64 / max_scroll as f64) * 100.0).round() as usize
+        };
 
         frame.render_widget(Clear, modal_area);
 
@@ -252,10 +261,6 @@ impl HelpModal {
                 Span::styled("• Close: ", Style::default().fg(t.text_muted())),
                 Span::styled("[Esc] or [?] ", t.key_badge()),
             ]));
-
-        let visible_lines = modal_area.height.saturating_sub(2) as usize;
-        let max_scroll = total_lines.saturating_sub(visible_lines);
-        let scroll = app.help_scroll.min(max_scroll);
 
         let p = Paragraph::new(text)
             .block(block)
