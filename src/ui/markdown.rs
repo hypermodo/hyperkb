@@ -113,8 +113,8 @@ impl MarkdownFormatter {
     }
 
     pub fn format_markdown_with_theme(content: &str, max_width: usize, theme: &crate::ui::theme::ThemeMode) -> Vec<Line<'static>> {
-        let max_width = max_width.max(40);
-        let content_width = max_width.saturating_sub(2).max(25);
+        let max_width = max_width.max(20);
+        let content_width = max_width.saturating_sub(2).max(18);
         let parsed = MetadataParser::parse(content).unwrap_or_else(|_| crate::core::ParsedMetadata {
             meta: None,
             body: content,
@@ -128,9 +128,8 @@ impl MarkdownFormatter {
         while let Some(line) = raw_lines.next() {
             let trimmed = line.trim();
 
-            // 1. Fenced Code Blocks (```rust, ```bash, etc.)
             if trimmed.starts_with("```") {
-                let code_width = max_width.min(84).max(45);
+                let code_width = max_width.min(84).max(20);
                 if in_code_block {
                     in_code_block = false;
                     let bar_len = code_width.saturating_sub(6);
@@ -144,12 +143,13 @@ impl MarkdownFormatter {
                 } else {
                     in_code_block = true;
                     let code_lang = trimmed.trim_start_matches("```").trim();
-                    let lang_tag = if code_lang.is_empty() {
+                    let lang_tag = if code_lang.is_empty() || 14 + code_lang.chars().count() + 4 > code_width {
                         "".to_string()
                     } else {
                         format!(" [ {} ]", code_lang)
                     };
-                    let bar_len = code_width.saturating_sub(13 + lang_tag.chars().count());
+                    let overhead = 14 + lang_tag.chars().count();
+                    let bar_len = code_width.saturating_sub(overhead);
                     lines.push(Line::from(vec![
                         Span::raw("    "),
                         Span::styled(
@@ -162,7 +162,7 @@ impl MarkdownFormatter {
             }
 
             if in_code_block {
-                let code_width = max_width.min(84).max(45);
+                let code_width = max_width.min(84).max(20);
                 let inner_code = code_width.saturating_sub(8);
                 let code_len = line.chars().count();
                 let display_code = if code_len > inner_code {
@@ -451,12 +451,11 @@ impl MarkdownFormatter {
 
         let headers = &parsed_rows[0];
         let data_rows = &parsed_rows[1..];
-        let card_width = max_width.max(30);
+        let card_width = max_width.max(20);
         let border_style = Style::default().fg(theme.border());
 
         out_lines.push(Line::from(""));
 
-        // Render each row as a distinct structured card
         for (row_idx, row) in data_rows.iter().enumerate() {
             let primary_title = if !row.is_empty() {
                 Self::clean_inline_markers(&row[0])
@@ -464,19 +463,24 @@ impl MarkdownFormatter {
                 format!("Record {}", row_idx + 1)
             };
 
-            // Card Header: ┌─ [ Title ] ──────────────────┐
-            let title_len = primary_title.chars().count();
-            let header_overhead = 7 + title_len + 3 + 1; // "  ┌─ [ " (7) + " ] " (3) + "┐" (1)
+            let max_title_len = card_width.saturating_sub(14).max(4);
+            let display_title = if primary_title.chars().count() > max_title_len {
+                let mut truncated: String = primary_title.chars().take(max_title_len.saturating_sub(1)).collect();
+                truncated.push('…');
+                truncated
+            } else {
+                primary_title
+            };
+
+            let title_len = display_title.chars().count();
+            let header_overhead = 7 + title_len + 3 + 1;
             let remaining_dashes = card_width.saturating_sub(header_overhead);
             out_lines.push(Line::from(vec![
                 Span::styled("  ┌─ [ ", border_style),
-                Span::styled(primary_title, Style::default().fg(theme.accent()).add_modifier(Modifier::BOLD)),
+                Span::styled(display_title, Style::default().fg(theme.accent()).add_modifier(Modifier::BOLD)),
                 Span::styled(format!(" ] {:─<dashes$}┐", "", dashes = remaining_dashes), border_style),
             ]));
 
-            // Card Fields (skip first column which became title)
-            // Available space inside borders:
-            // Left: "  │ " (4 chars), Right: " │" (2 chars) -> inner width = card_width - 6
             let inner_width = card_width.saturating_sub(6);
 
             for (col_idx, cell) in row.iter().enumerate().skip(1) {
@@ -484,7 +488,6 @@ impl MarkdownFormatter {
                     let field_name = Self::normalize_header_name(&headers[col_idx]);
                     let field_value = Self::clean_inline_markers(cell);
 
-                    // Semantic badge formatting for status
                     let is_verified = field_value.to_lowercase().contains("verified");
                     let value_style = if is_verified {
                         theme.badge_accepted()
@@ -496,24 +499,40 @@ impl MarkdownFormatter {
                         Style::default().fg(Color::Rgb(220, 225, 235))
                     };
 
-                    let label_str = format!("{:<14}: ", field_name);
+                    let label_str = if inner_width > 24 {
+                        format!("{:<14}: ", field_name)
+                    } else {
+                        format!("{}: ", field_name)
+                    };
                     let label_len = label_str.chars().count();
-                    let val_width = inner_width.saturating_sub(label_len);
+                    let val_width = inner_width.saturating_sub(label_len).max(1);
 
-                    // Word wrap the value text to val_width
-                    let words: Vec<&str> = field_value.split_whitespace().collect();
+                    let mut words_queue = std::collections::VecDeque::new();
+                    for w in field_value.split_whitespace() {
+                        let mut rem = w;
+                        while rem.chars().count() > val_width && val_width > 0 {
+                            let split_pos = rem.char_indices().nth(val_width).map(|(i, _)| i).unwrap_or(rem.len());
+                            let (chunk, rest) = rem.split_at(split_pos);
+                            words_queue.push_back(chunk.to_string());
+                            rem = rest;
+                        }
+                        if !rem.is_empty() {
+                            words_queue.push_back(rem.to_string());
+                        }
+                    }
+
                     let mut value_lines: Vec<String> = Vec::new();
                     let mut cur_line = String::new();
 
-                    for w in words {
+                    for w in words_queue {
                         if cur_line.is_empty() {
-                            cur_line.push_str(w);
+                            cur_line.push_str(&w);
                         } else if cur_line.chars().count() + 1 + w.chars().count() <= val_width {
                             cur_line.push(' ');
-                            cur_line.push_str(w);
+                            cur_line.push_str(&w);
                         } else {
                             value_lines.push(cur_line);
-                            cur_line = w.to_string();
+                            cur_line = w;
                         }
                     }
                     if !cur_line.is_empty() {
@@ -552,7 +571,6 @@ impl MarkdownFormatter {
                 }
             }
 
-            // Card Bottom: └────────────────────────────┘
             let bottom_dashes = card_width.saturating_sub(4);
             out_lines.push(Line::from(Span::styled(
                 format!("  └{:─<bottom_dashes$}┘", "", bottom_dashes = bottom_dashes),
@@ -960,4 +978,42 @@ This is **important** and uses `rustc`.
         });
         assert!(has_delegation, "Expected delegation provenance in metadata card: {:?}", card_lines);
     }
+
+    #[test]
+    fn test_format_table_cards_narrow_width_never_overflows() {
+        let raw = r#"| Item | ADO | Solves | Done |
+|---|---|---|---|
+| Brainstorm + spec (this doc) | n/a | design locked (D1-D6) | ✓ |
+| Migrate dataflow-smoke -> shared/runbooks/dataflow-smoke/ (+ verify-counts BSD-grep fix) | n/a | clears runbook ramp-up task #1 | ✓ |"#;
+        for width in [30, 36, 40, 50, 70, 80] {
+            let lines = MarkdownFormatter::format_markdown(raw, width);
+            let card_lines: Vec<&Line> = lines.iter().filter(|l| !l.spans.is_empty() && !l.spans[0].content.trim().is_empty()).collect();
+            assert!(!card_lines.is_empty());
+            for line in &card_lines {
+                let total_chars: usize = line.spans.iter().map(|s| s.content.chars().count()).sum();
+                assert!(total_chars <= width, "Line width {} exceeded card_width {} for line {:?}", total_chars, width, line);
+                let first_span = &line.spans[0].content;
+                let last_span = &line.spans.last().unwrap().content;
+                assert!(first_span.starts_with("  ┌") || first_span.starts_with("  │") || first_span.starts_with("  └"),
+                    "Line escaped left card border: {:?}", line);
+                assert!(last_span.ends_with('┐') || last_span.ends_with('│') || last_span.ends_with('┘'),
+                    "Line escaped right card border: {:?}", line);
+            }
+        }
+    }
+
+    #[test]
+    fn test_format_code_block_narrow_width_never_overflows() {
+        let raw = "```rust\nfn main() {\n    let very_long_variable_path = std::path::PathBuf::from(\"/some/deep/nested/path/to/check\");\n}\n```";
+        for width in [25, 30, 35, 45, 60, 80] {
+            let lines = MarkdownFormatter::format_markdown(raw, width);
+            let code_lines: Vec<&Line> = lines.iter().filter(|l| !l.spans.is_empty() && !l.spans[0].content.trim().is_empty()).collect();
+            assert!(!code_lines.is_empty());
+            for line in &code_lines {
+                let total_chars: usize = line.spans.iter().map(|s| s.content.chars().count()).sum();
+                assert!(total_chars <= width, "Code line width {} exceeded container width {} for line {:?}", total_chars, width, line);
+            }
+        }
+    }
 }
+

@@ -386,7 +386,7 @@ impl WorkView {
             .title(Span::styled(" Document Snippet / Summary [Scroll: PgUp/PgDn/Wheel] ", t.title()));
 
         if let Some(doc) = app.project_tasks.get(app.selected_project_task_idx) {
-            let preview_width = funnel_chunks[1].width.saturating_sub(4) as usize;
+            let preview_width = funnel_chunks[1].width.saturating_sub(6) as usize;
             let formatted_lines = MarkdownFormatter::format_markdown_with_theme(&doc.content, preview_width, &t);
             let total_lines = formatted_lines.len();
             let visible_lines = funnel_chunks[1].height.saturating_sub(4) as usize;

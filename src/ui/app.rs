@@ -1754,9 +1754,10 @@ impl App {
     pub fn cockpit_preview_max_scroll(&self) -> usize {
         if let Some(doc) = self.project_tasks.get(self.selected_project_task_idx) {
             let (term_width, term_height) = crossterm::terminal::size().unwrap_or((80, 24));
-            let preview_width = (term_width as usize * 62 / 100).saturating_sub(6).max(20);
+            let list_w = self.list_width(term_width);
+            let preview_width = (term_width.saturating_sub(list_w) as usize).saturating_sub(6).max(20);
             let formatted = crate::ui::markdown::MarkdownFormatter::format_markdown_with_theme(&doc.content, preview_width, &self.theme);
-            let visible_lines = (term_height as usize / 2).saturating_sub(4).max(4);
+            let visible_lines = ((term_height as usize * 45 / 100)).saturating_sub(4).max(4);
             formatted.len().saturating_sub(visible_lines)
         } else {
             0
