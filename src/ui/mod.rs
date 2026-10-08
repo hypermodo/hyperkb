@@ -603,7 +603,19 @@ fn run_loop(
                             KeyCode::Char('h') | KeyCode::Char('H') if app.active_tab == ActiveTab::Sessions => {
                                 app.cycle_session_harness_filter();
                             }
-                            KeyCode::Char('h') if app.active_tab != ActiveTab::Settings => app.toggle_help(),
+                            KeyCode::Char('h') if app.active_tab != ActiveTab::Settings && app.active_tab != ActiveTab::Work && app.active_tab != ActiveTab::Sessions => app.toggle_help(),
+                            KeyCode::Char('H') if app.active_tab == ActiveTab::Work => {
+                                app.toggle_work_handoffs(db);
+                            }
+                            KeyCode::Char('e') | KeyCode::Char('E') | KeyCode::Char('+') if app.active_tab == ActiveTab::Explore => {
+                                app.expand_all_folders();
+                            }
+                            KeyCode::Char('x') | KeyCode::Char('X') | KeyCode::Char('-') if app.active_tab == ActiveTab::Explore => {
+                                app.collapse_all_folders();
+                            }
+                            KeyCode::Char('d') | KeyCode::Char('D') if app.active_tab == ActiveTab::Explore && !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                                app.toggle_explore_durable();
+                            }
                             KeyCode::Char('y') | KeyCode::Char('Y') => {
                                 match app.copy_active_content_to_clipboard() {
                                     Ok(desc) => {
@@ -1154,7 +1166,7 @@ fn run_loop(
                                                 }
                                                 ActiveTab::Explore => {
                                                     if app.explore_tree_mode {
-                                                        let tree_idx = app.tree_list_state.offset() + ((rel_row - 2) / 2) as usize;
+                                                        let tree_idx = app.tree_list_state.offset() + rel_row.saturating_sub(1) as usize;
                                                         let tree = app.build_explore_tree();
                                                         if tree_idx < tree.len() {
                                                             if app.selected_tree_idx == tree_idx {
@@ -1167,9 +1179,10 @@ fn run_loop(
                                                             }
                                                         }
                                                     } else {
-                                                        let item_idx = app.documents_list_state.offset() + ((rel_row - 2) / 3) as usize;
-                                                        if item_idx < app.documents.len() {
-                                                            app.selected_doc_idx = item_idx;
+                                                        let visible = app.visible_explore_docs();
+                                                        let item_idx = app.documents_list_state.offset() + (rel_row.saturating_sub(1) / 2) as usize;
+                                                        if item_idx < visible.len() {
+                                                            app.selected_doc_idx = visible[item_idx].0;
                                                         }
                                                     }
                                                 }

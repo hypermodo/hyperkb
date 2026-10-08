@@ -237,6 +237,7 @@ pub struct App {
     pub explore_tree_mode: bool,
     pub collapsed_folders: std::collections::HashSet<String>,
     pub selected_tree_idx: usize,
+    pub explore_durable_only: bool,
 
     // Directives state
     pub directives: Vec<Directive>,
@@ -303,6 +304,8 @@ pub struct App {
     pub project_task_scroll_offset: usize,
     pub cockpit_preview_scroll: usize,
     pub last_project_status_refresh: std::time::Instant,
+    pub work_show_handoffs: bool,
+    pub project_handoffs_count: usize,
 
     // Stateful List Viewports (Ratatui ListState)
     pub projects_list_state: ListState,
@@ -394,6 +397,7 @@ impl App {
             explore_tree_mode: false,
             collapsed_folders: std::collections::HashSet::new(),
             selected_tree_idx: 0,
+            explore_durable_only: false,
             directives: Vec::new(),
             selected_directive_idx: 0,
             directive_category: "all".into(),
@@ -444,6 +448,8 @@ impl App {
             project_task_scroll_offset: 0,
             cockpit_preview_scroll: 0,
             last_project_status_refresh: std::time::Instant::now().checked_sub(std::time::Duration::from_secs(60)).unwrap_or_else(std::time::Instant::now),
+            work_show_handoffs: false,
+            project_handoffs_count: 0,
             projects_list_state: {
                 let mut s = ListState::default();
                 s.select(Some(0));
@@ -548,17 +554,82 @@ impl App {
         }
     }
 
+    pub fn is_durable_doc(doc: &Document) -> bool {
+        let p = doc.path.to_lowercase();
+        if p.contains("/handoffs/") || p.contains("handoff") || p.contains("/_archive/") || p.contains("/_draft/") || p.contains("/inbox/") {
+            return false;
+        }
+        match doc.kind {
+            crate::domain::DocumentKind::Spec | crate::domain::DocumentKind::Decision | crate::domain::DocumentKind::Audit | crate::domain::DocumentKind::Plan => true,
+            _ => p.ends_with("status.md") || p.ends_with("readme.md") || p.ends_with("architecture.md") || p.ends_with("charter.md"),
+        }
+    }
+
+    pub fn visible_explore_docs(&self) -> Vec<(usize, &Document)> {
+        self.documents
+            .iter()
+            .enumerate()
+            .filter(|(_, d)| !self.explore_durable_only || Self::is_durable_doc(d))
+            .collect()
+    }
+
+    pub fn toggle_explore_durable(&mut self) {
+        self.explore_durable_only = !self.explore_durable_only;
+        let visible = self.visible_explore_docs();
+        if !visible.is_empty() {
+            if !visible.iter().any(|(idx, _)| *idx == self.selected_doc_idx) {
+                self.selected_doc_idx = visible[0].0;
+            }
+        } else {
+            self.selected_doc_idx = 0;
+        }
+        self.selected_tree_idx = 0;
+        self.preview_scroll_offset = 0;
+        self.sync_list_states();
+    }
+
+    pub fn expand_all_folders(&mut self) {
+        self.collapsed_folders.clear();
+        self.selected_tree_idx = 0;
+        self.sync_list_states();
+    }
+
+    pub fn collapse_all_folders(&mut self) {
+        for doc in &self.documents {
+            let folder = Path::new(&doc.path)
+                .parent()
+                .map(|p| p.to_string_lossy().to_string())
+                .unwrap_or_default();
+            let clean = if folder.is_empty() {
+                "general".to_string()
+            } else {
+                folder
+            };
+            self.collapsed_folders.insert(clean);
+        }
+        self.selected_tree_idx = 0;
+        self.sync_list_states();
+    }
+
     pub fn toggle_tree_collapse(&mut self, folder: &str) {
         if self.collapsed_folders.contains(folder) {
             self.collapsed_folders.remove(folder);
         } else {
             self.collapsed_folders.insert(folder.to_string());
         }
+        self.sync_list_states();
+    }
+
+    pub fn toggle_work_handoffs(&mut self, db: &Database) {
+        self.work_show_handoffs = !self.work_show_handoffs;
+        self.selected_project_task_idx = 0;
+        self.refresh_project_tasks(db);
     }
 
     pub fn build_explore_tree(&self) -> Vec<ExploreTreeItem> {
         let mut folders: Vec<String> = Vec::new();
-        for doc in &self.documents {
+        let visible_docs = self.visible_explore_docs();
+        for (_, doc) in &visible_docs {
             let folder = Path::new(&doc.path)
                 .parent()
                 .map(|p| p.to_string_lossy().to_string())
@@ -576,10 +647,8 @@ impl App {
 
         let mut items = Vec::new();
         for folder in folders {
-            let matching_indices: Vec<usize> = self
-                .documents
+            let matching_indices: Vec<usize> = visible_docs
                 .iter()
-                .enumerate()
                 .filter(|(_, doc)| {
                     let f = Path::new(&doc.path)
                         .parent()
@@ -588,7 +657,7 @@ impl App {
                     let cf = if f.is_empty() { "general" } else { &f };
                     cf == folder
                 })
-                .map(|(idx, _)| idx)
+                .map(|(idx, _)| *idx)
                 .collect();
 
             let doc_count = matching_indices.len();
@@ -637,10 +706,15 @@ impl App {
             self.project_tasks_list_state.select(Some(self.selected_project_task_idx.min(self.project_tasks.len() - 1)));
         }
 
-        if self.documents.is_empty() {
+        let visible_docs = self.visible_explore_docs();
+        if visible_docs.is_empty() {
             self.documents_list_state.select(None);
         } else {
-            self.documents_list_state.select(Some(self.selected_doc_idx.min(self.documents.len() - 1)));
+            let vis_idx = visible_docs
+                .iter()
+                .position(|(idx, _)| *idx == self.selected_doc_idx)
+                .unwrap_or(0);
+            self.documents_list_state.select(Some(vis_idx));
         }
 
         let tree_len = if self.explore_tree_mode {
@@ -785,7 +859,49 @@ impl App {
                 ..Default::default()
             };
             if let Ok((docs, _)) = Queries::browse(db.conn(), &[self.collection_id.clone()], &opts) {
-                self.project_tasks = docs;
+                let mut control_docs: Vec<Document> = Vec::new();
+                let mut handoffs: Vec<Document> = Vec::new();
+                for doc in docs {
+                    let p = doc.path.to_lowercase();
+                    if p.contains("/handoffs/") || p.contains("handoff") {
+                        handoffs.push(doc);
+                    } else {
+                        control_docs.push(doc);
+                    }
+                }
+                self.project_handoffs_count = handoffs.len();
+                if !self.work_show_handoffs {
+                    control_docs.sort_by(|a, b| {
+                        let a_status = a.path.to_lowercase().ends_with("status.md");
+                        let b_status = b.path.to_lowercase().ends_with("status.md");
+                        match (a_status, b_status) {
+                            (true, false) => std::cmp::Ordering::Less,
+                            (false, true) => std::cmp::Ordering::Greater,
+                            _ => a.path.cmp(&b.path),
+                        }
+                    });
+                    self.project_tasks = if control_docs.is_empty() { handoffs } else { control_docs };
+                } else {
+                    let mut all_docs = Vec::with_capacity(control_docs.len() + handoffs.len());
+                    all_docs.extend(control_docs);
+                    all_docs.extend(handoffs);
+                    all_docs.sort_by(|a, b| {
+                        let a_status = a.path.to_lowercase().ends_with("status.md");
+                        let b_status = b.path.to_lowercase().ends_with("status.md");
+                        let a_handoff = a.path.to_lowercase().contains("/handoffs/") || a.path.to_lowercase().contains("handoff");
+                        let b_handoff = b.path.to_lowercase().contains("/handoffs/") || b.path.to_lowercase().contains("handoff");
+                        match (a_status, b_status) {
+                            (true, false) => std::cmp::Ordering::Less,
+                            (false, true) => std::cmp::Ordering::Greater,
+                            _ => match (a_handoff, b_handoff) {
+                                (false, true) => std::cmp::Ordering::Less,
+                                (true, false) => std::cmp::Ordering::Greater,
+                                _ => a.path.cmp(&b.path),
+                            },
+                        }
+                    });
+                    self.project_tasks = all_docs;
+                }
                 if self.selected_project_task_idx >= self.project_tasks.len() && !self.project_tasks.is_empty() {
                     self.selected_project_task_idx = self.project_tasks.len() - 1;
                 }
@@ -793,6 +909,7 @@ impl App {
         } else {
             self.project_tasks.clear();
             self.selected_project_task_idx = 0;
+            self.project_handoffs_count = 0;
         }
         self.sync_list_states();
     }
@@ -1054,9 +1171,15 @@ impl App {
                         }
                         self.preview_scroll_offset = 0;
                     }
-                } else if !self.documents.is_empty() && self.selected_doc_idx < self.documents.len() - 1 {
-                    self.selected_doc_idx += 1;
-                    self.preview_scroll_offset = 0;
+                } else {
+                    let visible = self.visible_explore_docs();
+                    if !visible.is_empty() {
+                        let cur_pos = visible.iter().position(|(idx, _)| *idx == self.selected_doc_idx).unwrap_or(0);
+                        if cur_pos < visible.len() - 1 {
+                            self.selected_doc_idx = visible[cur_pos + 1].0;
+                            self.preview_scroll_offset = 0;
+                        }
+                    }
                 }
             }
             ActiveTab::Directives => {
@@ -1163,9 +1286,15 @@ impl App {
                         }
                         self.preview_scroll_offset = 0;
                     }
-                } else if !self.documents.is_empty() && self.selected_doc_idx > 0 {
-                    self.selected_doc_idx -= 1;
-                    self.preview_scroll_offset = 0;
+                } else {
+                    let visible = self.visible_explore_docs();
+                    if !visible.is_empty() {
+                        let cur_pos = visible.iter().position(|(idx, _)| *idx == self.selected_doc_idx).unwrap_or(0);
+                        if cur_pos > 0 {
+                            self.selected_doc_idx = visible[cur_pos - 1].0;
+                            self.preview_scroll_offset = 0;
+                        }
+                    }
                 }
             }
             ActiveTab::Directives => {
@@ -1261,9 +1390,14 @@ impl App {
                         }
                         self.preview_scroll_offset = 0;
                     }
-                } else if !self.documents.is_empty() {
-                    self.selected_doc_idx = (self.selected_doc_idx + 8).min(self.documents.len() - 1);
-                    self.preview_scroll_offset = 0;
+                } else {
+                    let visible = self.visible_explore_docs();
+                    if !visible.is_empty() {
+                        let cur_pos = visible.iter().position(|(idx, _)| *idx == self.selected_doc_idx).unwrap_or(0);
+                        let next_pos = (cur_pos + 8).min(visible.len() - 1);
+                        self.selected_doc_idx = visible[next_pos].0;
+                        self.preview_scroll_offset = 0;
+                    }
                 }
             }
             ActiveTab::Directives => {
@@ -1346,9 +1480,14 @@ impl App {
                         self.selected_doc_idx = *doc_idx;
                     }
                     self.preview_scroll_offset = 0;
-                } else if !self.documents.is_empty() {
-                    self.selected_doc_idx = self.selected_doc_idx.saturating_sub(8);
-                    self.preview_scroll_offset = 0;
+                } else {
+                    let visible = self.visible_explore_docs();
+                    if !visible.is_empty() {
+                        let cur_pos = visible.iter().position(|(idx, _)| *idx == self.selected_doc_idx).unwrap_or(0);
+                        let prev_pos = cur_pos.saturating_sub(8);
+                        self.selected_doc_idx = visible[prev_pos].0;
+                        self.preview_scroll_offset = 0;
+                    }
                 }
             }
             ActiveTab::Directives => {
@@ -1428,7 +1567,12 @@ impl App {
                     }
                     self.preview_scroll_offset = 0;
                 } else {
-                    self.selected_doc_idx = 0;
+                    let visible = self.visible_explore_docs();
+                    if let Some((idx, _)) = visible.first() {
+                        self.selected_doc_idx = *idx;
+                    } else {
+                        self.selected_doc_idx = 0;
+                    }
                     self.preview_scroll_offset = 0;
                 }
             }
@@ -1511,8 +1655,13 @@ impl App {
                         }
                         self.preview_scroll_offset = 0;
                     }
-                } else if !self.documents.is_empty() {
-                    self.selected_doc_idx = self.documents.len() - 1;
+                } else {
+                    let visible = self.visible_explore_docs();
+                    if let Some((idx, _)) = visible.last() {
+                        self.selected_doc_idx = *idx;
+                    } else {
+                        self.selected_doc_idx = 0;
+                    }
                     self.preview_scroll_offset = 0;
                 }
             }
@@ -4691,6 +4840,54 @@ mod tests {
         assert_eq!(app.risk_detail_scroll, 4);
         app.switch_tab(ActiveTab::Directives);
         assert_eq!(app.risk_detail_scroll, 0);
+    }
+
+    #[test]
+    fn test_explore_bulk_expand_collapse_and_durable_toggle() {
+        let mut app = App::new("test", "test");
+        let d1 = make_test_doc("doc-1", "docs/specs/spec-1.md", "Spec 1");
+        let mut d2 = make_test_doc("doc-2", "projects/p1/handoffs/h-1.md", "Handoff 1");
+        d2.kind = DocumentKind::Document;
+        let d3 = make_test_doc("doc-3", "decisions/adr-1.md", "Decision 1");
+        let mut d4 = make_test_doc("doc-4", "notes/scratch.md", "Scratch Note");
+        d4.kind = DocumentKind::Document;
+
+        app.documents = vec![d1, d2, d3, d4];
+        app.explore_durable_only = false;
+        assert_eq!(app.visible_explore_docs().len(), 4);
+
+        app.toggle_explore_durable();
+        assert!(app.explore_durable_only);
+        let visible = app.visible_explore_docs();
+        assert_eq!(visible.len(), 2);
+        assert_eq!(visible[0].1.path, "docs/specs/spec-1.md");
+        assert_eq!(visible[1].1.path, "decisions/adr-1.md");
+
+        app.collapse_all_folders();
+        assert!(app.collapsed_folders.contains("docs/specs"));
+        assert!(app.collapsed_folders.contains("decisions"));
+
+        app.expand_all_folders();
+        assert!(app.collapsed_folders.is_empty());
+
+        app.toggle_explore_durable();
+        assert!(!app.explore_durable_only);
+        assert_eq!(app.visible_explore_docs().len(), 4);
+    }
+
+    #[test]
+    fn test_work_handoffs_toggle_state() {
+        let mut app = App::new("test", "test");
+        assert!(!app.work_show_handoffs);
+        assert_eq!(app.project_handoffs_count, 0);
+
+        app.work_show_handoffs = true;
+        assert!(app.work_show_handoffs);
+
+        let t1 = make_test_doc("doc-1", "projects/p1/status.md", "Status");
+        let t2 = make_test_doc("doc-2", "projects/p1/handoffs/h1.md", "Handoff");
+        assert!(App::is_durable_doc(&t1));
+        assert!(!App::is_durable_doc(&t2));
     }
 }
 

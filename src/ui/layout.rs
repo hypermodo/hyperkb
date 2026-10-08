@@ -79,6 +79,7 @@ impl Header {
                 } else {
                     Span::styled("Logs [c]", Style::default().fg(t.text_muted()))
                 };
+                let scope_label = if app.work_show_handoffs { "ALL [H]" } else { "CONTROL [H]" };
                 vec![
                     Span::styled("  View:  ", Style::default().fg(t.text_muted())),
                     proj_span,
@@ -86,7 +87,9 @@ impl Header {
                     risks_span,
                     Span::styled("   •   ", Style::default().fg(t.border())),
                     logs_span,
-                    Span::styled(format!("   |   {} projects", app.projects.len()), Style::default().fg(t.status_proposed()).add_modifier(Modifier::BOLD)),
+                    Span::styled("   |   Scope: ", Style::default().fg(t.text_muted())),
+                    Span::styled(scope_label, Style::default().fg(t.status_proposed()).add_modifier(Modifier::BOLD)),
+                    Span::styled(format!("   |   {} projects", app.projects.len()), Style::default().fg(t.text_muted())),
                 ]
             }
             ActiveTab::Explore => {
@@ -100,13 +103,16 @@ impl Header {
                 } else {
                     Span::styled("Tree [t]", Style::default().fg(t.text_muted()))
                 };
+                let scope_label = if app.explore_durable_only { "DURABLE [d]" } else { "ALL [d]" };
                 vec![
                     Span::styled("  View:  ", Style::default().fg(t.text_muted())),
                     list_span,
                     Span::styled("   •   ", Style::default().fg(t.border())),
                     tree_span,
+                    Span::styled("   |   Scope: ", Style::default().fg(t.text_muted())),
+                    Span::styled(scope_label, Style::default().fg(t.status_proposed()).add_modifier(Modifier::BOLD)),
                     Span::styled("   |   Category [c]: ", Style::default().fg(t.text_muted())),
-                    Span::styled(app.selected_category.to_uppercase(), Style::default().fg(t.status_proposed()).add_modifier(Modifier::BOLD)),
+                    Span::styled(app.selected_category.to_uppercase(), Style::default().fg(t.accent()).add_modifier(Modifier::BOLD)),
                 ]
             }
             ActiveTab::Directives => {
@@ -205,6 +211,9 @@ impl Header {
                     } else if col >= 39 && col <= 54 {
                         app.work_tab_mode = crate::ui::app::WorkTabMode::Console;
                         return true;
+                    } else if col >= 55 && col <= 80 {
+                        app.toggle_work_handoffs(db);
+                        return true;
                     }
                 }
                 ActiveTab::Directives => {
@@ -223,15 +232,19 @@ impl Header {
                     }
                 }
                 ActiveTab::Explore => {
-                    if col >= 8 && col <= 23 {
+                    if col >= 8 && col <= 36 {
                         app.toggle_explore_tree_mode();
                         return true;
                     }
-                    if col >= 37 && col <= 41 {
+                    if col >= 37 && col <= 61 {
+                        app.toggle_explore_durable();
+                        return true;
+                    }
+                    if col >= 62 && col <= 85 {
                         app.next_category(db);
                         return true;
                     }
-                    let mut cur_x = 43u16;
+                    let mut cur_x = 86u16;
                     for cat in App::CATEGORIES {
                         let pill_w = (cat.len() + 4) as u16;
                         if col >= cur_x && col < cur_x + pill_w {
@@ -293,14 +306,16 @@ impl Footer {
                         crate::ui::app::WorkTabMode::Projects => vec![
                             Span::styled("[/] ", Style::default().fg(t.status_proposed()).add_modifier(Modifier::BOLD)),
                             Span::raw("Command Dock   "),
-                            Span::styled("[↑↓/jk] ", Style::default().fg(t.accent())),
-                            Span::raw("Navigate   "),
-                            Span::styled("[Tab] ", Style::default().fg(t.accent())),
-                            Span::raw("Pane   "),
+                            Span::styled("[t] ", Style::default().fg(t.status_accepted()).add_modifier(Modifier::BOLD)),
+                            Span::raw("Transition   "),
+                            Span::styled("[H] ", Style::default().fg(t.status_proposed()).add_modifier(Modifier::BOLD)),
+                            Span::raw("Handoffs   "),
                             Span::styled("[Enter] ", Style::default().fg(t.accent())),
                             Span::raw("Read   "),
                             Span::styled("[o] ", Style::default().fg(t.accent())),
                             Span::raw("IDE   "),
+                            Span::styled("[Tab] ", Style::default().fg(t.accent())),
+                            Span::raw("Pane   "),
                             Span::styled("[w] ", Style::default().fg(t.accent())),
                             Span::raw("Risks   "),
                             Span::styled("[c] ", Style::default().fg(t.accent())),
@@ -339,22 +354,45 @@ impl Footer {
                             Span::raw("Help"),
                         ],
                     },
-                    ActiveTab::Explore => vec![
-                        Span::styled("[/] ", Style::default().fg(t.status_proposed()).add_modifier(Modifier::BOLD)),
-                        Span::raw("Command Dock   "),
-                        Span::styled("[↑↓/jk] ", Style::default().fg(t.accent())),
-                        Span::raw("Select   "),
-                        Span::styled("[t] ", Style::default().fg(t.accent())),
-                        Span::raw("Tree/List   "),
-                        Span::styled("[c] ", Style::default().fg(t.accent())),
-                        Span::raw("Category   "),
-                        Span::styled("[Enter] ", Style::default().fg(t.accent())),
-                        Span::raw("Read   "),
-                        Span::styled("[o] ", Style::default().fg(t.accent())),
-                        Span::raw("Open in IDE   "),
-                        Span::styled("[?] ", Style::default().fg(t.accent())),
-                        Span::raw("Help"),
-                    ],
+                    ActiveTab::Explore => if app.explore_tree_mode {
+                        vec![
+                            Span::styled("[/] ", Style::default().fg(t.status_proposed()).add_modifier(Modifier::BOLD)),
+                            Span::raw("Command Dock   "),
+                            Span::styled("[E] ", Style::default().fg(t.status_accepted()).add_modifier(Modifier::BOLD)),
+                            Span::raw("Expand All   "),
+                            Span::styled("[X] ", Style::default().fg(t.status_risk()).add_modifier(Modifier::BOLD)),
+                            Span::raw("Collapse All   "),
+                            Span::styled("[Space] ", Style::default().fg(t.accent())),
+                            Span::raw("Toggle   "),
+                            Span::styled("[d] ", Style::default().fg(t.status_proposed()).add_modifier(Modifier::BOLD)),
+                            Span::raw("Durable   "),
+                            Span::styled("[t] ", Style::default().fg(t.accent())),
+                            Span::raw("List   "),
+                            Span::styled("[Enter] ", Style::default().fg(t.accent())),
+                            Span::raw("Read   "),
+                            Span::styled("[o] ", Style::default().fg(t.accent())),
+                            Span::raw("IDE   "),
+                            Span::styled("[?] ", Style::default().fg(t.accent())),
+                            Span::raw("Help"),
+                        ]
+                    } else {
+                        vec![
+                            Span::styled("[/] ", Style::default().fg(t.status_proposed()).add_modifier(Modifier::BOLD)),
+                            Span::raw("Command Dock   "),
+                            Span::styled("[t] ", Style::default().fg(t.accent())),
+                            Span::raw("Tree   "),
+                            Span::styled("[d] ", Style::default().fg(t.status_proposed()).add_modifier(Modifier::BOLD)),
+                            Span::raw("Durable   "),
+                            Span::styled("[c] ", Style::default().fg(t.accent())),
+                            Span::raw("Category   "),
+                            Span::styled("[Enter] ", Style::default().fg(t.accent())),
+                            Span::raw("Read   "),
+                            Span::styled("[o] ", Style::default().fg(t.accent())),
+                            Span::raw("IDE   "),
+                            Span::styled("[?] ", Style::default().fg(t.accent())),
+                            Span::raw("Help"),
+                        ]
+                    },
                     ActiveTab::Directives => vec![
                         Span::styled("[/] ", Style::default().fg(t.status_proposed()).add_modifier(Modifier::BOLD)),
                         Span::raw("Command Dock   "),

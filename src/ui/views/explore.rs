@@ -38,12 +38,14 @@ impl ExploreView {
             t.border()
         };
 
-        let items: Vec<ListItem> = app
-            .documents
+        let visible_docs = app.visible_explore_docs();
+        let visible_count = visible_docs.len();
+        let selected_doc_idx = app.selected_doc_idx;
+        let selected_list_pos = app.documents_list_state.selected().unwrap_or(0);
+        let items: Vec<ListItem<'static>> = visible_docs
             .iter()
-            .enumerate()
-            .map(|(idx, doc)| {
-                let is_selected = idx == app.selected_doc_idx;
+            .map(|(doc_idx, doc)| {
+                let is_selected = *doc_idx == selected_doc_idx;
 
                 let (badge_text, badge_style) = match doc.status {
                     DocumentStatus::Accepted => ("● ACCEPTED ", t.badge_accepted()),
@@ -77,7 +79,7 @@ impl ExploreView {
                 };
 
                 let title = Span::styled(
-                    &doc.title,
+                    doc.title.clone(),
                     if is_selected {
                         t.selected_row()
                     } else {
@@ -93,12 +95,12 @@ impl ExploreView {
                 ListItem::new(vec![
                     Line::from(vec![Span::styled(badge_text, badge_style), title]),
                     Line::from(path_span),
-                    Line::from(""),
                 ])
             })
             .collect();
+        drop(visible_docs);
 
-        let title_text = format!(" Knowledge Documents ({}) ", app.documents.len());
+        let title_text = format!(" Knowledge Documents ({}) [t: Tree View] ", visible_count);
         let list = List::new(items)
             .block(
                 Block::default()
@@ -112,10 +114,9 @@ impl ExploreView {
 
         frame.render_stateful_widget(list, area, &mut app.documents_list_state);
 
-        let total_docs = app.documents.len();
-        if total_docs > 0 {
-            let mut scrollbar_state = ScrollbarState::new(total_docs.saturating_sub(1))
-                .position(app.selected_doc_idx);
+        if visible_count > 0 {
+            let mut scrollbar_state = ScrollbarState::new(visible_count.saturating_sub(1))
+                .position(selected_list_pos);
             let scrollbar = Scrollbar::default()
                 .orientation(ScrollbarOrientation::VerticalRight)
                 .begin_symbol(Some("▲"))
@@ -238,7 +239,7 @@ impl ExploreView {
             .map(|(idx, item)| {
                 let is_selected = idx == app.selected_tree_idx;
                 match item {
-                    ExploreTreeItem::Folder { name, doc_count, is_collapsed, .. } => {
+                    ExploreTreeItem::Folder { path, name, doc_count, is_collapsed } => {
                         let (icon, icon_style) = if *is_collapsed {
                             ("[+] ", Style::default().fg(t.status_proposed()).add_modifier(Modifier::BOLD))
                         } else {
@@ -250,19 +251,21 @@ impl ExploreView {
                             Style::default().fg(t.text_primary()).add_modifier(Modifier::BOLD)
                         };
 
-                        let clean_name = name.trim_end_matches('/');
+                        let depth = path.split('/').filter(|s| !s.is_empty()).count().saturating_sub(1);
+                        let indent = "  ".repeat(depth);
+                        let leaf_name = path.split('/').filter(|s| !s.is_empty()).last().unwrap_or(name);
+
                         ListItem::new(vec![
                             Line::from(vec![
-                                Span::raw(" "),
+                                Span::raw(format!(" {}", indent)),
                                 Span::styled(icon, icon_style),
-                                Span::styled(format!("{}/", clean_name), folder_style),
+                                Span::styled(format!("{}/", leaf_name), folder_style),
                                 Span::raw("  "),
                                 Span::styled(format!("({} docs)", doc_count), Style::default().fg(t.text_muted())),
                             ]),
-                            Line::from(""),
                         ])
                     }
-                    ExploreTreeItem::Doc { title, status, .. } => {
+                    ExploreTreeItem::Doc { title, status, path, .. } => {
                         let doc_style = if is_selected {
                             t.selected_row()
                         } else {
@@ -279,20 +282,23 @@ impl ExploreView {
                             _ => ("· ", Style::default().fg(t.status_unknown())),
                         };
 
+                        let depth = path.split('/').filter(|s| !s.is_empty()).count().saturating_sub(1);
+                        let indent = "  ".repeat(depth + 1);
+
                         ListItem::new(vec![
                             Line::from(vec![
-                                Span::raw("      "),
+                                Span::raw(format!(" {}", indent)),
                                 Span::styled(badge_text, badge_style),
                                 Span::styled(title, doc_style),
                             ]),
-                            Line::from(""),
                         ])
                     }
                 }
             })
             .collect();
 
-        let title_text = format!(" Tree View [t: List View, Space: Expand] ({}) ", app.documents.len());
+        let doc_count = app.visible_explore_docs().len();
+        let title_text = format!(" Tree View [E: Expand All • X: Collapse All • Space: Toggle • t: List] ({}) ", doc_count);
         let list = List::new(items)
             .block(
                 Block::default()

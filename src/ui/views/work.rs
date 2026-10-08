@@ -292,16 +292,20 @@ impl WorkView {
             .constraints([Constraint::Percentage(55), Constraint::Percentage(45)])
             .split(main_chunks[1]);
 
-        // Task List
+        let task_title = if app.work_show_handoffs {
+            format!(" Tasks & All Docs ({}) [t: Transition | H: Hide Handoffs | Enter: Read | o: IDE] ", app.project_tasks.len())
+        } else if app.project_handoffs_count > 0 {
+            format!(" Tasks & Control Docs ({}) [t: Transition | H: Handoffs ({}) | Enter: Read | o: IDE] ", app.project_tasks.len(), app.project_handoffs_count)
+        } else {
+            format!(" Tasks & Control Docs ({}) [t: Transition | Enter: Read | o: IDE] ", app.project_tasks.len())
+        };
+
         let task_block = Block::default()
             .borders(Borders::ALL)
             .border_style(Style::default().fg(border_color))
             .style(Style::default().bg(t.bg_panel()).fg(t.text_primary()))
             .padding(Padding::new(1, 1, 0, 0))
-            .title(Span::styled(
-                format!(" Tasks & Documents ({}) [Enter: Read | t: Transition | o: IDE] ", app.project_tasks.len()),
-                t.title(),
-            ));
+            .title(Span::styled(task_title, t.title()));
 
         if app.project_tasks.is_empty() {
             let empty_p = Paragraph::new(vec![
@@ -321,20 +325,31 @@ impl WorkView {
                 .map(|(idx, doc)| {
                     let is_sel = idx == app.selected_project_task_idx;
 
-                    let badge = match doc.kind {
-                        DocumentKind::Task => match doc.status {
-                            DocumentStatus::InProgress => Span::styled(" ▶ IN PROGRESS ", t.badge_accepted()),
-                            DocumentStatus::Blocked => Span::styled(" ✖ BLOCKED ", t.badge_risk()),
-                            DocumentStatus::Pending => Span::styled(" ○ PENDING ", t.badge_proposed()),
-                            DocumentStatus::Completed => Span::styled(" ✔ DONE ", t.badge_accepted()),
-                            _ => Span::styled(" ⚡ TASK ", t.badge_accepted()),
-                        },
-                        DocumentKind::Decision => Span::styled(" ⚖ DECISION ", t.badge_accepted()),
-                        DocumentKind::Risk => Span::styled(" ▲ HAZARD ", t.badge_risk()),
-                        DocumentKind::Spec => Span::styled(" 📄 SPEC/STATUS ", t.badge_proposed()),
-                        DocumentKind::Plan => Span::styled(" 📋 PLAN ", t.badge_proposed()),
-                        DocumentKind::Audit => Span::styled(" 🔍 AUDIT ", t.badge_accepted()),
-                        _ => Span::styled(" 📄 DOC ", t.badge_proposed()),
+                    let is_tracker = doc.path.to_lowercase().ends_with("status.md");
+                    let badge = if is_tracker {
+                        Span::styled(" ⚡ TRACKER ", t.badge_proposed())
+                    } else {
+                        match doc.kind {
+                            DocumentKind::Task => match doc.status {
+                                DocumentStatus::InProgress => Span::styled(" ▶ IN PROGRESS ", t.badge_accepted()),
+                                DocumentStatus::Blocked => Span::styled(" ✖ BLOCKED ", t.badge_risk()),
+                                DocumentStatus::Pending => Span::styled(" ○ PENDING ", t.badge_proposed()),
+                                DocumentStatus::Completed => Span::styled(" ✔ DONE ", t.badge_accepted()),
+                                _ => Span::styled(" ⚡ TASK ", t.badge_accepted()),
+                            },
+                            DocumentKind::Decision => Span::styled(" ⚖ DECISION ", t.badge_accepted()),
+                            DocumentKind::Risk => Span::styled(" ▲ HAZARD ", t.badge_risk()),
+                            DocumentKind::Spec => Span::styled(" 📄 SPEC ", t.badge_proposed()),
+                            DocumentKind::Plan => Span::styled(" 📋 PLAN ", t.badge_proposed()),
+                            DocumentKind::Audit => Span::styled(" 🔍 AUDIT ", t.badge_accepted()),
+                            _ => {
+                                if doc.path.to_lowercase().contains("handoff") {
+                                    Span::styled(" 📜 HANDOFF ", Style::default().fg(t.text_muted()))
+                                } else {
+                                    Span::styled(" 📄 DOC ", t.badge_proposed())
+                                }
+                            }
+                        }
                     };
 
                     let title = Span::styled(
