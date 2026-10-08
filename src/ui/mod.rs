@@ -524,6 +524,33 @@ fn run_loop(
                             }
                             _ => {}
                         }
+                    } else if app.show_actions_popover {
+                        match key.code {
+                            KeyCode::Esc | KeyCode::Char('a') | KeyCode::Char('A') => {
+                                app.show_actions_popover = false;
+                            }
+                            KeyCode::Down | KeyCode::Char('j') => {
+                                app.next_actions_popover_idx();
+                            }
+                            KeyCode::Up | KeyCode::Char('k') => {
+                                app.prev_actions_popover_idx();
+                            }
+                            KeyCode::Enter => {
+                                match app.execute_selected_action(db) {
+                                    Ok(msg) => app.status_message = Some(msg),
+                                    Err(err) => app.status_message = Some(format!("Error: {}", err)),
+                                }
+                            }
+                            KeyCode::Char(c @ '1'..='6') => {
+                                let idx = (c as u8 - b'1') as usize;
+                                app.actions_popover_idx = idx;
+                                match app.execute_selected_action(db) {
+                                    Ok(msg) => app.status_message = Some(msg),
+                                    Err(err) => app.status_message = Some(format!("Error: {}", err)),
+                                }
+                            }
+                            _ => {}
+                        }
                     } else if app.is_filtering {
                         match key.code {
                             KeyCode::Esc => {
@@ -716,7 +743,7 @@ fn run_loop(
                                 app.bump_selected_task_priority(db);
                             }
                             KeyCode::Char('f') if app.active_tab == ActiveTab::Work && app.work_tab_mode == crate::ui::app::WorkTabMode::Projects => {
-                                app.cycle_native_task_filter(db);
+                                app.toggle_projects_filter();
                             }
                             KeyCode::Char('v') if app.active_tab == ActiveTab::Work && app.work_tab_mode == crate::ui::app::WorkTabMode::Projects => {
                                 app.verify_current_project_exit_criteria(db);
@@ -762,14 +789,16 @@ fn run_loop(
                                 }
                             }
                             KeyCode::Down | KeyCode::Char('j') => {
+                                let old_idx = app.selected_project_idx;
                                 app.next();
-                                if app.active_tab == ActiveTab::Work && app.work_tab_mode == crate::ui::app::WorkTabMode::Projects {
+                                if app.active_tab == ActiveTab::Work && app.work_tab_mode == crate::ui::app::WorkTabMode::Projects && app.focused_pane == crate::ui::app::FocusedPane::List && app.selected_project_idx != old_idx {
                                     app.refresh_project_tasks(db);
                                 }
                             }
                             KeyCode::Up | KeyCode::Char('k') => {
+                                let old_idx = app.selected_project_idx;
                                 app.prev();
-                                if app.active_tab == ActiveTab::Work && app.work_tab_mode == crate::ui::app::WorkTabMode::Projects {
+                                if app.active_tab == ActiveTab::Work && app.work_tab_mode == crate::ui::app::WorkTabMode::Projects && app.focused_pane == crate::ui::app::FocusedPane::List && app.selected_project_idx != old_idx {
                                     app.refresh_project_tasks(db);
                                 }
                             }
@@ -903,8 +932,13 @@ fn run_loop(
                                     } else if app.focused_pane == crate::ui::app::FocusedPane::List && (app.settings_selected_idx == 7 || app.settings_selected_idx == 6) {
                                         app.focused_pane = crate::ui::app::FocusedPane::Detail;
                                     }
+                                } else if app.active_tab == ActiveTab::Work && app.work_tab_mode == crate::ui::app::WorkTabMode::Projects {
+                                    if app.focused_pane == crate::ui::app::FocusedPane::Detail {
+                                        let _ = app.quick_transition_selected_native_task(db);
+                                    } else {
+                                        app.focused_pane = crate::ui::app::FocusedPane::Detail;
+                                    }
                                 } else {
-                                    // Unified entry to Command Dock
                                     app.repl_active = true;
                                     app.repl_input = "/".to_string();
                                     app.slash_menu_selected_idx = 0;
@@ -1011,6 +1045,8 @@ fn run_loop(
                                 if app.active_tab == ActiveTab::Directives {
                                     app.show_new_directive_modal = true;
                                     app.new_directive_field = 0;
+                                } else if app.active_tab == ActiveTab::Work && app.work_tab_mode == crate::ui::app::WorkTabMode::Projects {
+                                    app.toggle_actions_popover();
                                 } else if app.active_tab == ActiveTab::Work {
                                     match app.execute_action_palette_item("audit_kb", db) {
                                         Ok(msg) => app.status_message = Some(msg),
@@ -1040,7 +1076,26 @@ fn run_loop(
                     let area = ratatui::layout::Rect::new(0, 0, size.width, size.height);
 
 
-                    // If New Directive modal is open, dismiss when clicking outside
+                    if app.show_actions_popover {
+                        let popover_w = 42.min(area.width.saturating_sub(4));
+                        let popover_h = 10.min(area.height.saturating_sub(2));
+                        let x = area.x + (area.width.saturating_sub(popover_w)) / 2;
+                        let y = area.y + (area.height.saturating_sub(popover_h)) / 2;
+                        let inside = col >= x && col < x + popover_w && row >= y && row < y + popover_h;
+                        if let MouseEventKind::Down(MouseButton::Left) = mouse.kind {
+                            if !inside {
+                                app.show_actions_popover = false;
+                            } else if row > y && row <= y + 6 {
+                                app.actions_popover_idx = (row - y - 1) as usize;
+                                match app.execute_selected_action(db) {
+                                    Ok(msg) => app.status_message = Some(msg),
+                                    Err(err) => app.status_message = Some(format!("Error: {}", err)),
+                                }
+                            }
+                        }
+                        continue;
+                    }
+
                     if app.show_new_directive_modal {
                         let modal = NewDirectiveModal::modal_area(area);
                         let inside = col >= modal.x

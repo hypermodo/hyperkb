@@ -1,4 +1,4 @@
-use crate::domain::{DocumentKind, DocumentStatus, schema::TaskState};
+use crate::domain::schema::TaskState;
 use crate::ui::app::{App, FocusedPane, WorkTabMode};
 use crate::ui::markdown::MarkdownFormatter;
 use ratatui::{
@@ -6,7 +6,7 @@ use ratatui::{
     style::{Modifier, Style},
     text::{Line, Span},
     widgets::{
-        Block, Borders, List, ListItem, Padding, Paragraph, Scrollbar, ScrollbarOrientation,
+        Block, Borders, Clear, List, ListItem, Padding, Paragraph, Scrollbar, ScrollbarOrientation,
         ScrollbarState, Wrap,
     },
     Frame,
@@ -84,15 +84,20 @@ impl WorkView {
             t.border()
         };
 
-        let items: Vec<ListItem> = app
-            .projects
+        let visible_indices = app.visible_project_indices();
+        let total_projects = app.projects.len();
+        let hidden_count = total_projects.saturating_sub(visible_indices.len());
+
+        let mut items: Vec<ListItem> = visible_indices
             .iter()
-            .enumerate()
-            .map(|(idx, proj)| {
+            .map(|&idx| {
+                let proj = &app.projects[idx];
                 let is_selected = idx == app.selected_project_idx;
 
                 let health_badge = if proj.tasks_blocked > 0 {
                     Span::styled(format!(" ✖ BLOCKED: {} ", proj.tasks_blocked), t.badge_risk())
+                } else if proj.status == "reopened" {
+                    Span::styled(" ▲ REOPENED ", t.badge_proposed().add_modifier(Modifier::BOLD))
                 } else if proj.open_risks > 0 {
                     Span::styled(format!(" ▲ RISKS: {} ", proj.open_risks), t.badge_proposed())
                 } else if proj.is_healthy() {
@@ -138,7 +143,22 @@ impl WorkView {
             })
             .collect();
 
-        let list_title = format!(" Projects Cockpit ({}) [Tab: Pane] ", app.projects.len());
+        if app.projects_filter_active_only && hidden_count > 0 {
+            items.push(ListItem::new(vec![
+                Line::from(Span::styled(
+                    format!("  ▶ {} CLOSED PROJECTS HIDDEN [a: Actions / f: Show All]", hidden_count),
+                    Style::default().fg(t.text_muted()).add_modifier(Modifier::ITALIC),
+                )),
+                Line::from(""),
+            ]));
+        }
+
+        let list_title = if app.projects_filter_active_only {
+            format!(" Projects ({}/{} Active) [←/→: Pane] ", visible_indices.len(), total_projects)
+        } else {
+            format!(" Projects ({}) [←/→: Pane] ", total_projects)
+        };
+
         let list = List::new(items)
             .block(
                 Block::default()
@@ -152,10 +172,10 @@ impl WorkView {
 
         frame.render_stateful_widget(list, area, &mut app.projects_list_state);
 
-        let total_projects = app.projects.len();
-        if total_projects > 0 {
-            let mut scrollbar_state = ScrollbarState::new(total_projects.saturating_sub(1))
-                .position(app.selected_project_idx);
+        if !visible_indices.is_empty() {
+            let current_pos = visible_indices.iter().position(|&i| i == app.selected_project_idx).unwrap_or(0);
+            let mut scrollbar_state = ScrollbarState::new(visible_indices.len().saturating_sub(1))
+                .position(current_pos);
             let scrollbar = Scrollbar::default()
                 .orientation(ScrollbarOrientation::VerticalRight)
                 .begin_symbol(Some("▲"))
@@ -190,14 +210,16 @@ impl WorkView {
             }
         };
 
-        // Compact overview card on short screens (< 28 lines), expanded on tall screens
-        let overview_h = if area.height < 28 { 5 } else { 8 };
-        let main_chunks = Layout::default()
+        let cockpit_chunks = Layout::default()
             .direction(Direction::Vertical)
-            .constraints([Constraint::Length(overview_h), Constraint::Min(8)])
+            .constraints([
+                Constraint::Length(5),
+                Constraint::Length(5),
+                Constraint::Min(8),
+                Constraint::Length(5),
+            ])
             .split(area);
 
-        // --- 1. Overview Card ---
         let overview_block = Block::default()
             .borders(Borders::ALL)
             .border_style(Style::default().fg(border_color))
@@ -205,115 +227,95 @@ impl WorkView {
             .padding(Padding::new(2, 2, 0, 0))
             .title(Span::styled(format!(" Project: {} ", proj.name), t.title()));
 
-        let status_doc_desc = if proj.has_status_doc {
-            Span::styled("✓ Tracked (status.md)", Style::default().fg(t.status_accepted()))
+        let lifecycle_badge = if proj.status == "reopened" {
+            Span::styled(" [▲ REOPENED] ", t.badge_proposed().add_modifier(Modifier::BOLD))
+        } else if proj.tasks_blocked > 0 || proj.health == "blocked" {
+            Span::styled(" [✖ BLOCKED] ", t.badge_risk())
+        } else if proj.is_closed() {
+            Span::styled(" [✔ CLOSED] ", t.badge_resolved())
         } else {
-            Span::styled("✗ Missing status.md", Style::default().fg(t.status_proposed()))
+            Span::styled(" [✔ HEALTHY] ", t.badge_accepted())
         };
 
-        let health_span = match proj.health.as_str() {
-            "healthy" => Span::styled(" [✔ HEALTHY] ", t.badge_accepted()),
-            "blocked" => Span::styled(" [✖ BLOCKED] ", t.badge_risk()),
-            "degraded" => Span::styled(" [▲ DEGRADED] ", t.badge_proposed()),
-            _ => Span::styled(format!(" [{}] ", proj.health.to_uppercase()), t.badge_proposed()),
+        let exit_badge = if let Some(ref ec) = proj.exit_criteria {
+            if proj.exit_verified {
+                Span::styled(format!("Exit: [✔ VERIFIED: {}]", ec), Style::default().fg(t.status_accepted()))
+            } else {
+                Span::styled(format!("Exit: [○ PENDING: {}]", ec), Style::default().fg(t.status_proposed()))
+            }
+        } else {
+            Span::styled("Exit: [None declared]", Style::default().fg(t.text_muted()))
         };
 
-        let mut line1_spans = vec![
+        let line1 = Line::from(vec![
             Span::styled("Path: ", Style::default().fg(t.text_muted()).add_modifier(Modifier::BOLD)),
             Span::styled(format!("projects/{}    ", proj.name), Style::default().fg(t.accent())),
-            Span::styled("Doc: ", Style::default().fg(t.text_muted()).add_modifier(Modifier::BOLD)),
-            status_doc_desc,
-            Span::styled("    Health: ", Style::default().fg(t.text_muted()).add_modifier(Modifier::BOLD)),
-            health_span,
-        ];
-        if proj.churn_warning {
-            line1_spans.push(Span::styled("  [▲ CHURN WARNING] ", t.badge_risk()));
-        }
+            Span::styled("Lifecycle: ", Style::default().fg(t.text_muted()).add_modifier(Modifier::BOLD)),
+            lifecycle_badge,
+            Span::styled("    ", Style::default()),
+            exit_badge,
+        ]);
 
-        let mut overview_text = vec![Line::from(line1_spans)];
+        let goal_text = app.project_goal_summary.as_deref().unwrap_or("No goal specified");
+        let fence_text = app.project_fence_summary.as_deref().unwrap_or("No boundaries declared");
 
-        if overview_h >= 8 {
-            let mut line2_spans = vec![
-                Span::styled("Critical Path: ", Style::default().fg(t.text_muted()).add_modifier(Modifier::BOLD)),
-            ];
-            if let Some(ref lock) = proj.active_task {
-                line2_spans.push(Span::styled(format!("🔒 {}    ", lock), Style::default().fg(t.accent()).add_modifier(Modifier::BOLD)));
-            } else if proj.tasks_in_progress > 0 {
-                line2_spans.push(Span::styled("▶ Auto (in-progress task)    ", Style::default().fg(t.status_accepted())));
-            } else {
-                line2_spans.push(Span::styled("○ None (unlocked)    ", Style::default().fg(t.text_muted())));
-            }
+        let line2 = Line::from(vec![
+            Span::styled("Goal:  ", Style::default().fg(t.text_muted()).add_modifier(Modifier::BOLD)),
+            Span::styled(goal_text, Style::default().fg(t.text_primary())),
+        ]);
 
-            line2_spans.push(Span::styled("Exit Criteria: ", Style::default().fg(t.text_muted()).add_modifier(Modifier::BOLD)));
-            if let Some(ref ec) = proj.exit_criteria {
-                if proj.exit_verified {
-                    line2_spans.push(Span::styled(format!("🎯 [✔ VERIFIED] {}", ec), Style::default().fg(t.status_accepted())));
-                } else {
-                    line2_spans.push(Span::styled(format!("🎯 [○ PENDING] {}", ec), Style::default().fg(t.status_proposed())));
-                }
-            } else {
-                line2_spans.push(Span::styled("○ None declared", Style::default().fg(t.text_muted())));
-            }
+        let line3 = Line::from(vec![
+            Span::styled("Fence: ", Style::default().fg(t.text_muted()).add_modifier(Modifier::BOLD)),
+            Span::styled(fence_text, Style::default().fg(t.status_superseded())),
+        ]);
 
-            overview_text.push(Line::from(line2_spans));
-            overview_text.push(Line::from(""));
-        }
+        let overview_p = Paragraph::new(vec![line1, line2, line3])
+            .block(overview_block)
+            .wrap(Wrap { trim: true });
+        frame.render_widget(overview_p, cockpit_chunks[0]);
 
-        if main_chunks[0].width < 110 {
-            overview_text.push(Line::from(vec![
-                Span::styled(format!("[ Total: {} ]  ", proj.total_documents), Style::default().fg(t.text_primary()).add_modifier(Modifier::BOLD)),
-                Span::styled(format!("[ In-Progress: {} ]  ", proj.tasks_in_progress), Style::default().fg(t.status_accepted()).add_modifier(Modifier::BOLD)),
-                Span::styled(format!("[ Blocked: {} ]  ", proj.tasks_blocked), if proj.tasks_blocked > 0 { Style::default().fg(t.status_superseded()).add_modifier(Modifier::BOLD) } else { Style::default().fg(t.text_muted()) }),
-                Span::styled(format!("[ Pending: {} ]", proj.tasks_pending), Style::default().fg(t.status_proposed()).add_modifier(Modifier::BOLD)),
-            ]));
-            overview_text.push(Line::from(vec![
-                Span::styled(format!("[ Done: {} ]  ", proj.tasks_completed), Style::default().fg(t.text_muted())),
-                Span::styled(format!("[ Risks: {} ]  ", proj.open_risks), if proj.open_risks > 0 { Style::default().fg(t.status_superseded()) } else { Style::default().fg(t.text_muted()) }),
-                Span::styled(format!("[ Decs: {} ]", proj.decisions_count), Style::default().fg(t.accent())),
-            ]));
+        let handoff_block = Block::default()
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(border_color))
+            .style(Style::default().bg(t.bg_panel()).fg(t.text_primary()))
+            .padding(Padding::new(2, 2, 0, 0))
+            .title(Span::styled(" 📌 LATEST BATON HANDOFF ", t.title()));
+
+        let handoff_lines = if let Some((ref id, ref state, ref next_step, ref blocker)) = app.project_latest_handoff {
+            vec![
+                Line::from(vec![
+                    Span::styled("• Handoff: ", Style::default().fg(t.accent()).add_modifier(Modifier::BOLD)),
+                    Span::styled(id, Style::default().fg(t.accent())),
+                    Span::styled("    • Blocker: ", Style::default().fg(t.text_muted()).add_modifier(Modifier::BOLD)),
+                    Span::styled(blocker, if blocker.contains("None") { Style::default().fg(t.status_accepted()) } else { Style::default().fg(t.status_superseded()) }),
+                ]),
+                Line::from(vec![
+                    Span::styled("• State: ", Style::default().fg(t.text_muted()).add_modifier(Modifier::BOLD)),
+                    Span::styled(state, Style::default().fg(t.text_primary())),
+                ]),
+                Line::from(vec![
+                    Span::styled("• Next Step: ", Style::default().fg(t.text_muted()).add_modifier(Modifier::BOLD)),
+                    Span::styled(next_step, Style::default().fg(t.status_proposed()).add_modifier(Modifier::BOLD)),
+                ]),
+            ]
         } else {
-            overview_text.push(Line::from(vec![
-                Span::styled(format!("[ Total: {} ]  ", proj.total_documents), Style::default().fg(t.text_primary()).add_modifier(Modifier::BOLD)),
-                Span::styled(format!("[ In-Progress: {} ]  ", proj.tasks_in_progress), Style::default().fg(t.status_accepted()).add_modifier(Modifier::BOLD)),
-                Span::styled(format!("[ Blocked: {} ]  ", proj.tasks_blocked), if proj.tasks_blocked > 0 { Style::default().fg(t.status_superseded()).add_modifier(Modifier::BOLD) } else { Style::default().fg(t.text_muted()) }),
-                Span::styled(format!("[ Pending: {} ]  ", proj.tasks_pending), Style::default().fg(t.status_proposed()).add_modifier(Modifier::BOLD)),
-                Span::styled(format!("[ Done: {} ]  ", proj.tasks_completed), Style::default().fg(t.text_muted())),
-                Span::styled(format!("[ Risks: {} ]  ", proj.open_risks), if proj.open_risks > 0 { Style::default().fg(t.status_superseded()) } else { Style::default().fg(t.text_muted()) }),
-                Span::styled(format!("[ Decs: {} ]", proj.decisions_count), Style::default().fg(t.accent())),
-            ]));
-        }
-
-        let overview_p = Paragraph::new(overview_text).block(overview_block).wrap(Wrap { trim: true });
-        frame.render_widget(overview_p, main_chunks[0]);
-
-        // --- 2. Task Funnel & Document Inspector ---
-        let funnel_chunks = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([Constraint::Percentage(55), Constraint::Percentage(45)])
-            .split(main_chunks[1]);
-
-        let filter_str = match app.native_task_filter {
-            None => "ALL",
-            Some(TaskState::InProgress) => "IN PROGRESS",
-            Some(TaskState::Blocked) => "BLOCKED",
-            Some(TaskState::Pending) => "PENDING",
-            Some(TaskState::Completed) => "COMPLETED",
+            vec![
+                Line::from(vec![
+                    Span::styled("• No agent handoffs recorded yet. (Recorded automatically when session ends)", Style::default().fg(t.text_muted())),
+                ]),
+                Line::from(vec![
+                    Span::styled("• Next Step: Queue tactical tasks with [n] or prompt AI agent via [/].", Style::default().fg(t.text_muted())),
+                ]),
+            ]
         };
-        let in_prog = app.native_tasks.iter().filter(|t| t.status == TaskState::InProgress).count();
-        let blocked = app.native_tasks.iter().filter(|t| t.status == TaskState::Blocked).count();
-        let pending = app.native_tasks.iter().filter(|t| t.status == TaskState::Pending).count();
-        let task_title = if !app.native_tasks.is_empty() {
-            format!(
-                " Tactical Tasks ({} Active, {} Blocked, {} Pending) [Filter [f]: {} | t: Status | p: Priority | n: New | v: Verify] ",
-                in_prog, blocked, pending, filter_str
-            )
-        } else if app.work_show_handoffs {
-            format!(" Tasks & All Docs ({}) [t: Transition | H: Hide Handoffs | Enter: Read | o: IDE] ", app.project_tasks.len())
-        } else if app.project_handoffs_count > 0 {
-            format!(" Tasks & Control Docs ({}) [t: Transition | H: Handoffs ({}) | Enter: Read | o: IDE] ", app.project_tasks.len(), app.project_handoffs_count)
-        } else {
-            format!(" Tasks & Control Docs ({}) [n: New Task | t: Transition | Enter: Read | o: IDE] ", app.project_tasks.len())
-        };
+
+        let handoff_p = Paragraph::new(handoff_lines).block(handoff_block).wrap(Wrap { trim: true });
+        frame.render_widget(handoff_p, cockpit_chunks[1]);
+
+        let task_title = format!(
+            " ⚡ WORK QUEUE ({}) [Space: Transition | Enter: Details | n: New | a: Actions] ",
+            app.native_tasks.len()
+        );
 
         let task_block = Block::default()
             .borders(Borders::ALL)
@@ -328,7 +330,7 @@ impl WorkView {
                 .iter()
                 .enumerate()
                 .map(|(idx, task)| {
-                    let is_sel = idx == app.selected_native_task_idx;
+                    let is_sel = idx == app.selected_native_task_idx && app.focused_pane == FocusedPane::Detail;
                     let status_badge = match task.status {
                         TaskState::InProgress => Span::styled(" ▶ ACTIVE ", t.badge_accepted()),
                         TaskState::Blocked => Span::styled(" ✖ BLOCKED ", t.badge_risk()),
@@ -351,7 +353,7 @@ impl WorkView {
                         },
                     );
                     let short_id = if task.id.len() > 8 { &task.id[..8] } else { &task.id };
-                    let desc_snippet = if task.description.len() > 70 { &task.description[..70] } else { &task.description };
+                    let desc_snippet = if task.description.len() > 80 { &task.description[..80] } else { &task.description };
                     let subline = Span::styled(
                         format!("    ID: {} • Updated: {} • {}", short_id, &task.updated_at[..10.min(task.updated_at.len())], desc_snippet),
                         Style::default().fg(t.text_muted()),
@@ -366,7 +368,7 @@ impl WorkView {
             let task_list = List::new(task_items)
                 .block(task_block)
                 .highlight_style(t.selected_row());
-            frame.render_stateful_widget(task_list, funnel_chunks[0], &mut app.native_tasks_list_state);
+            frame.render_stateful_widget(task_list, cockpit_chunks[2], &mut app.native_tasks_list_state);
 
             let total_tasks = app.native_tasks.len();
             if total_tasks > 0 {
@@ -378,205 +380,98 @@ impl WorkView {
                     .end_symbol(Some("▼"))
                     .track_symbol(Some("│"))
                     .thumb_symbol("█");
-                frame.render_stateful_widget(scrollbar, funnel_chunks[0], &mut scrollbar_state);
+                frame.render_stateful_widget(scrollbar, cockpit_chunks[2], &mut scrollbar_state);
             }
-        } else if app.project_tasks.is_empty() {
+        } else {
             let empty_p = Paragraph::new(vec![
                 Line::from(""),
-                Line::from(Span::styled(
-                    format!("No tactical tasks or documents in projects/{}/", proj.name),
-                    Style::default().fg(t.text_muted()),
-                )),
+                Line::from(Span::styled("⚡ No active native tasks in queue.", Style::default().fg(t.text_muted()))),
                 Line::from(""),
                 Line::from(vec![
                     Span::styled("Press ", Style::default().fg(t.text_muted())),
                     Span::styled("[n] New Task", Style::default().fg(t.accent()).add_modifier(Modifier::BOLD)),
-                    Span::styled(" to create a tactical task in this project.", Style::default().fg(t.text_muted())),
+                    Span::styled(" or let your AI agent queue work via MCP.", Style::default().fg(t.text_muted())),
                 ]),
             ])
             .block(task_block);
-            frame.render_widget(empty_p, funnel_chunks[0]);
-        } else {
-            let task_items: Vec<ListItem> = app
-                .project_tasks
-                .iter()
-                .enumerate()
-                .map(|(idx, doc)| {
-                    let is_sel = idx == app.selected_project_task_idx;
-
-                    let is_tracker = doc.path.to_lowercase().ends_with("status.md");
-                    let badge = if is_tracker {
-                        Span::styled(" ⚡ TRACKER ", t.badge_proposed())
-                    } else {
-                        match doc.kind {
-                            DocumentKind::Task => match doc.status {
-                                DocumentStatus::InProgress => Span::styled(" ▶ IN PROGRESS ", t.badge_accepted()),
-                                DocumentStatus::Blocked => Span::styled(" ✖ BLOCKED ", t.badge_risk()),
-                                DocumentStatus::Pending => Span::styled(" ○ PENDING ", t.badge_proposed()),
-                                DocumentStatus::Completed => Span::styled(" ✔ DONE ", t.badge_accepted()),
-                                _ => Span::styled(" ⚡ TASK ", t.badge_accepted()),
-                            },
-                            DocumentKind::Decision => Span::styled(" ⚖ DECISION ", t.badge_accepted()),
-                            DocumentKind::Risk => Span::styled(" ▲ HAZARD ", t.badge_risk()),
-                            DocumentKind::Spec => Span::styled(" 📄 SPEC ", t.badge_proposed()),
-                            DocumentKind::Plan => Span::styled(" 📋 PLAN ", t.badge_proposed()),
-                            DocumentKind::Audit => Span::styled(" 🔍 AUDIT ", t.badge_accepted()),
-                            _ => {
-                                if doc.path.to_lowercase().contains("handoff") {
-                                    Span::styled(" 📜 HANDOFF ", Style::default().fg(t.text_muted()))
-                                } else {
-                                    Span::styled(" 📄 DOC ", t.badge_proposed())
-                                }
-                            }
-                        }
-                    };
-
-                    let title = Span::styled(
-                        format!(" {}", doc.title),
-                        if is_sel {
-                            t.selected_row()
-                        } else {
-                            Style::default().fg(t.text_primary())
-                        },
-                    );
-
-                    let path_sub = Span::styled(
-                        format!("    {}", doc.path),
-                        Style::default().fg(t.text_muted()),
-                    );
-
-                    ListItem::new(vec![
-                        Line::from(vec![badge, title]),
-                        Line::from(path_sub),
-                    ])
-                })
-                .collect();
-
-            let task_list = List::new(task_items)
-                .block(task_block)
-                .highlight_style(t.selected_row());
-            frame.render_stateful_widget(task_list, funnel_chunks[0], &mut app.project_tasks_list_state);
-
-            let total_tasks = app.project_tasks.len();
-            if total_tasks > 0 {
-                let mut scrollbar_state = ScrollbarState::new(total_tasks.saturating_sub(1))
-                    .position(app.selected_project_task_idx);
-                let scrollbar = Scrollbar::default()
-                    .orientation(ScrollbarOrientation::VerticalRight)
-                    .begin_symbol(Some("▲"))
-                    .end_symbol(Some("▼"))
-                    .track_symbol(Some("│"))
-                    .thumb_symbol("█");
-                frame.render_stateful_widget(scrollbar, funnel_chunks[0], &mut scrollbar_state);
-            }
+            frame.render_widget(empty_p, cockpit_chunks[2]);
         }
 
-        if !app.native_tasks.is_empty() {
-            let preview_block = Block::default()
-                .borders(Borders::ALL)
-                .border_style(Style::default().fg(t.border()))
-                .style(Style::default().bg(t.bg_panel()).fg(t.text_primary()))
-                .padding(Padding::new(2, 2, 0, 0))
-                .title(Span::styled(" Tactical Task Inspector [Scroll: PgUp/PgDn/Wheel] ", t.title()));
+        let fence_block = Block::default()
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(border_color))
+            .style(Style::default().bg(t.bg_panel()).fg(t.text_primary()))
+            .padding(Padding::new(2, 2, 0, 0))
+            .title(Span::styled(" 🛡️ CHARTER & OUT-OF-CHARTER FENCE ", t.title()));
 
-            if let Some(task) = app.native_tasks.get(app.selected_native_task_idx) {
-                let preview_width = funnel_chunks[1].width.saturating_sub(6) as usize;
-                let formatted_lines = MarkdownFormatter::format_markdown_with_theme(&task.description, preview_width, &t);
-                let total_lines = formatted_lines.len();
-                let visible_lines = funnel_chunks[1].height.saturating_sub(4) as usize;
-                let max_scroll = total_lines.saturating_sub(visible_lines);
-                let scroll_offset = app.cockpit_preview_scroll.min(max_scroll);
+        let ec_str = proj.exit_criteria.as_deref().unwrap_or("cargo test");
+        let ec_status = if proj.exit_verified { "[✔ PASSED]" } else { "[⏳ PENDING]" };
 
-                let mut preview_lines = vec![
-                    Line::from(vec![
-                        Span::styled("Task: ", Style::default().fg(t.text_muted()).add_modifier(Modifier::BOLD)),
-                        Span::styled(&task.title, Style::default().fg(t.accent()).add_modifier(Modifier::BOLD)),
-                        Span::styled(format!("  (P: {}, Status: {:?})", task.priority, task.status), Style::default().fg(t.text_muted())),
-                    ]),
-                    Line::from(vec![
-                        Span::styled("ID:   ", Style::default().fg(t.text_muted())),
-                        Span::styled(&task.id, Style::default().fg(t.text_primary())),
-                        Span::styled(format!("  • Updated: {}", task.updated_at), Style::default().fg(t.text_muted())),
-                    ]),
-                    Line::from(""),
-                ];
+        let fence_lines = vec![
+            Line::from(vec![
+                Span::styled("• Goal: ", Style::default().fg(t.text_muted()).add_modifier(Modifier::BOLD)),
+                Span::styled(goal_text, Style::default().fg(t.text_primary())),
+            ]),
+            Line::from(vec![
+                Span::styled("• ⛔ OUT OF CHARTER: ", Style::default().fg(t.status_superseded()).add_modifier(Modifier::BOLD)),
+                Span::styled(fence_text, Style::default().fg(t.status_superseded())),
+            ]),
+            Line::from(vec![
+                Span::styled("• Exit Gate: ", Style::default().fg(t.text_muted()).add_modifier(Modifier::BOLD)),
+                Span::styled(ec_str, Style::default().fg(t.accent())),
+                Span::styled(format!(" {} [v: Verify Gate]", ec_status), Style::default().fg(t.status_accepted())),
+            ]),
+        ];
 
-                for line in formatted_lines.iter().skip(scroll_offset).take(visible_lines) {
-                    preview_lines.push(line.clone());
-                }
+        let fence_p = Paragraph::new(fence_lines).block(fence_block).wrap(Wrap { trim: true });
+        frame.render_widget(fence_p, cockpit_chunks[3]);
 
-                let preview_p = Paragraph::new(preview_lines).block(preview_block).wrap(Wrap { trim: false });
-                frame.render_widget(preview_p, funnel_chunks[1]);
-
-                if total_lines > visible_lines {
-                    let mut scrollbar_state = ScrollbarState::new(max_scroll).position(scroll_offset);
-                    let scrollbar = Scrollbar::default()
-                        .orientation(ScrollbarOrientation::VerticalRight)
-                        .begin_symbol(Some("▲"))
-                        .end_symbol(Some("▼"))
-                        .track_symbol(Some("│"))
-                        .thumb_symbol("█");
-                    frame.render_stateful_widget(scrollbar, funnel_chunks[1], &mut scrollbar_state);
-                }
-            } else {
-                let empty_preview = Paragraph::new(vec![
-                    Line::from(""),
-                    Line::from(Span::styled("Select a task above to inspect details.", Style::default().fg(t.text_muted()))),
-                ])
-                .block(preview_block);
-                frame.render_widget(empty_preview, funnel_chunks[1]);
-            }
-        } else {
-            let preview_block = Block::default()
-                .borders(Borders::ALL)
-                .border_style(Style::default().fg(t.border()))
-                .style(Style::default().bg(t.bg_panel()).fg(t.text_primary()))
-                .padding(Padding::new(2, 2, 0, 0))
-                .title(Span::styled(" Document Snippet / Summary [Scroll: PgUp/PgDn/Wheel] ", t.title()));
-
-            if let Some(doc) = app.project_tasks.get(app.selected_project_task_idx) {
-                let preview_width = funnel_chunks[1].width.saturating_sub(6) as usize;
-                let formatted_lines = MarkdownFormatter::format_markdown_with_theme(&doc.content, preview_width, &t);
-                let total_lines = formatted_lines.len();
-                let visible_lines = funnel_chunks[1].height.saturating_sub(4) as usize;
-                let max_scroll = total_lines.saturating_sub(visible_lines);
-                let scroll_offset = app.cockpit_preview_scroll.min(max_scroll);
-
-                let mut preview_lines = vec![
-                    Line::from(vec![
-                        Span::styled("File:  ", Style::default().fg(t.text_muted()).add_modifier(Modifier::BOLD)),
-                        Span::styled(&doc.path, Style::default().fg(t.accent())),
-                        Span::styled(format!("  ({}/{} lines)", (scroll_offset + 1).min(total_lines), total_lines), Style::default().fg(t.text_muted())),
-                    ]),
-                    Line::from(""),
-                ];
-
-                for line in formatted_lines.iter().skip(scroll_offset).take(visible_lines) {
-                    preview_lines.push(line.clone());
-                }
-
-                let preview_p = Paragraph::new(preview_lines).block(preview_block).wrap(Wrap { trim: false });
-                frame.render_widget(preview_p, funnel_chunks[1]);
-
-                if total_lines > visible_lines {
-                    let mut scrollbar_state = ScrollbarState::new(max_scroll).position(scroll_offset);
-                    let scrollbar = Scrollbar::default()
-                        .orientation(ScrollbarOrientation::VerticalRight)
-                        .begin_symbol(Some("▲"))
-                        .end_symbol(Some("▼"))
-                        .track_symbol(Some("│"))
-                        .thumb_symbol("█");
-                    frame.render_stateful_widget(scrollbar, funnel_chunks[1], &mut scrollbar_state);
-                }
-            } else {
-                let empty_preview = Paragraph::new(vec![
-                    Line::from(""),
-                    Line::from(Span::styled("Select a document or task above to preview content.", Style::default().fg(t.text_muted()))),
-                ])
-                .block(preview_block);
-                frame.render_widget(empty_preview, funnel_chunks[1]);
-            }
+        if app.show_actions_popover {
+            Self::render_actions_popover(frame, app, area);
         }
+    }
+
+    fn render_actions_popover(frame: &mut Frame, app: &App, area: Rect) {
+        let t = app.theme;
+        let popover_w = 42.min(area.width.saturating_sub(4));
+        let popover_h = 10.min(area.height.saturating_sub(2));
+        let x = area.x + (area.width.saturating_sub(popover_w)) / 2;
+        let y = area.y + (area.height.saturating_sub(popover_h)) / 2;
+        let popover_area = Rect::new(x, y, popover_w, popover_h);
+
+        frame.render_widget(Clear, popover_area);
+
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(t.accent()))
+            .style(Style::default().bg(t.bg_panel()).fg(t.text_primary()))
+            .padding(Padding::new(1, 1, 0, 0))
+            .title(Span::styled(" Task Actions (a) ", t.title()));
+
+        let actions = [
+            ("[1] Transition State... (Space)", 0),
+            ("[2] Bump Priority", 1),
+            ("[3] Run Exit Gate Check", 2),
+            ("[4] Open in Editor (o)", 3),
+            ("[5] Toggle Filter Active/All", 4),
+            ("[6] Delete Task", 5),
+        ];
+
+        let items: Vec<ListItem> = actions
+            .iter()
+            .map(|(label, idx)| {
+                let is_sel = *idx == app.actions_popover_idx;
+                let style = if is_sel {
+                    t.selected_row()
+                } else {
+                    Style::default().fg(t.text_primary())
+                };
+                ListItem::new(Line::from(Span::styled(format!(" {} ", label), style)))
+            })
+            .collect();
+
+        let list = List::new(items).block(block);
+        frame.render_widget(list, popover_area);
     }
 
     fn render_risks_view(frame: &mut Frame, app: &mut App, area: Rect) {

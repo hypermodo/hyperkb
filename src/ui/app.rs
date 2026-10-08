@@ -357,6 +357,12 @@ pub struct App {
     pub new_task_description: String,
     pub new_task_priority: i32,
     pub new_task_field_idx: usize,
+    pub projects_filter_active_only: bool,
+    pub show_actions_popover: bool,
+    pub actions_popover_idx: usize,
+    pub project_goal_summary: Option<String>,
+    pub project_fence_summary: Option<String>,
+    pub project_latest_handoff: Option<(String, String, String, String)>,
 
     // Stateful List Viewports (Ratatui ListState)
     pub projects_list_state: ListState,
@@ -524,6 +530,12 @@ impl App {
             new_task_description: String::new(),
             new_task_priority: 80,
             new_task_field_idx: 0,
+            projects_filter_active_only: true,
+            show_actions_popover: false,
+            actions_popover_idx: 0,
+            project_goal_summary: None,
+            project_fence_summary: None,
+            project_latest_handoff: None,
             projects_list_state: {
                 let mut s = ListState::default();
                 s.select(Some(0));
@@ -1033,6 +1045,7 @@ impl App {
                 if refresh_all_statuses || idx == sel_idx {
                     if let Ok(status) = crate::core::StatusEngine::get_project_status(&self.root, &proj.name) {
                         proj.health = format!("{:?}", status.health).to_lowercase();
+                        proj.status = status.status.as_str().to_string();
                         proj.active_task = status.active_task;
                         if let Some(ref ec) = status.exit_criteria {
                             proj.exit_criteria = Some(ec.command.clone());
@@ -1049,6 +1062,7 @@ impl App {
                 } else if let Some(existing) = self.projects.get(idx) {
                     if existing.name == proj.name {
                         proj.health = existing.health.clone();
+                        proj.status = existing.status.clone();
                         proj.active_task = existing.active_task.clone();
                         proj.exit_criteria = existing.exit_criteria.clone();
                         proj.exit_verified = existing.exit_verified;
@@ -1078,6 +1092,14 @@ impl App {
                 self.selected_native_task_idx = self.native_tasks.len() - 1;
             }
 
+            if let Ok(status) = crate::core::StatusEngine::get_project_status(&self.root, &proj.name) {
+                self.project_goal_summary = Some(status.goal);
+                self.project_fence_summary = status.out_of_charter;
+            } else {
+                self.project_goal_summary = None;
+                self.project_fence_summary = None;
+            }
+
             let opts = BrowseOptions {
                 project: Some(proj.name.clone()),
                 limit: 1000,
@@ -1095,6 +1117,54 @@ impl App {
                     }
                 }
                 self.project_handoffs_count = handoffs.len();
+
+                if let Some(latest) = handoffs.iter().max_by_key(|d| &d.path) {
+                    let mut state = String::new();
+                    let mut next_step = String::new();
+                    let mut blocker = "None (unlocked)".to_string();
+
+                    for line in latest.content.lines() {
+                        let trimmed = line.trim();
+                        if (trimmed.starts_with("State:") || trimmed.starts_with("• State:") || trimmed.starts_with("- State:")) && state.is_empty() {
+                            let prefix = if trimmed.contains("State:") { "State:" } else { "State" };
+                            if let Some((_, r)) = trimmed.split_once(prefix) {
+                                state = r.trim().to_string();
+                            }
+                        } else if (trimmed.starts_with("Next:") || trimmed.starts_with("Next Step:") || trimmed.starts_with("• Next Step:") || trimmed.starts_with("- Next Step:")) && next_step.is_empty() {
+                            let prefix = if trimmed.contains("Next Step:") { "Next Step:" } else { "Next:" };
+                            if let Some((_, r)) = trimmed.split_once(prefix) {
+                                next_step = r.trim().to_string();
+                            }
+                        } else if (trimmed.starts_with("Blocker:") || trimmed.starts_with("• Blocker:") || trimmed.starts_with("- Blocker:")) && blocker == "None (unlocked)" {
+                            let prefix = if trimmed.contains("Blocker:") { "Blocker:" } else { "Blocked:" };
+                            if let Some((_, r)) = trimmed.split_once(prefix) {
+                                let b = r.trim();
+                                if !b.is_empty() && b.to_lowercase() != "none" {
+                                    blocker = b.to_string();
+                                }
+                            }
+                        }
+                    }
+
+                    if state.is_empty() {
+                        for line in latest.content.lines() {
+                            let t = line.trim();
+                            if !t.starts_with('#') && !t.is_empty() && !t.starts_with("---") {
+                                state = if t.len() > 100 { format!("{}...", &t[..97]) } else { t.to_string() };
+                                break;
+                            }
+                        }
+                    }
+                    if next_step.is_empty() {
+                        next_step = "Inspect task queue and continue execution".to_string();
+                    }
+
+                    let handoff_id = latest.path.split('/').last().unwrap_or(&latest.title).to_string();
+                    self.project_latest_handoff = Some((handoff_id, state, next_step, blocker));
+                } else {
+                    self.project_latest_handoff = None;
+                }
+
                 if !self.work_show_handoffs {
                     control_docs.sort_by(|a, b| {
                         let a_status = a.path.to_lowercase().ends_with("status.md");
@@ -1274,6 +1344,110 @@ impl App {
                     self.selected_native_task_idx = self.native_tasks.len() - 1;
                 }
             }
+        }
+    }
+
+    pub fn quick_transition_selected_native_task(&mut self, db: &Database) -> Result<String, String> {
+        let task = match self.native_tasks.get(self.selected_native_task_idx) {
+            Some(t) => t.clone(),
+            None => return Err("No native task selected to transition".to_string()),
+        };
+
+        let next_status = match task.status {
+            TaskState::Pending => TaskState::InProgress,
+            TaskState::InProgress => TaskState::Completed,
+            TaskState::Completed => TaskState::Pending,
+            TaskState::Blocked => TaskState::InProgress,
+        };
+
+        Queries::update_task_status(
+            db.conn(),
+            &task.id,
+            next_status,
+        ).map_err(|e| format!("Failed to transition task: {}", e))?;
+
+        let msg = format!("Task {} transitioned to {:?}", task.id, next_status);
+        self.status_message = Some(msg.clone());
+        self.refresh_project_tasks(db);
+        Ok(msg)
+    }
+
+    pub fn toggle_projects_filter(&mut self) {
+        self.projects_filter_active_only = !self.projects_filter_active_only;
+        let visible = self.visible_project_indices();
+        self.status_message = Some(format!(
+            "Project Filter: {} ({} visible)",
+            if self.projects_filter_active_only { "Active Initiatives" } else { "All Projects" },
+            visible.len()
+        ));
+        if !visible.contains(&self.selected_project_idx) {
+            if let Some(&first) = visible.first() {
+                self.selected_project_idx = first;
+            }
+        }
+    }
+
+    pub fn visible_project_indices(&self) -> Vec<usize> {
+        if !self.projects_filter_active_only {
+            return (0..self.projects.len()).collect();
+        }
+        let active: Vec<usize> = self.projects
+            .iter()
+            .enumerate()
+            .filter(|(_, p)| p.is_active_or_blocked())
+            .map(|(i, _)| i)
+            .collect();
+        if active.is_empty() {
+            (0..self.projects.len()).collect()
+        } else {
+            active
+        }
+    }
+
+    pub fn toggle_actions_popover(&mut self) {
+        self.show_actions_popover = !self.show_actions_popover;
+        self.actions_popover_idx = 0;
+    }
+
+    pub fn next_actions_popover_idx(&mut self) {
+        self.actions_popover_idx = (self.actions_popover_idx + 1) % 6;
+    }
+
+    pub fn prev_actions_popover_idx(&mut self) {
+        if self.actions_popover_idx == 0 {
+            self.actions_popover_idx = 5;
+        } else {
+            self.actions_popover_idx -= 1;
+        }
+    }
+
+    pub fn execute_selected_action(&mut self, db: &Database) -> Result<String, String> {
+        self.show_actions_popover = false;
+        match self.actions_popover_idx {
+            0 => {
+                self.open_task_transition_modal();
+                Ok("Open task transition modal".to_string())
+            }
+            1 => {
+                self.bump_selected_task_priority(db);
+                Ok("Bumped task priority".to_string())
+            }
+            2 => {
+                self.verify_current_project_exit_criteria(db);
+                Ok("Ran exit criteria check".to_string())
+            }
+            3 => {
+                self.open_active_document_in_editor()
+            }
+            4 => {
+                self.toggle_projects_filter();
+                Ok("Toggled project filter".to_string())
+            }
+            5 => {
+                self.delete_selected_native_task(db);
+                Ok("Deleted selected task".to_string())
+            }
+            _ => Ok("No action executed".to_string()),
         }
     }
 
@@ -1558,11 +1732,16 @@ impl App {
                                 self.cockpit_preview_scroll = (self.cockpit_preview_scroll + 2).min(max);
                             }
                         } else if !self.projects.is_empty() {
-                            if self.selected_project_idx < self.projects.len() - 1 {
-                                self.selected_project_idx += 1;
-                                self.selected_project_task_idx = 0;
-                                self.selected_native_task_idx = 0;
-                                self.cockpit_preview_scroll = 0;
+                            let visible = self.visible_project_indices();
+                            if let Some(pos) = visible.iter().position(|&idx| idx == self.selected_project_idx) {
+                                if pos + 1 < visible.len() {
+                                    self.selected_project_idx = visible[pos + 1];
+                                    self.selected_project_task_idx = 0;
+                                    self.selected_native_task_idx = 0;
+                                    self.cockpit_preview_scroll = 0;
+                                }
+                            } else if let Some(&first) = visible.first() {
+                                self.selected_project_idx = first;
                             }
                         }
                     }
@@ -1692,11 +1871,18 @@ impl App {
                             } else {
                                 self.cockpit_preview_scroll = self.cockpit_preview_scroll.saturating_sub(2);
                             }
-                        } else if !self.projects.is_empty() && self.selected_project_idx > 0 {
-                            self.selected_project_idx -= 1;
-                            self.selected_project_task_idx = 0;
-                            self.selected_native_task_idx = 0;
-                            self.cockpit_preview_scroll = 0;
+                        } else if !self.projects.is_empty() {
+                            let visible = self.visible_project_indices();
+                            if let Some(pos) = visible.iter().position(|&idx| idx == self.selected_project_idx) {
+                                if pos > 0 {
+                                    self.selected_project_idx = visible[pos - 1];
+                                    self.selected_project_task_idx = 0;
+                                    self.selected_native_task_idx = 0;
+                                    self.cockpit_preview_scroll = 0;
+                                }
+                            } else if let Some(&first) = visible.first() {
+                                self.selected_project_idx = first;
+                            }
                         }
                     }
                     WorkTabMode::Console => {
@@ -2252,11 +2438,44 @@ impl App {
                 self.reader_scroll_offset = 0;
             }
         } else if self.active_tab == ActiveTab::Work && self.work_tab_mode == WorkTabMode::Projects {
-            if let Some(task) = self.project_tasks.get(self.selected_project_task_idx) {
-                self.current_document = Some(task.clone());
-                self.previous_tab = self.active_tab;
-                self.active_tab = ActiveTab::Reader;
-                self.reader_scroll_offset = 0;
+            if self.focused_pane == FocusedPane::Detail {
+                if let Some(t) = self.native_tasks.get(self.selected_native_task_idx) {
+                    let desc = if t.description.is_empty() {
+                        "*No description provided.*".to_string()
+                    } else {
+                        t.description.clone()
+                    };
+                    let task_md = format!(
+                        "# {}\n\n- **Task ID**: `{}`\n- **Project**: `{}`\n- **Status**: `{:?}`\n- **Priority**: `{}`\n- **Created**: `{}`\n- **Updated**: `{}`\n\n## Description\n\n{}\n",
+                        t.title, t.id, t.project, t.status, t.priority, t.created_at, t.updated_at, desc
+                    );
+                    let doc = Document {
+                        id: t.id.clone(),
+                        collection_id: self.collection_id.clone(),
+                        path: format!("tasks/{}.md", t.id),
+                        title: t.title.clone(),
+                        topic: "task".to_string(),
+                        status: crate::domain::DocumentStatus::Accepted,
+                        kind: crate::domain::DocumentKind::Spec,
+                        owner: t.project.clone(),
+                        issue: String::new(),
+                        replacement_id: None,
+                        supersedes: None,
+                        content: task_md,
+                        source: "native task".to_string(),
+                        available: true,
+                        stale: false,
+                        declared_status: Some(format!("{:?}", t.status)),
+                        checksum: String::new(),
+                        worktree_state: None,
+                        is_tombstone: false,
+                    };
+                    self.current_document = Some(doc);
+                    self.previous_tab = self.active_tab;
+                    self.active_tab = ActiveTab::Reader;
+                    self.reader_scroll_offset = 0;
+                    return;
+                }
             } else if let Some(proj) = self.projects.get(self.selected_project_idx) {
                 let status_path = format!("projects/{}/status.md", proj.name);
                 let full_p = self.root.join(&status_path);
@@ -4733,6 +4952,7 @@ mod tests {
                 decisions_count: 1,
                 has_status_doc: true,
                 health: "blocked".to_string(),
+                status: "active".to_string(),
                 active_task: Some("task-02".to_string()),
                 exit_criteria: Some("cargo test".to_string()),
                 exit_verified: false,
@@ -4750,6 +4970,7 @@ mod tests {
                 decisions_count: 0,
                 has_status_doc: true,
                 health: "healthy".to_string(),
+                status: "active".to_string(),
                 active_task: None,
                 exit_criteria: None,
                 exit_verified: false,
@@ -5118,6 +5339,7 @@ mod tests {
                 open_risks: 0,
                 decisions_count: 2,
                 health: "healthy".to_string(),
+                status: "active".to_string(),
                 active_task: None,
                 exit_criteria: None,
                 exit_verified: false,
@@ -5617,6 +5839,164 @@ mod tests {
         assert_eq!(app.knowledge_items.len(), 1);
         app.delete_selected_knowledge(&db);
         assert_eq!(app.knowledge_items.len(), 0);
+    }
+
+    #[test]
+    fn test_work_cockpit_quick_transition_native_task() {
+        let db = Database::open_in_memory("test_coll", "test_prof").unwrap();
+        let mut app = App::new("test_coll", "test_prof");
+
+        let task = TaskRecord {
+            id: "task-01".to_string(),
+            collection_id: "test_coll".to_string(),
+            project: "alpha".to_string(),
+            session_id: None,
+            title: "Task One".to_string(),
+            description: "First task".to_string(),
+            status: TaskState::Pending,
+            priority: 80,
+            created_at: "2026-10-08T10:00:00Z".to_string(),
+            updated_at: "2026-10-08T10:00:00Z".to_string(),
+            completed_at: None,
+            metadata_json: "{}".to_string(),
+        };
+        Queries::upsert_task(db.conn(), &task).unwrap();
+
+        app.projects.push(ProjectSummary {
+            name: "alpha".to_string(),
+            path: "projects/alpha".to_string(),
+            total_documents: 1,
+            tasks_pending: 1,
+            tasks_in_progress: 0,
+            tasks_completed: 0,
+            tasks_blocked: 0,
+            open_risks: 0,
+            decisions_count: 0,
+            has_status_doc: false,
+            health: "healthy".to_string(),
+            status: "active".to_string(),
+            active_task: None,
+            exit_criteria: None,
+            exit_verified: false,
+            churn_warning: false,
+        });
+
+        app.selected_project_idx = 0;
+        app.refresh_project_tasks(&db);
+        assert_eq!(app.native_tasks.len(), 1);
+        assert_eq!(app.native_tasks[0].status, TaskState::Pending);
+
+        app.selected_native_task_idx = 0;
+        let res = app.quick_transition_selected_native_task(&db);
+        assert!(res.is_ok());
+        assert_eq!(app.native_tasks[0].status, TaskState::InProgress);
+
+        let res2 = app.quick_transition_selected_native_task(&db);
+        assert!(res2.is_ok());
+        assert_eq!(app.native_tasks[0].status, TaskState::Completed);
+
+        let res3 = app.quick_transition_selected_native_task(&db);
+        assert!(res3.is_ok());
+        assert_eq!(app.native_tasks[0].status, TaskState::Pending);
+    }
+
+    #[test]
+    fn test_work_cockpit_projects_filter_and_visibility() {
+        let mut app = App::new("test_coll", "test_prof");
+
+        app.projects.push(ProjectSummary {
+            name: "active-proj".to_string(),
+            path: "projects/active-proj".to_string(),
+            total_documents: 1,
+            tasks_pending: 1,
+            tasks_in_progress: 1,
+            tasks_completed: 0,
+            tasks_blocked: 0,
+            open_risks: 0,
+            decisions_count: 0,
+            has_status_doc: false,
+            health: "healthy".to_string(),
+            status: "active".to_string(),
+            active_task: None,
+            exit_criteria: None,
+            exit_verified: false,
+            churn_warning: false,
+        });
+
+        app.projects.push(ProjectSummary {
+            name: "blocked-proj".to_string(),
+            path: "projects/blocked-proj".to_string(),
+            total_documents: 1,
+            tasks_pending: 0,
+            tasks_in_progress: 0,
+            tasks_completed: 0,
+            tasks_blocked: 1,
+            open_risks: 1,
+            decisions_count: 0,
+            has_status_doc: false,
+            health: "blocked".to_string(),
+            status: "blocked".to_string(),
+            active_task: None,
+            exit_criteria: None,
+            exit_verified: false,
+            churn_warning: false,
+        });
+
+        app.projects.push(ProjectSummary {
+            name: "closed-proj".to_string(),
+            path: "projects/closed-proj".to_string(),
+            total_documents: 1,
+            tasks_pending: 0,
+            tasks_in_progress: 0,
+            tasks_completed: 5,
+            tasks_blocked: 0,
+            open_risks: 0,
+            decisions_count: 0,
+            has_status_doc: false,
+            health: "healthy".to_string(),
+            status: "closed".to_string(),
+            active_task: None,
+            exit_criteria: None,
+            exit_verified: true,
+            churn_warning: false,
+        });
+
+        assert!(app.projects_filter_active_only);
+        let visible = app.visible_project_indices();
+        assert_eq!(visible.len(), 2);
+        assert_eq!(visible, vec![0, 1]);
+
+        app.toggle_projects_filter();
+        assert!(!app.projects_filter_active_only);
+        let all_visible = app.visible_project_indices();
+        assert_eq!(all_visible.len(), 3);
+        assert_eq!(all_visible, vec![0, 1, 2]);
+    }
+
+    #[test]
+    fn test_work_cockpit_actions_popover_lifecycle() {
+        let db = Database::open_in_memory("test_coll", "test_prof").unwrap();
+        let mut app = App::new("test_coll", "test_prof");
+
+        assert!(!app.show_actions_popover);
+        app.toggle_actions_popover();
+        assert!(app.show_actions_popover);
+        assert_eq!(app.actions_popover_idx, 0);
+
+        app.next_actions_popover_idx();
+        assert_eq!(app.actions_popover_idx, 1);
+
+        app.prev_actions_popover_idx();
+        assert_eq!(app.actions_popover_idx, 0);
+
+        app.prev_actions_popover_idx();
+        assert_eq!(app.actions_popover_idx, 5);
+
+        app.actions_popover_idx = 4;
+        let res = app.execute_selected_action(&db);
+        assert!(res.is_ok());
+        assert!(!app.show_actions_popover);
+        assert!(!app.projects_filter_active_only);
     }
 }
 

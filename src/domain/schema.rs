@@ -225,6 +225,8 @@ pub struct StatusDocument {
     #[serde(default)]
     pub goal: String,
     #[serde(default)]
+    pub out_of_charter: Option<String>,
+    #[serde(default)]
     pub baseline: Option<String>,
     #[serde(default)]
     pub active_task: Option<String>,

@@ -267,15 +267,18 @@ impl StatusEngine {
             if doc.goal.is_empty() {
                 doc.goal = Self::extract_goal_from_body(body);
             }
+            if doc.out_of_charter.is_none() {
+                doc.out_of_charter = Self::extract_fence_from_body(body);
+            }
             Ok(doc)
         } else {
-            // Synthesize StatusDocument from plain markdown body
             Ok(StatusDocument {
                 id: Some(format!("status-{}", project)),
                 title: Some(format!("{} Status", project)),
                 status: StatusState::Active,
                 health: HealthState::Healthy,
                 goal: Self::extract_goal_from_body(body),
+                out_of_charter: Self::extract_fence_from_body(body),
                 baseline: None,
                 active_task: None,
                 blockers: Vec::new(),
@@ -283,6 +286,48 @@ impl StatusEngine {
                 exit_criteria: None,
                 last_updated: None,
             })
+        }
+    }
+
+    fn extract_fence_from_body(body: &str) -> Option<String> {
+        let mut in_fence = false;
+        let mut fence_lines = Vec::new();
+
+        for line in body.lines() {
+            let trimmed = line.trim();
+            if trimmed.starts_with("| Out of charter |") || trimmed.starts_with("| out of charter |") || trimmed.starts_with("| Out of Charter |") {
+                let parts: Vec<&str> = trimmed.split('|').collect();
+                if parts.len() >= 3 {
+                    let val = parts[2].trim();
+                    if !val.is_empty() {
+                        return Some(val.to_string());
+                    }
+                }
+            } else if trimmed.starts_with("Out of charter:") || trimmed.starts_with("Out of Charter:") {
+                let val = trimmed.split_once(':').map(|(_, r)| r.trim()).unwrap_or("");
+                if !val.is_empty() {
+                    return Some(val.to_string());
+                }
+            } else if trimmed.starts_with("## Out of charter") || trimmed.starts_with("## Out of Charter") || trimmed.starts_with("# Out of charter") {
+                in_fence = true;
+                continue;
+            } else if in_fence {
+                if trimmed.starts_with('#') {
+                    break;
+                }
+                if !trimmed.is_empty() && !trimmed.starts_with("---") {
+                    fence_lines.push(trimmed);
+                    if fence_lines.len() >= 4 {
+                        break;
+                    }
+                }
+            }
+        }
+
+        if !fence_lines.is_empty() {
+            Some(fence_lines.join(" "))
+        } else {
+            None
         }
     }
 
@@ -299,7 +344,6 @@ impl StatusEngine {
             }
         }
 
-        // Fallback: extract the first non-header, non-table descriptive paragraph
         let mut in_table = false;
         for line in body.lines() {
             let trimmed = line.trim();
