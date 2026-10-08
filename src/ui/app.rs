@@ -194,17 +194,47 @@ pub enum ExploreTreeItem {
     Folder {
         path: String,
         name: String,
+        depth: usize,
         doc_count: usize,
+        direct_docs: usize,
         is_collapsed: bool,
     },
     Doc {
         doc_idx: usize,
         title: String,
         path: String,
+        depth: usize,
         status: String,
         kind: String,
+        is_tracker: bool,
     },
 }
+
+#[derive(Debug, Default)]
+pub struct TreeNode {
+    pub name: String,
+    pub path: String,
+    pub subfolders: std::collections::BTreeMap<String, TreeNode>,
+    pub doc_indices: Vec<usize>,
+}
+
+impl TreeNode {
+    pub fn total_docs(&self) -> usize {
+        let direct = self.doc_indices.len();
+        let nested: usize = self.subfolders.values().map(|s| s.total_docs()).sum();
+        direct + nested
+    }
+
+    pub fn collect_all_paths(&self, acc: &mut Vec<String>) {
+        if !self.path.is_empty() {
+            acc.push(self.path.clone());
+        }
+        for sub in self.subfolders.values() {
+            sub.collect_all_paths(acc);
+        }
+    }
+}
+
 
 pub struct App {
     pub should_quit: bool,
@@ -588,6 +618,112 @@ impl App {
         self.sync_list_states();
     }
 
+    pub fn build_tree_hierarchy(visible_docs: &[(usize, &Document)], all_docs: &[Document]) -> TreeNode {
+        let mut root = TreeNode::default();
+        for &(doc_idx, doc) in visible_docs {
+            let folder = Path::new(&doc.path)
+                .parent()
+                .map(|p| p.to_string_lossy().to_string())
+                .unwrap_or_default();
+            let folder = if folder.is_empty() {
+                "general".to_string()
+            } else {
+                folder
+            };
+
+            let segments: Vec<&str> = folder.split('/').filter(|s| !s.is_empty()).collect();
+            let mut curr = &mut root;
+            let mut accumulated_path = String::new();
+            for seg in segments {
+                if !accumulated_path.is_empty() {
+                    accumulated_path.push('/');
+                }
+                accumulated_path.push_str(seg);
+                let path_clone = accumulated_path.clone();
+                curr = curr.subfolders.entry(seg.to_string()).or_insert_with(|| TreeNode {
+                    name: seg.to_string(),
+                    path: path_clone,
+                    subfolders: std::collections::BTreeMap::new(),
+                    doc_indices: Vec::new(),
+                });
+            }
+            curr.doc_indices.push(doc_idx);
+        }
+
+        fn sort_node_docs(node: &mut TreeNode, all_docs: &[Document]) {
+            node.doc_indices.sort_by(|&a, &b| {
+                let doc_a = &all_docs[a];
+                let doc_b = &all_docs[b];
+                let a_is_tracker = doc_a.path.to_lowercase().ends_with("status.md");
+                let b_is_tracker = doc_b.path.to_lowercase().ends_with("status.md");
+                match (a_is_tracker, b_is_tracker) {
+                    (true, false) => std::cmp::Ordering::Less,
+                    (false, true) => std::cmp::Ordering::Greater,
+                    _ => doc_a.title.to_lowercase().cmp(&doc_b.title.to_lowercase()),
+                }
+            });
+            for sub in node.subfolders.values_mut() {
+                sort_node_docs(sub, all_docs);
+            }
+        }
+
+        sort_node_docs(&mut root, all_docs);
+        root
+    }
+
+    fn flatten_tree_node(
+        node: &TreeNode,
+        depth: usize,
+        collapsed: &std::collections::HashSet<String>,
+        docs: &[Document],
+        out: &mut Vec<ExploreTreeItem>,
+    ) {
+        let is_collapsed = collapsed.contains(&node.path);
+        let direct_docs = node.doc_indices.len();
+        let total_docs = node.total_docs();
+
+        out.push(ExploreTreeItem::Folder {
+            path: node.path.clone(),
+            name: node.name.clone(),
+            depth,
+            doc_count: total_docs,
+            direct_docs,
+            is_collapsed,
+        });
+
+        if is_collapsed {
+            return;
+        }
+
+        for sub in node.subfolders.values() {
+            Self::flatten_tree_node(sub, depth + 1, collapsed, docs, out);
+        }
+
+        for &doc_idx in &node.doc_indices {
+            let doc = &docs[doc_idx];
+            let is_tracker = doc.path.to_lowercase().ends_with("status.md");
+            out.push(ExploreTreeItem::Doc {
+                doc_idx,
+                title: doc.title.clone(),
+                path: doc.path.clone(),
+                depth: depth + 1,
+                status: doc.status.as_str().to_string(),
+                kind: doc.kind.as_str().to_string(),
+                is_tracker,
+            });
+        }
+    }
+
+    pub fn build_explore_tree(&self) -> Vec<ExploreTreeItem> {
+        let visible_docs = self.visible_explore_docs();
+        let root = Self::build_tree_hierarchy(&visible_docs, &self.documents);
+        let mut items = Vec::new();
+        for sub in root.subfolders.values() {
+            Self::flatten_tree_node(sub, 0, &self.collapsed_folders, &self.documents, &mut items);
+        }
+        items
+    }
+
     pub fn expand_all_folders(&mut self) {
         self.collapsed_folders.clear();
         self.selected_tree_idx = 0;
@@ -595,96 +731,118 @@ impl App {
     }
 
     pub fn collapse_all_folders(&mut self) {
-        for doc in &self.documents {
-            let folder = Path::new(&doc.path)
-                .parent()
-                .map(|p| p.to_string_lossy().to_string())
-                .unwrap_or_default();
-            let clean = if folder.is_empty() {
-                "general".to_string()
-            } else {
-                folder
-            };
-            self.collapsed_folders.insert(clean);
-        }
+        let visible_docs = self.visible_explore_docs();
+        let root = Self::build_tree_hierarchy(&visible_docs, &self.documents);
+        let mut all_paths = Vec::new();
+        root.collect_all_paths(&mut all_paths);
+        self.collapsed_folders = all_paths.into_iter().collect();
         self.selected_tree_idx = 0;
         self.sync_list_states();
     }
 
     pub fn toggle_tree_collapse(&mut self, folder: &str) {
+        let prev_selected = self.selected_tree_item();
         if self.collapsed_folders.contains(folder) {
             self.collapsed_folders.remove(folder);
         } else {
             self.collapsed_folders.insert(folder.to_string());
         }
+        let tree = self.build_explore_tree();
+        if !tree.is_empty() {
+            let mut found = false;
+            if let Some(ref prev) = prev_selected {
+                for (idx, item) in tree.iter().enumerate() {
+                    match (prev, item) {
+                        (ExploreTreeItem::Doc { doc_idx: a, .. }, ExploreTreeItem::Doc { doc_idx: b, .. }) if a == b => {
+                            self.selected_tree_idx = idx;
+                            found = true;
+                            break;
+                        }
+                        (ExploreTreeItem::Folder { path: a, .. }, ExploreTreeItem::Folder { path: b, .. }) if a == b => {
+                            self.selected_tree_idx = idx;
+                            found = true;
+                            break;
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            if !found {
+                if let Some(folder_pos) = tree.iter().position(|item| {
+                    if let ExploreTreeItem::Folder { path, .. } = item {
+                        path == folder
+                    } else {
+                        false
+                    }
+                }) {
+                    self.selected_tree_idx = folder_pos;
+                } else {
+                    self.selected_tree_idx = self.selected_tree_idx.min(tree.len() - 1);
+                }
+            }
+            if let Some(ExploreTreeItem::Doc { doc_idx, .. }) = tree.get(self.selected_tree_idx) {
+                self.selected_doc_idx = *doc_idx;
+            }
+        }
         self.sync_list_states();
+    }
+
+    pub fn tree_expand_or_step_child(&mut self) {
+        let tree = self.build_explore_tree();
+        if let Some(item) = tree.get(self.selected_tree_idx) {
+            match item {
+                ExploreTreeItem::Folder { path, is_collapsed, .. } => {
+                    if *is_collapsed {
+                        let p = path.clone();
+                        self.toggle_tree_collapse(&p);
+                    } else if self.selected_tree_idx + 1 < tree.len() {
+                        self.selected_tree_idx += 1;
+                        if let ExploreTreeItem::Doc { doc_idx, .. } = &tree[self.selected_tree_idx] {
+                            self.selected_doc_idx = *doc_idx;
+                        }
+                        self.preview_scroll_offset = 0;
+                        self.sync_list_states();
+                    }
+                }
+                ExploreTreeItem::Doc { .. } => {}
+            }
+        }
+    }
+
+    pub fn tree_collapse_or_jump_parent(&mut self) {
+        let tree = self.build_explore_tree();
+        if let Some(item) = tree.get(self.selected_tree_idx) {
+            let (current_depth, is_folder_expanded, folder_path) = match item {
+                ExploreTreeItem::Folder { depth, is_collapsed, path, .. } => (*depth, !*is_collapsed, Some(path.clone())),
+                ExploreTreeItem::Doc { depth, .. } => (*depth, false, None),
+            };
+
+            if is_folder_expanded {
+                if let Some(p) = folder_path {
+                    self.toggle_tree_collapse(&p);
+                    return;
+                }
+            }
+
+            if current_depth > 0 {
+                for i in (0..self.selected_tree_idx).rev() {
+                    if let ExploreTreeItem::Folder { depth, .. } = &tree[i] {
+                        if *depth == current_depth - 1 {
+                            self.selected_tree_idx = i;
+                            self.preview_scroll_offset = 0;
+                            self.sync_list_states();
+                            return;
+                        }
+                    }
+                }
+            }
+        }
     }
 
     pub fn toggle_work_handoffs(&mut self, db: &Database) {
         self.work_show_handoffs = !self.work_show_handoffs;
         self.selected_project_task_idx = 0;
         self.refresh_project_tasks(db);
-    }
-
-    pub fn build_explore_tree(&self) -> Vec<ExploreTreeItem> {
-        let mut folders: Vec<String> = Vec::new();
-        let visible_docs = self.visible_explore_docs();
-        for (_, doc) in &visible_docs {
-            let folder = Path::new(&doc.path)
-                .parent()
-                .map(|p| p.to_string_lossy().to_string())
-                .unwrap_or_default();
-            let clean_folder = if folder.is_empty() {
-                "general".to_string()
-            } else {
-                folder
-            };
-            if !folders.contains(&clean_folder) {
-                folders.push(clean_folder);
-            }
-        }
-        folders.sort();
-
-        let mut items = Vec::new();
-        for folder in folders {
-            let matching_indices: Vec<usize> = visible_docs
-                .iter()
-                .filter(|(_, doc)| {
-                    let f = Path::new(&doc.path)
-                        .parent()
-                        .map(|p| p.to_string_lossy().to_string())
-                        .unwrap_or_default();
-                    let cf = if f.is_empty() { "general" } else { &f };
-                    cf == folder
-                })
-                .map(|(idx, _)| *idx)
-                .collect();
-
-            let doc_count = matching_indices.len();
-            let is_collapsed = self.collapsed_folders.contains(&folder);
-
-            items.push(ExploreTreeItem::Folder {
-                path: folder.clone(),
-                name: folder.trim_end_matches('/').to_string(),
-                doc_count,
-                is_collapsed,
-            });
-
-            if !is_collapsed {
-                for idx in matching_indices {
-                    let doc = &self.documents[idx];
-                    items.push(ExploreTreeItem::Doc {
-                        doc_idx: idx,
-                        title: doc.title.clone(),
-                        path: doc.path.clone(),
-                        status: doc.status.as_str().to_string(),
-                        kind: doc.kind.as_str().to_string(),
-                    });
-                }
-            }
-        }
-
-        items
     }
 
     pub fn selected_tree_item(&self) -> Option<ExploreTreeItem> {
@@ -1963,9 +2121,9 @@ impl App {
                         let matching_count = self.documents.iter().filter(|d| {
                             let f = std::path::Path::new(&d.path).parent().map(|p| p.to_string_lossy().to_string()).unwrap_or_default();
                             let clean = if f.is_empty() { "general" } else { &f };
-                            clean == path
+                            clean == path || clean.starts_with(&format!("{}/", path))
                         }).count();
-                        let total_lines = 4 + matching_count * 3 + 4;
+                        let total_lines = 10 + matching_count * 3 + 4;
                         let (_, term_height) = crossterm::terminal::size().unwrap_or((80, 24));
                         let visible_lines = (term_height as usize).saturating_sub(8).max(4);
                         return total_lines.saturating_sub(visible_lines);
@@ -4889,5 +5047,165 @@ mod tests {
         assert!(App::is_durable_doc(&t1));
         assert!(!App::is_durable_doc(&t2));
     }
+
+    #[test]
+    fn test_explore_tree_nested_synthesis_and_ancestral_pruning() {
+        let mut app = App::new("test", "test");
+        app.documents = vec![
+            make_test_doc("d1", "projects/hyperkb/specs/tree.md", "Tree Architecture"),
+            make_test_doc("d2", "projects/hyperkb/status.md", "Project Status"),
+            make_test_doc("d3", "decisions/adr-001.md", "ADR 001"),
+        ];
+
+        let tree = app.build_explore_tree();
+        assert_eq!(tree.len(), 7);
+
+        match &tree[0] {
+            ExploreTreeItem::Folder { path, name, depth, doc_count, direct_docs, is_collapsed } => {
+                assert_eq!(path, "decisions");
+                assert_eq!(name, "decisions");
+                assert_eq!(*depth, 0);
+                assert_eq!(*doc_count, 1);
+                assert_eq!(*direct_docs, 1);
+                assert!(!is_collapsed);
+            }
+            _ => panic!("Expected decisions folder at index 0"),
+        }
+
+        match &tree[2] {
+            ExploreTreeItem::Folder { path, name, depth, doc_count, direct_docs, is_collapsed } => {
+                assert_eq!(path, "projects");
+                assert_eq!(name, "projects");
+                assert_eq!(*depth, 0);
+                assert_eq!(*doc_count, 2);
+                assert_eq!(*direct_docs, 0);
+                assert!(!is_collapsed);
+            }
+            _ => panic!("Expected projects folder at index 2"),
+        }
+
+        match &tree[3] {
+            ExploreTreeItem::Folder { path, name, depth, doc_count, direct_docs, .. } => {
+                assert_eq!(path, "projects/hyperkb");
+                assert_eq!(name, "hyperkb");
+                assert_eq!(*depth, 1);
+                assert_eq!(*doc_count, 2);
+                assert_eq!(*direct_docs, 1);
+            }
+            _ => panic!("Expected hyperkb subfolder at index 3"),
+        }
+
+        match &tree[4] {
+            ExploreTreeItem::Folder { path, name, depth, doc_count, direct_docs, .. } => {
+                assert_eq!(path, "projects/hyperkb/specs");
+                assert_eq!(name, "specs");
+                assert_eq!(*depth, 2);
+                assert_eq!(*doc_count, 1);
+                assert_eq!(*direct_docs, 1);
+            }
+            _ => panic!("Expected specs subfolder at index 4"),
+        }
+
+        match &tree[5] {
+            ExploreTreeItem::Doc { title, depth, is_tracker, .. } => {
+                assert_eq!(title, "Tree Architecture");
+                assert_eq!(*depth, 3);
+                assert!(!is_tracker);
+            }
+            _ => panic!("Expected tree.md at index 5"),
+        }
+
+        match &tree[6] {
+            ExploreTreeItem::Doc { title, depth, is_tracker, .. } => {
+                assert_eq!(title, "Project Status");
+                assert_eq!(*depth, 2);
+                assert!(is_tracker);
+            }
+            _ => panic!("Expected status.md at index 6"),
+        }
+
+        app.toggle_tree_collapse("projects");
+        let pruned_tree = app.build_explore_tree();
+        assert_eq!(pruned_tree.len(), 3);
+        match &pruned_tree[2] {
+            ExploreTreeItem::Folder { path, is_collapsed, .. } => {
+                assert_eq!(path, "projects");
+                assert!(is_collapsed);
+            }
+            _ => panic!("Expected collapsed projects folder at index 2"),
+        }
+
+        app.collapse_all_folders();
+        let all_collapsed = app.build_explore_tree();
+        assert_eq!(all_collapsed.len(), 2);
+        assert!(matches!(&all_collapsed[0], ExploreTreeItem::Folder { path, is_collapsed: true, .. } if path == "decisions"));
+        assert!(matches!(&all_collapsed[1], ExploreTreeItem::Folder { path, is_collapsed: true, .. } if path == "projects"));
+
+        app.expand_all_folders();
+        let all_expanded = app.build_explore_tree();
+        assert_eq!(all_expanded.len(), 7);
+    }
+
+    #[test]
+    fn test_explore_tree_tracker_pinning_and_ordering() {
+        let mut app = App::new("test", "test");
+        app.documents = vec![
+            make_test_doc("d1", "core/zeta.md", "Zeta Doc"),
+            make_test_doc("d2", "core/status.md", "Core Status"),
+            make_test_doc("d3", "core/alpha.md", "Alpha Doc"),
+        ];
+
+        let tree = app.build_explore_tree();
+        assert_eq!(tree.len(), 4);
+        match &tree[1] {
+            ExploreTreeItem::Doc { title, is_tracker, .. } => {
+                assert_eq!(title, "Core Status");
+                assert!(is_tracker);
+            }
+            _ => panic!("Expected pinned tracker at index 1"),
+        }
+        match &tree[2] {
+            ExploreTreeItem::Doc { title, is_tracker, .. } => {
+                assert_eq!(title, "Alpha Doc");
+                assert!(!is_tracker);
+            }
+            _ => panic!("Expected Alpha Doc at index 2"),
+        }
+        match &tree[3] {
+            ExploreTreeItem::Doc { title, is_tracker, .. } => {
+                assert_eq!(title, "Zeta Doc");
+                assert!(!is_tracker);
+            }
+            _ => panic!("Expected Zeta Doc at index 3"),
+        }
+    }
+
+    #[test]
+    fn test_explore_tree_keyboard_navigation_helpers() {
+        let mut app = App::new("test", "test");
+        app.documents = vec![
+            make_test_doc("d1", "core/status.md", "Core Status"),
+            make_test_doc("d2", "core/alpha.md", "Alpha Doc"),
+        ];
+
+        app.collapse_all_folders();
+        app.selected_tree_idx = 0;
+        assert_eq!(app.build_explore_tree().len(), 1);
+
+        app.tree_expand_or_step_child();
+        assert_eq!(app.build_explore_tree().len(), 3);
+        assert_eq!(app.selected_tree_idx, 0);
+
+        app.tree_expand_or_step_child();
+        assert_eq!(app.selected_tree_idx, 1);
+
+        app.tree_collapse_or_jump_parent();
+        assert_eq!(app.selected_tree_idx, 0);
+
+        app.tree_collapse_or_jump_parent();
+        assert_eq!(app.build_explore_tree().len(), 1);
+        assert_eq!(app.selected_tree_idx, 0);
+    }
 }
+
 

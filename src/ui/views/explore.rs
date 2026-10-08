@@ -239,7 +239,7 @@ impl ExploreView {
             .map(|(idx, item)| {
                 let is_selected = idx == app.selected_tree_idx;
                 match item {
-                    ExploreTreeItem::Folder { path, name, doc_count, is_collapsed } => {
+                    ExploreTreeItem::Folder { path: _, name, depth, doc_count, direct_docs: _, is_collapsed } => {
                         let (icon, icon_style) = if *is_collapsed {
                             ("[+] ", Style::default().fg(t.status_proposed()).add_modifier(Modifier::BOLD))
                         } else {
@@ -251,39 +251,40 @@ impl ExploreView {
                             Style::default().fg(t.text_primary()).add_modifier(Modifier::BOLD)
                         };
 
-                        let depth = path.split('/').filter(|s| !s.is_empty()).count().saturating_sub(1);
-                        let indent = "  ".repeat(depth);
-                        let leaf_name = path.split('/').filter(|s| !s.is_empty()).last().unwrap_or(name);
+                        let indent = "  ".repeat(*depth);
 
                         ListItem::new(vec![
                             Line::from(vec![
                                 Span::raw(format!(" {}", indent)),
                                 Span::styled(icon, icon_style),
-                                Span::styled(format!("{}/", leaf_name), folder_style),
+                                Span::styled(format!("{}/", name), folder_style),
                                 Span::raw("  "),
                                 Span::styled(format!("({} docs)", doc_count), Style::default().fg(t.text_muted())),
                             ]),
                         ])
                     }
-                    ExploreTreeItem::Doc { title, status, path, .. } => {
+                    ExploreTreeItem::Doc { title, depth, status, is_tracker, .. } => {
                         let doc_style = if is_selected {
                             t.selected_row()
                         } else {
                             Style::default().fg(t.text_primary())
                         };
 
-                        let (badge_text, badge_style) = match status.as_str() {
-                            "accepted" => ("● ", t.badge_accepted()),
-                            "proposed" => ("○ ", t.badge_proposed()),
-                            "open" => ("▲ ", t.badge_risk()),
-                            "acknowledged" => ("✔ ", t.badge_acknowledged()),
-                            "resolved" => ("✔ ", t.badge_resolved()),
-                            "retired" | "superseded" => ("✕ ", Style::default().fg(t.status_superseded())),
-                            _ => ("· ", Style::default().fg(t.status_unknown())),
+                        let (badge_text, badge_style) = if *is_tracker {
+                            ("📌 ", Style::default().fg(t.accent()).add_modifier(Modifier::BOLD))
+                        } else {
+                            match status.as_str() {
+                                "accepted" => ("● ", t.badge_accepted()),
+                                "proposed" => ("○ ", t.badge_proposed()),
+                                "open" => ("▲ ", t.badge_risk()),
+                                "acknowledged" => ("✔ ", t.badge_acknowledged()),
+                                "resolved" => ("✔ ", t.badge_resolved()),
+                                "retired" | "superseded" => ("✕ ", Style::default().fg(t.status_superseded())),
+                                _ => ("· ", Style::default().fg(t.status_unknown())),
+                            }
                         };
 
-                        let depth = path.split('/').filter(|s| !s.is_empty()).count().saturating_sub(1);
-                        let indent = "  ".repeat(depth + 1);
+                        let indent = "  ".repeat(*depth);
 
                         ListItem::new(vec![
                             Line::from(vec![
@@ -298,7 +299,7 @@ impl ExploreView {
             .collect();
 
         let doc_count = app.visible_explore_docs().len();
-        let title_text = format!(" Tree View [E: Expand All • X: Collapse All • Space: Toggle • t: List] ({}) ", doc_count);
+        let title_text = format!(" Tree View [E: Expand All • X: Collapse All • Space/Click: Toggle • t: List] ({}) ", doc_count);
         let list = List::new(items)
             .block(
                 Block::default()
@@ -333,7 +334,7 @@ impl ExploreView {
                 ExploreTreeItem::Doc { .. } => {
                     Self::render_document_preview(frame, app, area);
                 }
-                ExploreTreeItem::Folder { path, name, doc_count, is_collapsed } => {
+                ExploreTreeItem::Folder { path, name, depth: _, doc_count, direct_docs, is_collapsed } => {
                     let border_color = if app.focused_pane == FocusedPane::Detail {
                         t.border_focused()
                     } else {
@@ -348,52 +349,129 @@ impl ExploreView {
                         .padding(Padding::new(2, 2, 1, 1))
                         .title(Span::styled(format!(" Directory: {}/ ", clean_name), t.title()));
 
-                    let matching_docs: Vec<&crate::domain::Document> = app.documents.iter().filter(|d| {
+                    let prefix = format!("{}/", path);
+                    let subdirs: Vec<String> = {
+                        let visible = app.visible_explore_docs();
+                        let mut set = std::collections::BTreeSet::new();
+                        for (_, d) in &visible {
+                            let f = std::path::Path::new(&d.path).parent().map(|p| p.to_string_lossy().to_string()).unwrap_or_default();
+                            let clean = if f.is_empty() { "general".to_string() } else { f };
+                            if clean.starts_with(&prefix) {
+                                let remainder = &clean[prefix.len()..];
+                                let first_seg = remainder.split('/').next().unwrap_or("");
+                                if !first_seg.is_empty() {
+                                    set.insert(first_seg.to_string());
+                                }
+                            }
+                        }
+                        set.into_iter().collect()
+                    };
+
+                    let mut matching_docs: Vec<&crate::domain::Document> = app.documents.iter().filter(|d| {
                         let f = std::path::Path::new(&d.path).parent().map(|p| p.to_string_lossy().to_string()).unwrap_or_default();
                         let clean = if f.is_empty() { "general" } else { &f };
                         clean == path
                     }).collect();
+                    matching_docs.sort_by(|a, b| {
+                        let a_is_tracker = a.path.to_lowercase().ends_with("status.md");
+                        let b_is_tracker = b.path.to_lowercase().ends_with("status.md");
+                        match (a_is_tracker, b_is_tracker) {
+                            (true, false) => std::cmp::Ordering::Less,
+                            (false, true) => std::cmp::Ordering::Greater,
+                            _ => a.title.to_lowercase().cmp(&b.title.to_lowercase()),
+                        }
+                    });
 
                     let rule_len = (area.width.saturating_sub(6) as usize).max(10);
-                    let docs_header = if rule_len > 32 {
-                        format!("────── Documents in this Directory {}", "─".repeat(rule_len.saturating_sub(33)))
-                    } else {
-                        "─".repeat(rule_len)
-                    };
-
                     let mut text = vec![
                         Line::from(vec![
                             Span::styled("Directory: ", Style::default().fg(t.text_muted()).add_modifier(Modifier::BOLD)),
-                            Span::styled(format!("{}/", clean_name), Style::default().fg(t.status_proposed()).add_modifier(Modifier::BOLD)),
+                            Span::styled(format!("{}/", clean_name), Style::default().fg(t.accent()).add_modifier(Modifier::BOLD)),
                             Span::raw("    "),
-                            Span::styled(format!("({} documents)", doc_count), Style::default().fg(t.accent())),
+                            Span::styled("Path: ", Style::default().fg(t.text_muted())),
+                            Span::styled(format!("{}/", path), Style::default().fg(t.text_muted())),
                         ]),
                         Line::from(""),
-                        Line::from(Span::styled(docs_header, Style::default().fg(t.border()))),
-                        Line::from(""),
+                        Line::from(vec![
+                            Span::styled("Total Documents: ", Style::default().fg(t.text_muted())),
+                            Span::styled(doc_count.to_string(), Style::default().fg(t.text_primary()).add_modifier(Modifier::BOLD)),
+                            Span::raw("   "),
+                            Span::styled("Direct Files: ", Style::default().fg(t.text_muted())),
+                            Span::styled(direct_docs.to_string(), Style::default().fg(t.status_accepted()).add_modifier(Modifier::BOLD)),
+                            Span::raw("   "),
+                            Span::styled("Subdirectories: ", Style::default().fg(t.text_muted())),
+                            Span::styled(subdirs.len().to_string(), Style::default().fg(t.status_proposed()).add_modifier(Modifier::BOLD)),
+                            Span::raw("   "),
+                            Span::styled("State: ", Style::default().fg(t.text_muted())),
+                            Span::styled(if is_collapsed { "Collapsed [+]" } else { "Expanded [-]" }, Style::default().fg(if is_collapsed { t.status_proposed() } else { t.accent() }).add_modifier(Modifier::BOLD)),
+                        ]),
                     ];
 
-                    for doc in matching_docs {
-                        let badge = match doc.status.as_str() {
-                            "accepted" => ("● ACCEPTED", t.badge_accepted()),
-                            "proposed" => ("○ PROPOSED", t.badge_proposed()),
-                            "open" => ("▲ OPEN", t.badge_risk()),
-                            "acknowledged" => ("✔ ACKNOWLEDGED", t.badge_acknowledged()),
-                            _ => ("· DOC", Style::default().fg(t.status_unknown())),
-                        };
-                        text.push(Line::from(vec![
-                            Span::styled(badge.0, badge.1),
-                            Span::raw("  "),
-                            Span::styled(&doc.title, Style::default().fg(t.text_primary()).add_modifier(Modifier::BOLD)),
-                        ]));
-                        text.push(Line::from(vec![
-                            Span::raw("   "),
-                            Span::styled(&doc.path, Style::default().fg(t.text_muted())),
-                        ]));
+                    if !subdirs.is_empty() {
                         text.push(Line::from(""));
+                        let subdirs_header = if rule_len > 22 {
+                            format!("────── Subdirectories {}", "─".repeat(rule_len.saturating_sub(23)))
+                        } else {
+                            "─".repeat(rule_len)
+                        };
+                        text.push(Line::from(Span::styled(subdirs_header, Style::default().fg(t.border()))));
+                        text.push(Line::from(""));
+                        for sub in &subdirs {
+                            let sub_full = format!("{}/{}", path, sub);
+                            let sub_docs_count = app.documents.iter().filter(|d| {
+                                let f = std::path::Path::new(&d.path).parent().map(|p| p.to_string_lossy().to_string()).unwrap_or_default();
+                                let clean = if f.is_empty() { "general" } else { &f };
+                                clean == sub_full || clean.starts_with(&format!("{}/", sub_full))
+                            }).count();
+                            text.push(Line::from(vec![
+                                Span::styled("  📁 ", Style::default().fg(t.accent())),
+                                Span::styled(format!("{}/", sub), Style::default().fg(t.text_primary()).add_modifier(Modifier::BOLD)),
+                                Span::raw("  "),
+                                Span::styled(format!("({} docs)", sub_docs_count), Style::default().fg(t.text_muted())),
+                            ]));
+                        }
                     }
 
-                    let rule_len = (area.width.saturating_sub(6) as usize).max(10);
+                    text.push(Line::from(""));
+                    let docs_header = if rule_len > 32 {
+                        format!("────── Direct Documents in this Directory {}", "─".repeat(rule_len.saturating_sub(33)))
+                    } else {
+                        "─".repeat(rule_len)
+                    };
+                    text.push(Line::from(Span::styled(docs_header, Style::default().fg(t.border()))));
+                    text.push(Line::from(""));
+
+                    if matching_docs.is_empty() {
+                        text.push(Line::from(Span::styled("  (No direct documents located at this directory level)", Style::default().fg(t.text_muted()))));
+                        text.push(Line::from(""));
+                    } else {
+                        for doc in matching_docs {
+                            let is_status = doc.path.to_lowercase().ends_with("status.md");
+                            let (badge_text, badge_style) = if is_status {
+                                ("📌 STATUS", Style::default().fg(t.accent()).add_modifier(Modifier::BOLD))
+                            } else {
+                                match doc.status.as_str() {
+                                    "accepted" => ("● ACCEPTED", t.badge_accepted()),
+                                    "proposed" => ("○ PROPOSED", t.badge_proposed()),
+                                    "open" => ("▲ OPEN", t.badge_risk()),
+                                    "acknowledged" => ("✔ ACKNOWLEDGED", t.badge_acknowledged()),
+                                    _ => ("· DOC", Style::default().fg(t.status_unknown())),
+                                }
+                            };
+                            text.push(Line::from(vec![
+                                Span::styled(format!("  {} ", badge_text), badge_style),
+                                Span::styled(&doc.title, Style::default().fg(t.text_primary()).add_modifier(Modifier::BOLD)),
+                                Span::raw("  "),
+                                Span::styled(format!("[{}]", doc.kind.as_str().to_uppercase()), Style::default().fg(t.text_muted())),
+                            ]));
+                            text.push(Line::from(vec![
+                                Span::raw("     "),
+                                Span::styled(&doc.path, Style::default().fg(t.text_muted())),
+                            ]));
+                            text.push(Line::from(""));
+                        }
+                    }
+
                     text.push(Line::from(Span::styled("─".repeat(rule_len), Style::default().fg(t.border()))));
                     text.push(Line::from(vec![
                         Span::styled("Press ", Style::default().fg(t.text_primary())),
@@ -401,9 +479,11 @@ impl ExploreView {
                         Span::styled(" or ", Style::default().fg(t.text_primary())),
                         Span::styled("[Space]", t.key_badge()),
                         Span::styled(if is_collapsed { " to expand this folder" } else { " to collapse this folder" }, Style::default().fg(t.text_primary())),
-                        Span::styled(", or ", Style::default().fg(t.text_primary())),
+                        Span::styled(", ", Style::default().fg(t.text_primary())),
+                        Span::styled("[Left/Right]", t.key_badge()),
+                        Span::styled(" to fold/unfold, ", Style::default().fg(t.text_primary())),
                         Span::styled("[t]", t.key_badge()),
-                        Span::styled(" to switch back to List view.", Style::default().fg(t.text_primary())),
+                        Span::styled(" for List view.", Style::default().fg(t.text_primary())),
                     ]));
 
                     let total_lines = text.len();

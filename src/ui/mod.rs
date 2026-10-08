@@ -603,7 +603,7 @@ fn run_loop(
                             KeyCode::Char('h') | KeyCode::Char('H') if app.active_tab == ActiveTab::Sessions => {
                                 app.cycle_session_harness_filter();
                             }
-                            KeyCode::Char('h') if app.active_tab != ActiveTab::Settings && app.active_tab != ActiveTab::Work && app.active_tab != ActiveTab::Sessions => app.toggle_help(),
+                            KeyCode::Char('h') if app.active_tab != ActiveTab::Settings && app.active_tab != ActiveTab::Work && app.active_tab != ActiveTab::Sessions && !(app.active_tab == ActiveTab::Explore && app.explore_tree_mode) => app.toggle_help(),
                             KeyCode::Char('H') if app.active_tab == ActiveTab::Work => {
                                 app.toggle_work_handoffs(db);
                             }
@@ -723,6 +723,12 @@ fn run_loop(
                             }
                             KeyCode::Right | KeyCode::Char('l') if app.active_tab == ActiveTab::Work => {
                                 app.focused_pane = crate::ui::app::FocusedPane::Detail;
+                            }
+                            KeyCode::Left | KeyCode::Char('h') if app.active_tab == ActiveTab::Explore && app.explore_tree_mode => {
+                                app.tree_collapse_or_jump_parent();
+                            }
+                            KeyCode::Right | KeyCode::Char('l') if app.active_tab == ActiveTab::Explore && app.explore_tree_mode => {
+                                app.tree_expand_or_step_child();
                             }
                             KeyCode::Char('g') | KeyCode::Home if app.active_tab == ActiveTab::Reader => {
                                 app.scroll_reader_to_top();
@@ -1166,23 +1172,38 @@ fn run_loop(
                                                 }
                                                 ActiveTab::Explore => {
                                                     if app.explore_tree_mode {
-                                                        let tree_idx = app.tree_list_state.offset() + rel_row.saturating_sub(1) as usize;
+                                                        let tree_idx = app.tree_list_state.offset() + (rel_row - 2) as usize;
                                                         let tree = app.build_explore_tree();
                                                         if tree_idx < tree.len() {
-                                                            if app.selected_tree_idx == tree_idx {
-                                                                app.open_selected();
-                                                            } else {
-                                                                app.selected_tree_idx = tree_idx;
-                                                                if let ExploreTreeItem::Doc { doc_idx, .. } = &tree[tree_idx] {
-                                                                    app.selected_doc_idx = *doc_idx;
+                                                            match &tree[tree_idx] {
+                                                                ExploreTreeItem::Folder { path, .. } => {
+                                                                    let p = path.clone();
+                                                                    app.selected_tree_idx = tree_idx;
+                                                                    app.toggle_tree_collapse(&p);
+                                                                }
+                                                                ExploreTreeItem::Doc { doc_idx, .. } => {
+                                                                    let target_doc = *doc_idx;
+                                                                    if app.selected_tree_idx == tree_idx && app.selected_doc_idx == target_doc {
+                                                                        app.open_selected();
+                                                                    } else {
+                                                                        app.selected_tree_idx = tree_idx;
+                                                                        app.selected_doc_idx = target_doc;
+                                                                        app.preview_scroll_offset = 0;
+                                                                    }
                                                                 }
                                                             }
                                                         }
                                                     } else {
                                                         let visible = app.visible_explore_docs();
-                                                        let item_idx = app.documents_list_state.offset() + (rel_row.saturating_sub(1) / 2) as usize;
+                                                        let item_idx = app.documents_list_state.offset() + ((rel_row - 2) / 2) as usize;
                                                         if item_idx < visible.len() {
-                                                            app.selected_doc_idx = visible[item_idx].0;
+                                                            let target_doc = visible[item_idx].0;
+                                                            if app.selected_doc_idx == target_doc {
+                                                                app.open_selected();
+                                                            } else {
+                                                                app.selected_doc_idx = target_doc;
+                                                                app.preview_scroll_offset = 0;
+                                                            }
                                                         }
                                                     }
                                                 }
