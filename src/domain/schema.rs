@@ -66,7 +66,7 @@ impl HealthState {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum TaskState {
     Pending,
@@ -93,6 +93,86 @@ impl TaskState {
             _ => Self::Pending,
         }
     }
+}
+
+fn default_metadata_json() -> String {
+    "{}".to_string()
+}
+
+fn default_knowledge_kind() -> KnowledgeKind {
+    KnowledgeKind::Note
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TaskRecord {
+    pub id: String,
+    pub collection_id: String,
+    pub project: String,
+    #[serde(default)]
+    pub session_id: Option<String>,
+    pub title: String,
+    #[serde(default)]
+    pub description: String,
+    #[serde(default = "default_task_state")]
+    pub status: TaskState,
+    #[serde(default)]
+    pub priority: i32,
+    pub created_at: String,
+    pub updated_at: String,
+    #[serde(default)]
+    pub completed_at: Option<String>,
+    #[serde(default = "default_metadata_json")]
+    pub metadata_json: String,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum KnowledgeKind {
+    Warning,
+    Pattern,
+    Decision,
+    Note,
+    Preference,
+}
+
+impl KnowledgeKind {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Warning => "warning",
+            Self::Pattern => "pattern",
+            Self::Decision => "decision",
+            Self::Note => "note",
+            Self::Preference => "preference",
+        }
+    }
+
+    pub fn from_str_loose(s: &str) -> Self {
+        match s.trim().to_lowercase().as_str() {
+            "warning" | "warn" | "hazard" | "danger" => Self::Warning,
+            "pattern" | "recipe" | "convention" => Self::Pattern,
+            "decision" | "adr" => Self::Decision,
+            "preference" | "pref" => Self::Preference,
+            _ => Self::Note,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct KnowledgeRecord {
+    pub id: String,
+    pub collection_id: String,
+    #[serde(default)]
+    pub project: String,
+    pub title: String,
+    pub content: String,
+    #[serde(default = "default_knowledge_kind")]
+    pub kind: KnowledgeKind,
+    #[serde(default)]
+    pub tags: String,
+    pub created_at: String,
+    pub updated_at: String,
+    #[serde(default = "default_metadata_json")]
+    pub metadata_json: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

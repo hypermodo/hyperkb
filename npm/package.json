@@ -1,6 +1,6 @@
 {
   "name": "@hypermodo/hyperkb",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "description": "Fast, resource-efficient local developer knowledge hub, anti-churn governor, and MCP server for AI coding agents",
   "main": "bin/hyperkb.js",
   "bin": {

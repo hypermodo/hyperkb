@@ -29,8 +29,8 @@ pub use project::ProjectSummary;
 pub use risk::{RiskApplicability, RiskCheck, RiskMatch};
 pub use schema::{
     AuditDocument, AuditVerdict, BlockerItem, CheckpointItem, ContractItem, ExitCriteria,
-    HealthState, MilestoneItem, PlanDocument, SpecDocument, StatusDocument, StatusState,
-    TaskDocument, TaskState, ViolationItem,
+    HealthState, KnowledgeKind, KnowledgeRecord, MilestoneItem, PlanDocument, SpecDocument,
+    StatusDocument, StatusState, TaskDocument, TaskRecord, TaskState, ViolationItem,
 };
 pub use session::{AgentSession, CriticalPathLock, SessionBriefing, SessionEventRecord, SessionScorecard};
 pub use telemetry::{compute_project_churn, ProjectVelocityTelemetry};

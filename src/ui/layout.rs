@@ -93,26 +93,33 @@ impl Header {
                 ]
             }
             ActiveTab::Explore => {
-                let list_span = if !app.explore_tree_mode {
-                    Span::styled("● List [t]", Style::default().fg(t.text_primary()).add_modifier(Modifier::BOLD))
+                let doc_label = if app.explore_tree_mode { "● Curated Tree [m]" } else { "● Curated Docs [m]" };
+                let docs_span = if app.knowledge_view_mode == crate::ui::app::KnowledgeViewMode::Documents {
+                    Span::styled(doc_label, Style::default().fg(t.text_primary()).add_modifier(Modifier::BOLD))
                 } else {
-                    Span::styled("List [t]", Style::default().fg(t.text_muted()))
+                    Span::styled("Curated Docs [m]", Style::default().fg(t.text_muted()))
                 };
-                let tree_span = if app.explore_tree_mode {
-                    Span::styled("● Tree [t]", Style::default().fg(t.text_primary()).add_modifier(Modifier::BOLD))
+                let living_label = format!("Living Knowledge ({}) [m]", app.knowledge_items.len());
+                let living_span = if app.knowledge_view_mode == crate::ui::app::KnowledgeViewMode::Living {
+                    Span::styled(format!("● {}", living_label), Style::default().fg(t.accent()).add_modifier(Modifier::BOLD))
                 } else {
-                    Span::styled("Tree [t]", Style::default().fg(t.text_muted()))
+                    Span::styled(living_label, Style::default().fg(t.text_muted()))
                 };
-                let scope_label = if app.explore_durable_only { "DURABLE [d]" } else { "ALL [d]" };
+                let kind_label = match app.knowledge_kind_filter {
+                    None => "ALL",
+                    Some(crate::domain::KnowledgeKind::Warning) => "WARNINGS",
+                    Some(crate::domain::KnowledgeKind::Pattern) => "PATTERNS",
+                    Some(crate::domain::KnowledgeKind::Decision) => "DECISIONS",
+                    Some(crate::domain::KnowledgeKind::Note) => "NOTES",
+                    Some(crate::domain::KnowledgeKind::Preference) => "PREFERENCES",
+                };
                 vec![
                     Span::styled("  View:  ", Style::default().fg(t.text_muted())),
-                    list_span,
+                    docs_span,
                     Span::styled("   •   ", Style::default().fg(t.border())),
-                    tree_span,
-                    Span::styled("   |   Scope: ", Style::default().fg(t.text_muted())),
-                    Span::styled(scope_label, Style::default().fg(t.status_proposed()).add_modifier(Modifier::BOLD)),
-                    Span::styled("   |   Category [c]: ", Style::default().fg(t.text_muted())),
-                    Span::styled(app.selected_category.to_uppercase(), Style::default().fg(t.accent()).add_modifier(Modifier::BOLD)),
+                    living_span,
+                    Span::styled("   |   Kind [f]: ", Style::default().fg(t.text_muted())),
+                    Span::styled(kind_label, Style::default().fg(t.status_proposed()).add_modifier(Modifier::BOLD)),
                 ]
             }
             ActiveTab::Directives => {
@@ -232,26 +239,13 @@ impl Header {
                     }
                 }
                 ActiveTab::Explore => {
-                    if col >= 8 && col <= 36 {
-                        app.toggle_explore_tree_mode();
+                    if col >= 8 && col <= 50 {
+                        app.toggle_knowledge_view_mode(db);
                         return true;
                     }
-                    if col >= 37 && col <= 61 {
-                        app.toggle_explore_durable();
+                    if col >= 51 && col <= 90 {
+                        app.cycle_knowledge_kind_filter(db);
                         return true;
-                    }
-                    if col >= 62 && col <= 85 {
-                        app.next_category(db);
-                        return true;
-                    }
-                    let mut cur_x = 86u16;
-                    for cat in App::CATEGORIES {
-                        let pill_w = (cat.len() + 4) as u16;
-                        if col >= cur_x && col < cur_x + pill_w {
-                            app.set_category(cat, db);
-                            return true;
-                        }
-                        cur_x += pill_w + 1;
                     }
                 }
                 ActiveTab::Sessions => {
@@ -305,21 +299,19 @@ impl Footer {
                     ActiveTab::Work => match app.work_tab_mode {
                         crate::ui::app::WorkTabMode::Projects => vec![
                             Span::styled("[/] ", Style::default().fg(t.status_proposed()).add_modifier(Modifier::BOLD)),
-                            Span::raw("Command Dock   "),
+                            Span::raw("Dock   "),
+                            Span::styled("[n] ", Style::default().fg(t.status_accepted()).add_modifier(Modifier::BOLD)),
+                            Span::raw("New Task   "),
                             Span::styled("[t] ", Style::default().fg(t.status_accepted()).add_modifier(Modifier::BOLD)),
                             Span::raw("Transition   "),
-                            Span::styled("[H] ", Style::default().fg(t.status_proposed()).add_modifier(Modifier::BOLD)),
-                            Span::raw("Handoffs   "),
-                            Span::styled("[Enter] ", Style::default().fg(t.accent())),
-                            Span::raw("Read   "),
-                            Span::styled("[o] ", Style::default().fg(t.accent())),
-                            Span::raw("IDE   "),
-                            Span::styled("[Tab] ", Style::default().fg(t.accent())),
-                            Span::raw("Pane   "),
-                            Span::styled("[w] ", Style::default().fg(t.accent())),
-                            Span::raw("Risks   "),
-                            Span::styled("[c] ", Style::default().fg(t.accent())),
-                            Span::raw("Logs   "),
+                            Span::styled("[p] ", Style::default().fg(t.accent()).add_modifier(Modifier::BOLD)),
+                            Span::raw("Priority   "),
+                            Span::styled("[f] ", Style::default().fg(t.accent()).add_modifier(Modifier::BOLD)),
+                            Span::raw("Filter   "),
+                            Span::styled("[x] ", Style::default().fg(t.status_risk()).add_modifier(Modifier::BOLD)),
+                            Span::raw("Delete   "),
+                            Span::styled("[v] ", Style::default().fg(t.status_accepted()).add_modifier(Modifier::BOLD)),
+                            Span::raw("Verify Exit   "),
                             Span::styled("[?] ", Style::default().fg(t.accent())),
                             Span::raw("Help"),
                         ],
@@ -354,7 +346,20 @@ impl Footer {
                             Span::raw("Help"),
                         ],
                     },
-                    ActiveTab::Explore => if app.explore_tree_mode {
+                    ActiveTab::Explore => if app.knowledge_view_mode == crate::ui::app::KnowledgeViewMode::Living {
+                        vec![
+                            Span::styled("[/] ", Style::default().fg(t.status_proposed()).add_modifier(Modifier::BOLD)),
+                            Span::raw("Dock   "),
+                            Span::styled("[m] ", Style::default().fg(t.status_accepted()).add_modifier(Modifier::BOLD)),
+                            Span::raw("Curated Docs   "),
+                            Span::styled("[f] ", Style::default().fg(t.accent()).add_modifier(Modifier::BOLD)),
+                            Span::raw("Kind Filter   "),
+                            Span::styled("[x] ", Style::default().fg(t.status_risk()).add_modifier(Modifier::BOLD)),
+                            Span::raw("Delete   "),
+                            Span::styled("[?] ", Style::default().fg(t.accent())),
+                            Span::raw("Help"),
+                        ]
+                    } else if app.explore_tree_mode {
                         vec![
                             Span::styled("[/] ", Style::default().fg(t.status_proposed()).add_modifier(Modifier::BOLD)),
                             Span::raw("Command Dock   "),

@@ -1,8 +1,8 @@
 use chrono::Utc;
 use clap::{Parser, Subcommand};
 use hyperkb::core::{
-    Archeology, DecisionWorkflow, DirectiveWorkflow, Git, GrantStore, HarnessInit, KbLinter,
-    MaintenanceManager, RiskWorkflow, Scanner, SessionManager, StatusEngine,
+    Archeology, CollabImporter, DecisionWorkflow, DirectiveWorkflow, Git, GrantStore, HarnessInit,
+    KbLinter, MaintenanceManager, RiskWorkflow, Scanner, SessionManager, StatusEngine,
 };
 use hyperkb::domain::{
     ActionKind, Actor, BrowseOptions, GrantConstraints, HealthState, RepoManifest, TaskState,
@@ -293,6 +293,15 @@ enum Commands {
         project: String,
         /// Output result as JSON
         #[arg(long)]
+        json: bool,
+    },
+    #[command(alias = "import", about = "Ingest tasks and living knowledge from a legacy Claude-Collab SQLite database")]
+    ImportCollab {
+        #[arg(help = "Path to legacy claude-collab.sqlite database")]
+        source: PathBuf,
+        #[arg(short, long, help = "Optional project name override (defaults to auto-detected project from paths)")]
+        project: Option<String>,
+        #[arg(long, help = "Output result as JSON")]
         json: bool,
     },
 }
@@ -1704,6 +1713,29 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
                 Err(err) => {
                     eprintln!("Error verifying exit criteria: {}", err);
+                    std::process::exit(1);
+                }
+            }
+        },
+        Some(Commands::ImportCollab { source, project, json }) => {
+            match CollabImporter::import(source, db.conn(), &collection_id, project.as_deref()) {
+                Ok(report) => {
+                    if json {
+                        println!("{}", serde_json::json!({
+                            "status": "success",
+                            "tasks_imported": report.tasks_imported,
+                            "knowledge_imported": report.knowledge_imported,
+                            "source_sha256": report.source_sha256,
+                        }));
+                    } else {
+                        println!("✔ Successfully ingested Claude-Collab database:");
+                        println!("  • Tasks imported:     {}", report.tasks_imported);
+                        println!("  • Knowledge imported: {}", report.knowledge_imported);
+                        println!("  • Source SHA-256:     {}", report.source_sha256);
+                    }
+                }
+                Err(err) => {
+                    eprintln!("Error ingesting Claude-Collab database: {}", err);
                     std::process::exit(1);
                 }
             }

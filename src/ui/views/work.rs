@@ -1,4 +1,4 @@
-use crate::domain::{DocumentKind, DocumentStatus};
+use crate::domain::{DocumentKind, DocumentStatus, schema::TaskState};
 use crate::ui::app::{App, FocusedPane, WorkTabMode};
 use crate::ui::markdown::MarkdownFormatter;
 use ratatui::{
@@ -292,12 +292,27 @@ impl WorkView {
             .constraints([Constraint::Percentage(55), Constraint::Percentage(45)])
             .split(main_chunks[1]);
 
-        let task_title = if app.work_show_handoffs {
+        let filter_str = match app.native_task_filter {
+            None => "ALL",
+            Some(TaskState::InProgress) => "IN PROGRESS",
+            Some(TaskState::Blocked) => "BLOCKED",
+            Some(TaskState::Pending) => "PENDING",
+            Some(TaskState::Completed) => "COMPLETED",
+        };
+        let in_prog = app.native_tasks.iter().filter(|t| t.status == TaskState::InProgress).count();
+        let blocked = app.native_tasks.iter().filter(|t| t.status == TaskState::Blocked).count();
+        let pending = app.native_tasks.iter().filter(|t| t.status == TaskState::Pending).count();
+        let task_title = if !app.native_tasks.is_empty() {
+            format!(
+                " Tactical Tasks ({} Active, {} Blocked, {} Pending) [Filter [f]: {} | t: Status | p: Priority | n: New | v: Verify] ",
+                in_prog, blocked, pending, filter_str
+            )
+        } else if app.work_show_handoffs {
             format!(" Tasks & All Docs ({}) [t: Transition | H: Hide Handoffs | Enter: Read | o: IDE] ", app.project_tasks.len())
         } else if app.project_handoffs_count > 0 {
             format!(" Tasks & Control Docs ({}) [t: Transition | H: Handoffs ({}) | Enter: Read | o: IDE] ", app.project_tasks.len(), app.project_handoffs_count)
         } else {
-            format!(" Tasks & Control Docs ({}) [t: Transition | Enter: Read | o: IDE] ", app.project_tasks.len())
+            format!(" Tasks & Control Docs ({}) [n: New Task | t: Transition | Enter: Read | o: IDE] ", app.project_tasks.len())
         };
 
         let task_block = Block::default()
@@ -307,13 +322,77 @@ impl WorkView {
             .padding(Padding::new(1, 1, 0, 0))
             .title(Span::styled(task_title, t.title()));
 
-        if app.project_tasks.is_empty() {
+        if !app.native_tasks.is_empty() {
+            let task_items: Vec<ListItem> = app
+                .native_tasks
+                .iter()
+                .enumerate()
+                .map(|(idx, task)| {
+                    let is_sel = idx == app.selected_native_task_idx;
+                    let status_badge = match task.status {
+                        TaskState::InProgress => Span::styled(" ▶ ACTIVE ", t.badge_accepted()),
+                        TaskState::Blocked => Span::styled(" ✖ BLOCKED ", t.badge_risk()),
+                        TaskState::Pending => Span::styled(" ○ PENDING ", t.badge_proposed()),
+                        TaskState::Completed => Span::styled(" ✔ DONE ", t.badge_resolved()),
+                    };
+                    let pri_badge = if task.priority >= 90 {
+                        Span::styled(format!(" P: {:>3} ", task.priority), t.badge_risk().add_modifier(Modifier::BOLD))
+                    } else if task.priority >= 70 {
+                        Span::styled(format!(" P: {:>3} ", task.priority), Style::default().fg(t.accent()).add_modifier(Modifier::BOLD))
+                    } else {
+                        Span::styled(format!(" P: {:>3} ", task.priority), Style::default().fg(t.text_muted()))
+                    };
+                    let title = Span::styled(
+                        format!(" {}", task.title),
+                        if is_sel {
+                            t.selected_row()
+                        } else {
+                            Style::default().fg(t.text_primary()).add_modifier(Modifier::BOLD)
+                        },
+                    );
+                    let short_id = if task.id.len() > 8 { &task.id[..8] } else { &task.id };
+                    let desc_snippet = if task.description.len() > 70 { &task.description[..70] } else { &task.description };
+                    let subline = Span::styled(
+                        format!("    ID: {} • Updated: {} • {}", short_id, &task.updated_at[..10.min(task.updated_at.len())], desc_snippet),
+                        Style::default().fg(t.text_muted()),
+                    );
+                    ListItem::new(vec![
+                        Line::from(vec![status_badge, Span::styled(" ", Style::default()), pri_badge, title]),
+                        Line::from(subline),
+                    ])
+                })
+                .collect();
+
+            let task_list = List::new(task_items)
+                .block(task_block)
+                .highlight_style(t.selected_row());
+            frame.render_stateful_widget(task_list, funnel_chunks[0], &mut app.native_tasks_list_state);
+
+            let total_tasks = app.native_tasks.len();
+            if total_tasks > 0 {
+                let mut scrollbar_state = ScrollbarState::new(total_tasks.saturating_sub(1))
+                    .position(app.selected_native_task_idx);
+                let scrollbar = Scrollbar::default()
+                    .orientation(ScrollbarOrientation::VerticalRight)
+                    .begin_symbol(Some("▲"))
+                    .end_symbol(Some("▼"))
+                    .track_symbol(Some("│"))
+                    .thumb_symbol("█");
+                frame.render_stateful_widget(scrollbar, funnel_chunks[0], &mut scrollbar_state);
+            }
+        } else if app.project_tasks.is_empty() {
             let empty_p = Paragraph::new(vec![
                 Line::from(""),
                 Line::from(Span::styled(
-                    format!("No documents or tasks indexed in projects/{}/", proj.name),
+                    format!("No tactical tasks or documents in projects/{}/", proj.name),
                     Style::default().fg(t.text_muted()),
                 )),
+                Line::from(""),
+                Line::from(vec![
+                    Span::styled("Press ", Style::default().fg(t.text_muted())),
+                    Span::styled("[n] New Task", Style::default().fg(t.accent()).add_modifier(Modifier::BOLD)),
+                    Span::styled(" to create a tactical task in this project.", Style::default().fg(t.text_muted())),
+                ]),
             ])
             .block(task_block);
             frame.render_widget(empty_p, funnel_chunks[0]);
@@ -392,55 +471,111 @@ impl WorkView {
             }
         }
 
-        // Preview snippet below
-        let preview_block = Block::default()
-            .borders(Borders::ALL)
-            .border_style(Style::default().fg(t.border()))
-            .style(Style::default().bg(t.bg_panel()).fg(t.text_primary()))
-            .padding(Padding::new(2, 2, 0, 0))
-            .title(Span::styled(" Document Snippet / Summary [Scroll: PgUp/PgDn/Wheel] ", t.title()));
+        if !app.native_tasks.is_empty() {
+            let preview_block = Block::default()
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(t.border()))
+                .style(Style::default().bg(t.bg_panel()).fg(t.text_primary()))
+                .padding(Padding::new(2, 2, 0, 0))
+                .title(Span::styled(" Tactical Task Inspector [Scroll: PgUp/PgDn/Wheel] ", t.title()));
 
-        if let Some(doc) = app.project_tasks.get(app.selected_project_task_idx) {
-            let preview_width = funnel_chunks[1].width.saturating_sub(6) as usize;
-            let formatted_lines = MarkdownFormatter::format_markdown_with_theme(&doc.content, preview_width, &t);
-            let total_lines = formatted_lines.len();
-            let visible_lines = funnel_chunks[1].height.saturating_sub(4) as usize;
-            let max_scroll = total_lines.saturating_sub(visible_lines);
-            let scroll_offset = app.cockpit_preview_scroll.min(max_scroll);
+            if let Some(task) = app.native_tasks.get(app.selected_native_task_idx) {
+                let preview_width = funnel_chunks[1].width.saturating_sub(6) as usize;
+                let formatted_lines = MarkdownFormatter::format_markdown_with_theme(&task.description, preview_width, &t);
+                let total_lines = formatted_lines.len();
+                let visible_lines = funnel_chunks[1].height.saturating_sub(4) as usize;
+                let max_scroll = total_lines.saturating_sub(visible_lines);
+                let scroll_offset = app.cockpit_preview_scroll.min(max_scroll);
 
-            let mut preview_lines = vec![
-                Line::from(vec![
-                    Span::styled("File:  ", Style::default().fg(t.text_muted()).add_modifier(Modifier::BOLD)),
-                    Span::styled(&doc.path, Style::default().fg(t.accent())),
-                    Span::styled(format!("  ({}/{} lines)", (scroll_offset + 1).min(total_lines), total_lines), Style::default().fg(t.text_muted())),
-                ]),
-                Line::from(""),
-            ];
+                let mut preview_lines = vec![
+                    Line::from(vec![
+                        Span::styled("Task: ", Style::default().fg(t.text_muted()).add_modifier(Modifier::BOLD)),
+                        Span::styled(&task.title, Style::default().fg(t.accent()).add_modifier(Modifier::BOLD)),
+                        Span::styled(format!("  (P: {}, Status: {:?})", task.priority, task.status), Style::default().fg(t.text_muted())),
+                    ]),
+                    Line::from(vec![
+                        Span::styled("ID:   ", Style::default().fg(t.text_muted())),
+                        Span::styled(&task.id, Style::default().fg(t.text_primary())),
+                        Span::styled(format!("  • Updated: {}", task.updated_at), Style::default().fg(t.text_muted())),
+                    ]),
+                    Line::from(""),
+                ];
 
-            for line in formatted_lines.iter().skip(scroll_offset).take(visible_lines) {
-                preview_lines.push(line.clone());
-            }
+                for line in formatted_lines.iter().skip(scroll_offset).take(visible_lines) {
+                    preview_lines.push(line.clone());
+                }
 
-            let preview_p = Paragraph::new(preview_lines).block(preview_block).wrap(Wrap { trim: false });
-            frame.render_widget(preview_p, funnel_chunks[1]);
+                let preview_p = Paragraph::new(preview_lines).block(preview_block).wrap(Wrap { trim: false });
+                frame.render_widget(preview_p, funnel_chunks[1]);
 
-            if total_lines > visible_lines {
-                let mut scrollbar_state = ScrollbarState::new(max_scroll).position(scroll_offset);
-                let scrollbar = Scrollbar::default()
-                    .orientation(ScrollbarOrientation::VerticalRight)
-                    .begin_symbol(Some("▲"))
-                    .end_symbol(Some("▼"))
-                    .track_symbol(Some("│"))
-                    .thumb_symbol("█");
-                frame.render_stateful_widget(scrollbar, funnel_chunks[1], &mut scrollbar_state);
+                if total_lines > visible_lines {
+                    let mut scrollbar_state = ScrollbarState::new(max_scroll).position(scroll_offset);
+                    let scrollbar = Scrollbar::default()
+                        .orientation(ScrollbarOrientation::VerticalRight)
+                        .begin_symbol(Some("▲"))
+                        .end_symbol(Some("▼"))
+                        .track_symbol(Some("│"))
+                        .thumb_symbol("█");
+                    frame.render_stateful_widget(scrollbar, funnel_chunks[1], &mut scrollbar_state);
+                }
+            } else {
+                let empty_preview = Paragraph::new(vec![
+                    Line::from(""),
+                    Line::from(Span::styled("Select a task above to inspect details.", Style::default().fg(t.text_muted()))),
+                ])
+                .block(preview_block);
+                frame.render_widget(empty_preview, funnel_chunks[1]);
             }
         } else {
-            let empty_preview = Paragraph::new(vec![
-                Line::from(""),
-                Line::from(Span::styled("Select a document or task above to preview content.", Style::default().fg(t.text_muted()))),
-            ])
-            .block(preview_block);
-            frame.render_widget(empty_preview, funnel_chunks[1]);
+            let preview_block = Block::default()
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(t.border()))
+                .style(Style::default().bg(t.bg_panel()).fg(t.text_primary()))
+                .padding(Padding::new(2, 2, 0, 0))
+                .title(Span::styled(" Document Snippet / Summary [Scroll: PgUp/PgDn/Wheel] ", t.title()));
+
+            if let Some(doc) = app.project_tasks.get(app.selected_project_task_idx) {
+                let preview_width = funnel_chunks[1].width.saturating_sub(6) as usize;
+                let formatted_lines = MarkdownFormatter::format_markdown_with_theme(&doc.content, preview_width, &t);
+                let total_lines = formatted_lines.len();
+                let visible_lines = funnel_chunks[1].height.saturating_sub(4) as usize;
+                let max_scroll = total_lines.saturating_sub(visible_lines);
+                let scroll_offset = app.cockpit_preview_scroll.min(max_scroll);
+
+                let mut preview_lines = vec![
+                    Line::from(vec![
+                        Span::styled("File:  ", Style::default().fg(t.text_muted()).add_modifier(Modifier::BOLD)),
+                        Span::styled(&doc.path, Style::default().fg(t.accent())),
+                        Span::styled(format!("  ({}/{} lines)", (scroll_offset + 1).min(total_lines), total_lines), Style::default().fg(t.text_muted())),
+                    ]),
+                    Line::from(""),
+                ];
+
+                for line in formatted_lines.iter().skip(scroll_offset).take(visible_lines) {
+                    preview_lines.push(line.clone());
+                }
+
+                let preview_p = Paragraph::new(preview_lines).block(preview_block).wrap(Wrap { trim: false });
+                frame.render_widget(preview_p, funnel_chunks[1]);
+
+                if total_lines > visible_lines {
+                    let mut scrollbar_state = ScrollbarState::new(max_scroll).position(scroll_offset);
+                    let scrollbar = Scrollbar::default()
+                        .orientation(ScrollbarOrientation::VerticalRight)
+                        .begin_symbol(Some("▲"))
+                        .end_symbol(Some("▼"))
+                        .track_symbol(Some("│"))
+                        .thumb_symbol("█");
+                    frame.render_stateful_widget(scrollbar, funnel_chunks[1], &mut scrollbar_state);
+                }
+            } else {
+                let empty_preview = Paragraph::new(vec![
+                    Line::from(""),
+                    Line::from(Span::styled("Select a document or task above to preview content.", Style::default().fg(t.text_muted()))),
+                ])
+                .block(preview_block);
+                frame.render_widget(empty_preview, funnel_chunks[1]);
+            }
         }
     }
 

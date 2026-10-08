@@ -51,9 +51,13 @@ impl TaskTransitionModal {
         frame.render_widget(outer_block, modal_area);
 
         let proj_name = app.projects.get(app.selected_project_idx).map(|p| p.name.as_str()).unwrap_or("unknown");
-        let task_doc = app.project_tasks.get(app.selected_project_task_idx);
-        let task_title = task_doc.map(|d| d.title.as_str()).unwrap_or("No task selected");
-        let task_status_str = task_doc.map(|d| format!("{:?}", d.status)).unwrap_or_else(|| "Unknown".to_string());
+        let (task_title, task_status_str) = if let Some(task) = app.native_tasks.get(app.selected_native_task_idx) {
+            (task.title.clone(), format!("{:?}", task.status))
+        } else if let Some(task_doc) = app.project_tasks.get(app.selected_project_task_idx) {
+            (task_doc.title.clone(), format!("{:?}", task_doc.status))
+        } else {
+            ("No task selected".to_string(), "Unknown".to_string())
+        };
 
         let chunks = Layout::default()
             .direction(Direction::Vertical)

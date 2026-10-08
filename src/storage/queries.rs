@@ -1,6 +1,6 @@
 use crate::domain::{
-    AgentSession, BrowseOptions, Directive, Document, DocumentKind, DocumentStatus, Hit, Memory,
-    RecordMeta, SessionEventRecord,
+    AgentSession, BrowseOptions, Directive, Document, DocumentKind, DocumentStatus, Hit,
+    KnowledgeKind, KnowledgeRecord, Memory, RecordMeta, SessionEventRecord, TaskRecord, TaskState,
 };
 use chrono::Utc;
 use rusqlite::{params, Connection, Result};
@@ -551,6 +551,65 @@ impl Queries {
             });
         }
 
+        if let Ok(mut task_counts_stmt) = conn.prepare(
+            "SELECT project,
+                    count(CASE WHEN status IN ('pending', 'todo', 'open') THEN 1 END),
+                    count(CASE WHEN status IN ('in_progress', 'active') THEN 1 END),
+                    count(CASE WHEN status IN ('completed', 'done', 'resolved') THEN 1 END),
+                    count(CASE WHEN status = 'blocked' THEN 1 END)
+             FROM tasks
+             WHERE collection_id = ?1
+             GROUP BY project;"
+        ) {
+            if let Ok(mut task_rows) = task_counts_stmt.query([collection_id]) {
+                let mut tasks_by_proj: std::collections::HashMap<String, (usize, usize, usize, usize)> = std::collections::HashMap::new();
+                while let Ok(Some(tr)) = task_rows.next() {
+                    let p: String = tr.get(0).unwrap_or_default();
+                    let pend: usize = tr.get(1).unwrap_or(0);
+                    let inp: usize = tr.get(2).unwrap_or(0);
+                    let comp: usize = tr.get(3).unwrap_or(0);
+                    let blk: usize = tr.get(4).unwrap_or(0);
+                    tasks_by_proj.insert(p.to_lowercase(), (pend, inp, comp, blk));
+                }
+
+                for s in &mut summaries {
+                    if let Some((pend, inp, comp, blk)) = tasks_by_proj.remove(&s.name.to_lowercase()) {
+                        s.tasks_pending += pend;
+                        s.tasks_in_progress += inp;
+                        s.tasks_completed += comp;
+                        s.tasks_blocked += blk;
+                        if s.tasks_blocked > 0 {
+                            s.health = "blocked".to_string();
+                        }
+                    }
+                }
+
+                for (proj_name, (pend, inp, comp, blk)) in tasks_by_proj {
+                    if proj_name.is_empty() || proj_name == "global" {
+                        continue;
+                    }
+                    summaries.push(crate::domain::ProjectSummary {
+                        name: proj_name.clone(),
+                        path: format!("projects/{}", proj_name),
+                        total_documents: pend + inp + comp + blk,
+                        tasks_pending: pend,
+                        tasks_in_progress: inp,
+                        tasks_completed: comp,
+                        tasks_blocked: blk,
+                        open_risks: 0,
+                        decisions_count: 0,
+                        has_status_doc: false,
+                        health: if blk > 0 { "blocked".to_string() } else { "healthy".to_string() },
+                        active_task: None,
+                        exit_criteria: None,
+                        exit_verified: false,
+                        churn_warning: false,
+                    });
+                }
+            }
+        }
+
+        summaries.sort_by(|a, b| a.name.cmp(&b.name));
         Ok(summaries)
     }
 
@@ -1159,6 +1218,299 @@ impl Queries {
         let active = Self::list_directives(conn, collection_id, None, Some("active"))?;
         Ok(Directive::filter_relevant(&active, paths, limit))
     }
+
+    pub fn upsert_task(conn: &Connection, task: &TaskRecord) -> Result<()> {
+        let mut stmt = conn.prepare(
+            "INSERT INTO tasks (id, collection_id, project, session_id, title, description, status, priority, created_at, updated_at, completed_at, metadata_json)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
+             ON CONFLICT(id) DO UPDATE SET
+                project = excluded.project,
+                session_id = excluded.session_id,
+                title = excluded.title,
+                description = excluded.description,
+                status = excluded.status,
+                priority = excluded.priority,
+                updated_at = excluded.updated_at,
+                completed_at = excluded.completed_at,
+                metadata_json = excluded.metadata_json;"
+        )?;
+        stmt.execute(params![
+            task.id,
+            task.collection_id,
+            task.project,
+            task.session_id,
+            task.title,
+            task.description,
+            task.status.as_str(),
+            task.priority,
+            task.created_at,
+            task.updated_at,
+            task.completed_at,
+            task.metadata_json,
+        ])?;
+        Ok(())
+    }
+
+    pub fn get_task(conn: &Connection, id: &str) -> Result<Option<TaskRecord>> {
+        let mut stmt = conn.prepare(
+            "SELECT id, collection_id, project, session_id, title, description, status, priority, created_at, updated_at, completed_at, metadata_json
+             FROM tasks WHERE id = ?1;"
+        )?;
+        let mut rows = stmt.query(params![id])?;
+        if let Some(row) = rows.next()? {
+            let status_str: String = row.get(6)?;
+            Ok(Some(TaskRecord {
+                id: row.get(0)?,
+                collection_id: row.get(1)?,
+                project: row.get(2)?,
+                session_id: row.get(3)?,
+                title: row.get(4)?,
+                description: row.get(5)?,
+                status: TaskState::from_str_loose(&status_str),
+                priority: row.get(7)?,
+                created_at: row.get(8)?,
+                updated_at: row.get(9)?,
+                completed_at: row.get(10)?,
+                metadata_json: row.get(11)?,
+            }))
+        } else {
+            Ok(None)
+        }
+    }
+
+    pub fn list_tasks(
+        conn: &Connection,
+        collection_id: &str,
+        project: Option<&str>,
+        status: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<TaskRecord>> {
+        let mut sql = "SELECT id, collection_id, project, session_id, title, description, status, priority, created_at, updated_at, completed_at, metadata_json FROM tasks WHERE collection_id = ?1".to_string();
+        let mut params_vec: Vec<rusqlite::types::Value> = vec![rusqlite::types::Value::Text(collection_id.to_string())];
+        if let Some(proj) = project {
+            if !proj.is_empty() && proj != "all" {
+                sql.push_str(" AND (LOWER(project) = LOWER(?) OR project = '')");
+                params_vec.push(rusqlite::types::Value::Text(proj.to_string()));
+            }
+        }
+        if let Some(st) = status {
+            if !st.is_empty() && st != "all" {
+                sql.push_str(" AND status = ?");
+                params_vec.push(rusqlite::types::Value::Text(st.to_string()));
+            }
+        }
+        sql.push_str(" ORDER BY CASE status WHEN 'in_progress' THEN 0 WHEN 'blocked' THEN 1 WHEN 'pending' THEN 2 ELSE 3 END, priority DESC, updated_at DESC LIMIT ?");
+        params_vec.push(rusqlite::types::Value::Integer(limit as i64));
+
+        let mut stmt = conn.prepare(&sql)?;
+        let rows = stmt.query_map(rusqlite::params_from_iter(params_vec), |row| {
+            let status_str: String = row.get(6)?;
+            Ok(TaskRecord {
+                id: row.get(0)?,
+                collection_id: row.get(1)?,
+                project: row.get(2)?,
+                session_id: row.get(3)?,
+                title: row.get(4)?,
+                description: row.get(5)?,
+                status: TaskState::from_str_loose(&status_str),
+                priority: row.get(7)?,
+                created_at: row.get(8)?,
+                updated_at: row.get(9)?,
+                completed_at: row.get(10)?,
+                metadata_json: row.get(11)?,
+            })
+        })?;
+
+        let mut results = Vec::new();
+        for r in rows {
+            results.push(r?);
+        }
+        Ok(results)
+    }
+
+    pub fn update_task_status(conn: &Connection, id: &str, status: TaskState) -> Result<bool> {
+        let now = Utc::now().to_rfc3339();
+        let mut stmt = conn.prepare(
+            "UPDATE tasks SET status = ?1, updated_at = ?2, completed_at = CASE WHEN ?1 = 'completed' THEN ?2 ELSE completed_at END WHERE id = ?3;"
+        )?;
+        let affected = stmt.execute(params![status.as_str(), now, id])?;
+        Ok(affected > 0)
+    }
+
+    pub fn update_task_priority(conn: &Connection, id: &str, priority: i32) -> Result<bool> {
+        let now = Utc::now().to_rfc3339();
+        let mut stmt = conn.prepare(
+            "UPDATE tasks SET priority = ?1, updated_at = ?2 WHERE id = ?3;"
+        )?;
+        let affected = stmt.execute(params![priority, now, id])?;
+        Ok(affected > 0)
+    }
+
+    pub fn delete_task(conn: &Connection, id: &str) -> Result<bool> {
+        let mut stmt = conn.prepare("DELETE FROM tasks WHERE id = ?1;")?;
+        let affected = stmt.execute(params![id])?;
+        Ok(affected > 0)
+    }
+
+    pub fn upsert_knowledge(conn: &Connection, item: &KnowledgeRecord) -> Result<()> {
+        let mut stmt = conn.prepare(
+            "INSERT INTO knowledge (id, collection_id, project, title, content, kind, tags, created_at, updated_at, metadata_json)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+             ON CONFLICT(id) DO UPDATE SET
+                project = excluded.project,
+                title = excluded.title,
+                content = excluded.content,
+                kind = excluded.kind,
+                tags = excluded.tags,
+                updated_at = excluded.updated_at,
+                metadata_json = excluded.metadata_json;"
+        )?;
+        stmt.execute(params![
+            item.id,
+            item.collection_id,
+            item.project,
+            item.title,
+            item.content,
+            item.kind.as_str(),
+            item.tags,
+            item.created_at,
+            item.updated_at,
+            item.metadata_json,
+        ])?;
+        Ok(())
+    }
+
+    pub fn get_knowledge(conn: &Connection, id: &str) -> Result<Option<KnowledgeRecord>> {
+        let mut stmt = conn.prepare(
+            "SELECT id, collection_id, project, title, content, kind, tags, created_at, updated_at, metadata_json
+             FROM knowledge WHERE id = ?1;"
+        )?;
+        let mut rows = stmt.query(params![id])?;
+        if let Some(row) = rows.next()? {
+            let kind_str: String = row.get(5)?;
+            Ok(Some(KnowledgeRecord {
+                id: row.get(0)?,
+                collection_id: row.get(1)?,
+                project: row.get(2)?,
+                title: row.get(3)?,
+                content: row.get(4)?,
+                kind: KnowledgeKind::from_str_loose(&kind_str),
+                tags: row.get(6)?,
+                created_at: row.get(7)?,
+                updated_at: row.get(8)?,
+                metadata_json: row.get(9)?,
+            }))
+        } else {
+            Ok(None)
+        }
+    }
+
+    pub fn list_knowledge(
+        conn: &Connection,
+        collection_id: &str,
+        kind: Option<KnowledgeKind>,
+        tag: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<KnowledgeRecord>> {
+        let mut sql = "SELECT id, collection_id, project, title, content, kind, tags, created_at, updated_at, metadata_json FROM knowledge WHERE collection_id = ?1".to_string();
+        let mut params_vec: Vec<rusqlite::types::Value> = vec![rusqlite::types::Value::Text(collection_id.to_string())];
+        if let Some(k) = kind {
+            sql.push_str(" AND kind = ?");
+            params_vec.push(rusqlite::types::Value::Text(k.as_str().to_string()));
+        }
+        if let Some(t) = tag {
+            if !t.is_empty() {
+                sql.push_str(" AND tags LIKE ?");
+                params_vec.push(rusqlite::types::Value::Text(format!("%{}%", t)));
+            }
+        }
+        sql.push_str(" ORDER BY created_at DESC LIMIT ?");
+        params_vec.push(rusqlite::types::Value::Integer(limit as i64));
+
+        let mut stmt = conn.prepare(&sql)?;
+        let rows = stmt.query_map(rusqlite::params_from_iter(params_vec), |row| {
+            let kind_str: String = row.get(5)?;
+            Ok(KnowledgeRecord {
+                id: row.get(0)?,
+                collection_id: row.get(1)?,
+                project: row.get(2)?,
+                title: row.get(3)?,
+                content: row.get(4)?,
+                kind: KnowledgeKind::from_str_loose(&kind_str),
+                tags: row.get(6)?,
+                created_at: row.get(7)?,
+                updated_at: row.get(8)?,
+                metadata_json: row.get(9)?,
+            })
+        })?;
+
+        let mut results = Vec::new();
+        for r in rows {
+            results.push(r?);
+        }
+        Ok(results)
+    }
+
+    pub fn search_knowledge(
+        conn: &Connection,
+        collection_id: &str,
+        query: &str,
+        kind: Option<KnowledgeKind>,
+        limit: usize,
+    ) -> Result<Vec<KnowledgeRecord>> {
+        let tokens = Self::tokenize_query(query);
+        if tokens.is_empty() {
+            return Self::list_knowledge(conn, collection_id, kind, None, limit);
+        }
+
+        let fts_query = tokens
+            .iter()
+            .map(|t| format!("\"{}\"*", t.replace('"', "\"\"")))
+            .collect::<Vec<_>>()
+            .join(" AND ");
+
+        let mut sql = "SELECT k.id, k.collection_id, k.project, k.title, k.content, k.kind, k.tags, k.created_at, k.updated_at, k.metadata_json FROM knowledge k JOIN knowledge_fts ON knowledge_fts.rowid = k.rowid WHERE k.collection_id = ?1 AND knowledge_fts MATCH ?2".to_string();
+        let mut params_vec: Vec<rusqlite::types::Value> = vec![
+            rusqlite::types::Value::Text(collection_id.to_string()),
+            rusqlite::types::Value::Text(fts_query),
+        ];
+
+        if let Some(k) = kind {
+            sql.push_str(" AND k.kind = ?");
+            params_vec.push(rusqlite::types::Value::Text(k.as_str().to_string()));
+        }
+        sql.push_str(" ORDER BY rank LIMIT ?");
+        params_vec.push(rusqlite::types::Value::Integer(limit as i64));
+
+        let mut stmt = conn.prepare(&sql)?;
+        let rows = stmt.query_map(rusqlite::params_from_iter(params_vec), |row| {
+            let kind_str: String = row.get(5)?;
+            Ok(KnowledgeRecord {
+                id: row.get(0)?,
+                collection_id: row.get(1)?,
+                project: row.get(2)?,
+                title: row.get(3)?,
+                content: row.get(4)?,
+                kind: KnowledgeKind::from_str_loose(&kind_str),
+                tags: row.get(6)?,
+                created_at: row.get(7)?,
+                updated_at: row.get(8)?,
+                metadata_json: row.get(9)?,
+            })
+        })?;
+
+        let mut results = Vec::new();
+        for r in rows {
+            results.push(r?);
+        }
+        Ok(results)
+    }
+
+    pub fn delete_knowledge(conn: &Connection, id: &str) -> Result<bool> {
+        let mut stmt = conn.prepare("DELETE FROM knowledge WHERE id = ?1;")?;
+        let affected = stmt.execute(params![id])?;
+        Ok(affected > 0)
+    }
 }
 
 #[cfg(test)]
@@ -1729,6 +2081,168 @@ mod tests {
         let (browse_all, total_all) = Queries::browse(db.conn(), &["coll_tomb".into()], &opts_all)?;
         assert_eq!(total_all, 2);
         assert_eq!(browse_all.len(), 2);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_task_storage_and_lifecycle() -> Result<()> {
+        let db = Database::open_in_memory("coll_tasks", "prof_1")?;
+
+        let task1 = TaskRecord {
+            id: "task-01".into(),
+            collection_id: "coll_tasks".into(),
+            project: "zdp-monitoring".into(),
+            session_id: Some("sess-1".into()),
+            title: "Build S7 behavioral oracle".into(),
+            description: "13 contract properties".into(),
+            status: TaskState::InProgress,
+            priority: 90,
+            created_at: "2026-10-08T08:00:00Z".into(),
+            updated_at: "2026-10-08T08:00:00Z".into(),
+            completed_at: None,
+            metadata_json: "{}".into(),
+        };
+
+        let task2 = TaskRecord {
+            id: "task-02".into(),
+            collection_id: "coll_tasks".into(),
+            project: "zdp-monitoring".into(),
+            session_id: Some("sess-1".into()),
+            title: "Fix 42P01 cascade parent error".into(),
+            description: "Blocked on SIT DB deployment".into(),
+            status: TaskState::Blocked,
+            priority: 85,
+            created_at: "2026-10-08T08:10:00Z".into(),
+            updated_at: "2026-10-08T08:10:00Z".into(),
+            completed_at: None,
+            metadata_json: "{}".into(),
+        };
+
+        let task3 = TaskRecord {
+            id: "task-03".into(),
+            collection_id: "coll_tasks".into(),
+            project: "jwt-hotreload".into(),
+            session_id: None,
+            title: "Support ES256 key rotation".into(),
+            description: "".into(),
+            status: TaskState::Pending,
+            priority: 50,
+            created_at: "2026-10-08T08:20:00Z".into(),
+            updated_at: "2026-10-08T08:20:00Z".into(),
+            completed_at: None,
+            metadata_json: "{}".into(),
+        };
+
+        Queries::upsert_task(db.conn(), &task1)?;
+        Queries::upsert_task(db.conn(), &task2)?;
+        Queries::upsert_task(db.conn(), &task3)?;
+
+        let retrieved = Queries::get_task(db.conn(), "task-01")?.expect("task-01 should exist");
+        assert_eq!(retrieved.title, "Build S7 behavioral oracle");
+        assert_eq!(retrieved.status, TaskState::InProgress);
+        assert_eq!(retrieved.priority, 90);
+
+        let monitoring_tasks = Queries::list_tasks(db.conn(), "coll_tasks", Some("zdp-monitoring"), None, 50)?;
+        assert_eq!(monitoring_tasks.len(), 2);
+        assert_eq!(monitoring_tasks[0].id, "task-01");
+        assert_eq!(monitoring_tasks[1].id, "task-02");
+
+        let blocked_tasks = Queries::list_tasks(db.conn(), "coll_tasks", None, Some("blocked"), 50)?;
+        assert_eq!(blocked_tasks.len(), 1);
+        assert_eq!(blocked_tasks[0].id, "task-02");
+
+        let updated = Queries::update_task_status(db.conn(), "task-01", TaskState::Completed)?;
+        assert!(updated);
+        let task1_after = Queries::get_task(db.conn(), "task-01")?.unwrap();
+        assert_eq!(task1_after.status, TaskState::Completed);
+        assert!(task1_after.completed_at.is_some());
+
+        let reprioritized = Queries::update_task_priority(db.conn(), "task-02", 99)?;
+        assert!(reprioritized);
+        let task2_after = Queries::get_task(db.conn(), "task-02")?.unwrap();
+        assert_eq!(task2_after.priority, 99);
+
+        let deleted = Queries::delete_task(db.conn(), "task-03")?;
+        assert!(deleted);
+        assert!(Queries::get_task(db.conn(), "task-03")?.is_none());
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_knowledge_storage_and_fts_search() -> Result<()> {
+        let db = Database::open_in_memory("coll_know", "prof_1")?;
+
+        let item1 = KnowledgeRecord {
+            id: "know-01".into(),
+            collection_id: "coll_know".into(),
+            project: "zdp-monitoring".into(),
+            title: "UTF-8 em-dash mojibake on write path".into(),
+            content: "Reviewer follow-up commits corrupted write-path string encoding. Always verify write path before read fix.".into(),
+            kind: KnowledgeKind::Warning,
+            tags: "encoding,write-path,regression".into(),
+            created_at: "2026-10-08T07:00:00Z".into(),
+            updated_at: "2026-10-08T07:00:00Z".into(),
+            metadata_json: "{}".into(),
+        };
+
+        let item2 = KnowledgeRecord {
+            id: "know-02".into(),
+            collection_id: "coll_know".into(),
+            project: "zdp-monitoring".into(),
+            title: "ZDP companion PR pattern".into(),
+            content: "When fixing k8s config, always pair IAC changes with app repo changes.".into(),
+            kind: KnowledgeKind::Pattern,
+            tags: "iac,workflow,pattern".into(),
+            created_at: "2026-10-08T07:30:00Z".into(),
+            updated_at: "2026-10-08T07:30:00Z".into(),
+            metadata_json: "{}".into(),
+        };
+
+        let item3 = KnowledgeRecord {
+            id: "know-03".into(),
+            collection_id: "coll_know".into(),
+            project: "".into(),
+            title: "OOMKill bypasses gracePeriod".into(),
+            content: "SIGTERM grace period ignored when pod exceeds hard memory ceiling.".into(),
+            kind: KnowledgeKind::Decision,
+            tags: "k8s,oomkill,memory".into(),
+            created_at: "2026-10-08T08:00:00Z".into(),
+            updated_at: "2026-10-08T08:00:00Z".into(),
+            metadata_json: "{}".into(),
+        };
+
+        Queries::upsert_knowledge(db.conn(), &item1)?;
+        Queries::upsert_knowledge(db.conn(), &item2)?;
+        Queries::upsert_knowledge(db.conn(), &item3)?;
+
+        let retrieved = Queries::get_knowledge(db.conn(), "know-01")?.expect("know-01 should exist");
+        assert_eq!(retrieved.title, "UTF-8 em-dash mojibake on write path");
+        assert_eq!(retrieved.kind, KnowledgeKind::Warning);
+
+        let warnings = Queries::list_knowledge(db.conn(), "coll_know", Some(KnowledgeKind::Warning), None, 10)?;
+        assert_eq!(warnings.len(), 1);
+        assert_eq!(warnings[0].id, "know-01");
+
+        let tag_matches = Queries::list_knowledge(db.conn(), "coll_know", None, Some("workflow"), 10)?;
+        assert_eq!(tag_matches.len(), 1);
+        assert_eq!(tag_matches[0].id, "know-02");
+
+        let fts_hits = Queries::search_knowledge(db.conn(), "coll_know", "mojibake encoding", None, 10)?;
+        assert_eq!(fts_hits.len(), 1);
+        assert_eq!(fts_hits[0].id, "know-01");
+
+        let fts_k8s_warnings = Queries::search_knowledge(db.conn(), "coll_know", "gracePeriod", Some(KnowledgeKind::Warning), 10)?;
+        assert_eq!(fts_k8s_warnings.len(), 0);
+
+        let fts_k8s_decisions = Queries::search_knowledge(db.conn(), "coll_know", "gracePeriod", Some(KnowledgeKind::Decision), 10)?;
+        assert_eq!(fts_k8s_decisions.len(), 1);
+        assert_eq!(fts_k8s_decisions[0].id, "know-03");
+
+        let deleted = Queries::delete_knowledge(db.conn(), "know-02")?;
+        assert!(deleted);
+        assert!(Queries::get_knowledge(db.conn(), "know-02")?.is_none());
 
         Ok(())
     }

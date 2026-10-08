@@ -22,11 +22,10 @@ use std::io::{self, Write};
 use std::panic;
 use std::path::Path;
 use std::time::Duration;
-use views::{CommandDock, DirectivesView, ExploreView, HelpModal, IssueGrantModal, NewDirectiveModal, ReaderView, SessionsView, SettingsView, TaskTransitionModal, WorkView};
+use views::{CommandDock, DirectivesView, ExploreView, HelpModal, IssueGrantModal, NewDirectiveModal, NewTaskModal, ReaderView, SessionsView, SettingsView, TaskTransitionModal, WorkView};
 use crate::storage::Database;
 
 pub fn run(root: &Path, db: &Database, collection_id: &str, profile_id: &str) -> io::Result<()> {
-    // 1. Setup panic hook so terminal is ALWAYS restored safely if something panics
     let original_hook = panic::take_hook();
     panic::set_hook(Box::new(move |panic_info| {
         let _ = disable_raw_mode();
@@ -201,6 +200,8 @@ fn run_loop(
                     IssueGrantModal::render(frame, app, area);
                 } else if app.show_task_transition_modal {
                     TaskTransitionModal::render(frame, app, area);
+                } else if app.show_new_task_modal {
+                    NewTaskModal::render(frame, app, area);
                 } else if app.show_help {
                     HelpModal::render(frame, app, area);
                 }
@@ -433,6 +434,72 @@ fn run_loop(
                             }
                             _ => {}
                         }
+                    } else if app.show_new_task_modal {
+                        match key.code {
+                            KeyCode::Esc => {
+                                app.show_new_task_modal = false;
+                            }
+                            KeyCode::Tab => {
+                                app.new_task_field_idx = (app.new_task_field_idx + 1) % 3;
+                            }
+                            KeyCode::BackTab => {
+                                app.new_task_field_idx = if app.new_task_field_idx == 0 { 2 } else { app.new_task_field_idx - 1 };
+                            }
+                            KeyCode::Enter => {
+                                match app.submit_new_task(db) {
+                                    Ok(_) => {}
+                                    Err(err) => app.status_message = Some(format!("Error: {}", err)),
+                                }
+                            }
+                            KeyCode::Char('s') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                                match app.submit_new_task(db) {
+                                    Ok(_) => {}
+                                    Err(err) => app.status_message = Some(format!("Error: {}", err)),
+                                }
+                            }
+                            KeyCode::Left | KeyCode::Down if app.new_task_field_idx == 1 => {
+                                app.new_task_priority = match app.new_task_priority {
+                                    p if p >= 100 => 90,
+                                    p if p >= 90 => 80,
+                                    p if p >= 80 => 70,
+                                    p if p >= 70 => 50,
+                                    _ => 0,
+                                };
+                            }
+                            KeyCode::Right | KeyCode::Up if app.new_task_field_idx == 1 => {
+                                app.new_task_priority = match app.new_task_priority {
+                                    p if p < 50 => 50,
+                                    p if p < 70 => 70,
+                                    p if p < 80 => 80,
+                                    p if p < 90 => 90,
+                                    _ => 100,
+                                };
+                            }
+                            KeyCode::Char(' ') if app.new_task_field_idx == 1 => {
+                                app.new_task_priority = match app.new_task_priority {
+                                    100 => 90,
+                                    90 => 80,
+                                    80 => 70,
+                                    70 => 50,
+                                    _ => 100,
+                                };
+                            }
+                            KeyCode::Backspace => {
+                                if app.new_task_field_idx == 0 {
+                                    app.new_task_title.pop();
+                                } else if app.new_task_field_idx == 2 {
+                                    app.new_task_description.pop();
+                                }
+                            }
+                            KeyCode::Char(c) => {
+                                if app.new_task_field_idx == 0 {
+                                    app.new_task_title.push(c);
+                                } else if app.new_task_field_idx == 2 {
+                                    app.new_task_description.push(c);
+                                }
+                            }
+                            _ => {}
+                        }
                     } else if app.show_help {
                         match key.code {
                             KeyCode::Esc | KeyCode::Char('?') | KeyCode::Char('q') => {
@@ -626,7 +693,7 @@ fn run_loop(
                                     }
                                 }
                             }
-                            KeyCode::Char('m') | KeyCode::Char('M') => {
+                            KeyCode::Char('m') | KeyCode::Char('M') if app.active_tab != ActiveTab::Explore => {
                                 let enabled = app.toggle_mouse();
                                 if enabled {
                                     let _ = execute!(terminal.backend_mut(), EnableMouseCapture);
@@ -641,6 +708,30 @@ fn run_loop(
                             }
                             KeyCode::Char('t') if app.active_tab == ActiveTab::Work && app.work_tab_mode == crate::ui::app::WorkTabMode::Projects => {
                                 app.open_task_transition_modal();
+                            }
+                            KeyCode::Char('n') if app.active_tab == ActiveTab::Work && app.work_tab_mode == crate::ui::app::WorkTabMode::Projects => {
+                                app.open_new_task_modal();
+                            }
+                            KeyCode::Char('p') if app.active_tab == ActiveTab::Work && app.work_tab_mode == crate::ui::app::WorkTabMode::Projects => {
+                                app.bump_selected_task_priority(db);
+                            }
+                            KeyCode::Char('f') if app.active_tab == ActiveTab::Work && app.work_tab_mode == crate::ui::app::WorkTabMode::Projects => {
+                                app.cycle_native_task_filter(db);
+                            }
+                            KeyCode::Char('v') if app.active_tab == ActiveTab::Work && app.work_tab_mode == crate::ui::app::WorkTabMode::Projects => {
+                                app.verify_current_project_exit_criteria(db);
+                            }
+                            KeyCode::Char('x') if app.active_tab == ActiveTab::Work && app.work_tab_mode == crate::ui::app::WorkTabMode::Projects => {
+                                app.delete_selected_native_task(db);
+                            }
+                            KeyCode::Char('m') | KeyCode::Char('M') if app.active_tab == ActiveTab::Explore => {
+                                app.toggle_knowledge_view_mode(db);
+                            }
+                            KeyCode::Char('f') if app.active_tab == ActiveTab::Explore => {
+                                app.cycle_knowledge_kind_filter(db);
+                            }
+                            KeyCode::Char('x') if app.active_tab == ActiveTab::Explore && app.knowledge_view_mode == crate::ui::app::KnowledgeViewMode::Living => {
+                                app.delete_selected_knowledge(db);
                             }
                             KeyCode::Char('T') => {
                                 app.next_theme();
@@ -1171,7 +1262,13 @@ fn run_loop(
                                                     }
                                                 }
                                                 ActiveTab::Explore => {
-                                                    if app.explore_tree_mode {
+                                                    if app.knowledge_view_mode == crate::ui::app::KnowledgeViewMode::Living {
+                                                        let item_idx = app.knowledge_list_state.offset() + ((rel_row - 2) / 3) as usize;
+                                                        if item_idx < app.knowledge_items.len() {
+                                                            app.selected_knowledge_idx = item_idx;
+                                                            app.knowledge_preview_scroll = 0;
+                                                        }
+                                                    } else if app.explore_tree_mode {
                                                         let tree_idx = app.tree_list_state.offset() + (rel_row - 2) as usize;
                                                         let tree = app.build_explore_tree();
                                                         if tree_idx < tree.len() {
@@ -1219,10 +1316,18 @@ fn run_loop(
                                             let task_start_y = overview_h + 1;
                                             let task_end_y = overview_h + task_box_h;
                                             if rel_row >= task_start_y && rel_row < task_end_y {
-                                                let task_idx = app.project_tasks_list_state.offset() + ((rel_row - task_start_y) / 2) as usize;
-                                                if task_idx < app.project_tasks.len() {
-                                                    app.selected_project_task_idx = task_idx;
-                                                    app.cockpit_preview_scroll = 0;
+                                                if !app.native_tasks.is_empty() {
+                                                    let task_idx = app.native_tasks_list_state.offset() + ((rel_row - task_start_y) / 2) as usize;
+                                                    if task_idx < app.native_tasks.len() {
+                                                        app.selected_native_task_idx = task_idx;
+                                                        app.cockpit_preview_scroll = 0;
+                                                    }
+                                                } else {
+                                                    let task_idx = app.project_tasks_list_state.offset() + ((rel_row - task_start_y) / 2) as usize;
+                                                    if task_idx < app.project_tasks.len() {
+                                                        app.selected_project_task_idx = task_idx;
+                                                        app.cockpit_preview_scroll = 0;
+                                                    }
                                                 }
                                             }
                                         } else if app.active_tab == ActiveTab::Settings && app.settings_selected_idx == 7 {

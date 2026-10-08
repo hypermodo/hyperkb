@@ -1,6 +1,6 @@
 use crate::domain::{
-    AgentSession, AuthorityGrant, BrowseOptions, Directive, Document, ProjectSummary, RepoManifest,
-    RiskMatch,
+    AgentSession, AuthorityGrant, BrowseOptions, Directive, Document, KnowledgeKind,
+    KnowledgeRecord, ProjectSummary, RepoManifest, RiskMatch, TaskRecord, schema::TaskState,
 };
 use crate::storage::{Database, Queries};
 use crate::ui::theme::ThemeMode;
@@ -12,6 +12,12 @@ pub enum WorkTabMode {
     Projects,
     Risks,
     Console,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum KnowledgeViewMode {
+    Documents,
+    Living,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -268,6 +274,12 @@ pub struct App {
     pub collapsed_folders: std::collections::HashSet<String>,
     pub selected_tree_idx: usize,
     pub explore_durable_only: bool,
+    pub knowledge_view_mode: KnowledgeViewMode,
+    pub knowledge_items: Vec<KnowledgeRecord>,
+    pub selected_knowledge_idx: usize,
+    pub knowledge_kind_filter: Option<KnowledgeKind>,
+    pub knowledge_preview_scroll: usize,
+    pub knowledge_list_state: ListState,
 
     // Directives state
     pub directives: Vec<Directive>,
@@ -336,6 +348,15 @@ pub struct App {
     pub last_project_status_refresh: std::time::Instant,
     pub work_show_handoffs: bool,
     pub project_handoffs_count: usize,
+    pub native_tasks: Vec<TaskRecord>,
+    pub selected_native_task_idx: usize,
+    pub native_tasks_list_state: ListState,
+    pub native_task_filter: Option<TaskState>,
+    pub show_new_task_modal: bool,
+    pub new_task_title: String,
+    pub new_task_description: String,
+    pub new_task_priority: i32,
+    pub new_task_field_idx: usize,
 
     // Stateful List Viewports (Ratatui ListState)
     pub projects_list_state: ListState,
@@ -428,6 +449,16 @@ impl App {
             collapsed_folders: std::collections::HashSet::new(),
             selected_tree_idx: 0,
             explore_durable_only: false,
+            knowledge_view_mode: KnowledgeViewMode::Documents,
+            knowledge_items: Vec::new(),
+            selected_knowledge_idx: 0,
+            knowledge_kind_filter: None,
+            knowledge_preview_scroll: 0,
+            knowledge_list_state: {
+                let mut s = ListState::default();
+                s.select(Some(0));
+                s
+            },
             directives: Vec::new(),
             selected_directive_idx: 0,
             directive_category: "all".into(),
@@ -480,6 +511,19 @@ impl App {
             last_project_status_refresh: std::time::Instant::now().checked_sub(std::time::Duration::from_secs(60)).unwrap_or_else(std::time::Instant::now),
             work_show_handoffs: false,
             project_handoffs_count: 0,
+            native_tasks: Vec::new(),
+            selected_native_task_idx: 0,
+            native_tasks_list_state: {
+                let mut s = ListState::default();
+                s.select(Some(0));
+                s
+            },
+            native_task_filter: None,
+            show_new_task_modal: false,
+            new_task_title: String::new(),
+            new_task_description: String::new(),
+            new_task_priority: 80,
+            new_task_field_idx: 0,
             projects_list_state: {
                 let mut s = ListState::default();
                 s.select(Some(0));
@@ -864,6 +908,18 @@ impl App {
             self.project_tasks_list_state.select(Some(self.selected_project_task_idx.min(self.project_tasks.len() - 1)));
         }
 
+        if self.native_tasks.is_empty() {
+            self.native_tasks_list_state.select(None);
+        } else {
+            self.native_tasks_list_state.select(Some(self.selected_native_task_idx.min(self.native_tasks.len() - 1)));
+        }
+
+        if self.knowledge_items.is_empty() {
+            self.knowledge_list_state.select(None);
+        } else {
+            self.knowledge_list_state.select(Some(self.selected_knowledge_idx.min(self.knowledge_items.len() - 1)));
+        }
+
         let visible_docs = self.visible_explore_docs();
         if visible_docs.is_empty() {
             self.documents_list_state.select(None);
@@ -1006,11 +1062,22 @@ impl App {
             }
             self.refresh_project_tasks(db);
         }
+        self.refresh_knowledge(db);
         self.sync_list_states();
     }
 
     pub fn refresh_project_tasks(&mut self, db: &Database) {
         if let Some(proj) = self.projects.get(self.selected_project_idx) {
+            let status_filter = self.native_task_filter.as_ref().map(|s| s.as_str());
+            if let Ok(tasks) = Queries::list_tasks(db.conn(), &self.collection_id, Some(&proj.name), status_filter, 500) {
+                self.native_tasks = tasks;
+            } else {
+                self.native_tasks.clear();
+            }
+            if self.selected_native_task_idx >= self.native_tasks.len() && !self.native_tasks.is_empty() {
+                self.selected_native_task_idx = self.native_tasks.len() - 1;
+            }
+
             let opts = BrowseOptions {
                 project: Some(proj.name.clone()),
                 limit: 1000,
@@ -1065,6 +1132,8 @@ impl App {
                 }
             }
         } else {
+            self.native_tasks.clear();
+            self.selected_native_task_idx = 0;
             self.project_tasks.clear();
             self.selected_project_task_idx = 0;
             self.project_handoffs_count = 0;
@@ -1076,6 +1145,7 @@ impl App {
         if !self.projects.is_empty() {
             self.selected_project_idx = idx.min(self.projects.len() - 1);
             self.selected_project_task_idx = 0;
+            self.selected_native_task_idx = 0;
             self.cockpit_preview_scroll = 0;
             self.refresh_project_tasks(db);
         }
@@ -1084,7 +1154,7 @@ impl App {
     pub const TASK_STATUS_TARGETS: &'static [&'static str] = &["in_progress", "completed", "blocked", "pending"];
 
     pub fn open_task_transition_modal(&mut self) {
-        if self.project_tasks.is_empty() {
+        if self.native_tasks.is_empty() && self.project_tasks.is_empty() {
             self.status_message = Some("No tasks available in project to transition".to_string());
             return;
         }
@@ -1110,16 +1180,6 @@ impl App {
             Some(p) => p.name.clone(),
             None => return Err("No active project selected".to_string()),
         };
-        let doc = match self.project_tasks.get(self.selected_project_task_idx) {
-            Some(d) => d,
-            None => return Err("No task selected".to_string()),
-        };
-
-        let task_id = if !doc.id.is_empty() {
-            doc.id.as_str()
-        } else {
-            doc.path.split('/').last().unwrap_or(&doc.title)
-        };
 
         let target_str = Self::TASK_STATUS_TARGETS[self.task_transition_target_idx];
         let target_state = match target_str {
@@ -1134,6 +1194,33 @@ impl App {
             Some(self.task_transition_reason.trim())
         };
 
+        if let Some(task) = self.native_tasks.get(self.selected_native_task_idx) {
+            let task_id = task.id.clone();
+            let _ = Queries::update_task_status(db.conn(), &task_id, target_state);
+            let _ = crate::core::StatusEngine::transition_task(
+                &self.root,
+                &proj,
+                &task_id,
+                target_state,
+                reason,
+            );
+            self.show_task_transition_modal = false;
+            self.status_message = Some(format!("✓ Transitioned task to '{:?}'", target_state));
+            self.refresh_data(db);
+            return Ok(());
+        }
+
+        let doc = match self.project_tasks.get(self.selected_project_task_idx) {
+            Some(d) => d,
+            None => return Err("No task selected".to_string()),
+        };
+
+        let task_id = if !doc.id.is_empty() {
+            doc.id.as_str()
+        } else {
+            doc.path.split('/').last().unwrap_or(&doc.title)
+        };
+
         let result = crate::core::StatusEngine::transition_task(
             &self.root,
             &proj,
@@ -1146,6 +1233,180 @@ impl App {
         self.status_message = Some(format!("✓ Transitioned task to '{:?}'", result.status));
         self.refresh_data(db);
         Ok(())
+    }
+
+    pub fn cycle_native_task_filter(&mut self, db: &Database) {
+        self.native_task_filter = match self.native_task_filter {
+            None => Some(TaskState::InProgress),
+            Some(TaskState::InProgress) => Some(TaskState::Blocked),
+            Some(TaskState::Blocked) => Some(TaskState::Pending),
+            Some(TaskState::Pending) => Some(TaskState::Completed),
+            Some(TaskState::Completed) => None,
+        };
+        self.selected_native_task_idx = 0;
+        self.refresh_project_tasks(db);
+    }
+
+    pub fn bump_selected_task_priority(&mut self, db: &Database) {
+        if let Some(task) = self.native_tasks.get(self.selected_native_task_idx) {
+            let next_p = match task.priority {
+                p if p >= 100 => 0,
+                p if p >= 90 => 100,
+                p if p >= 80 => 90,
+                p if p >= 70 => 80,
+                p if p >= 50 => 70,
+                _ => 80,
+            };
+            if let Ok(_) = Queries::update_task_priority(db.conn(), &task.id, next_p) {
+                self.status_message = Some(format!("✓ Updated task priority to {}", next_p));
+                self.refresh_project_tasks(db);
+            }
+        }
+    }
+
+    pub fn delete_selected_native_task(&mut self, db: &Database) {
+        if let Some(task) = self.native_tasks.get(self.selected_native_task_idx) {
+            let title = task.title.clone();
+            if let Ok(_) = Queries::delete_task(db.conn(), &task.id) {
+                self.status_message = Some(format!("✓ Deleted task: {}", title));
+                self.refresh_project_tasks(db);
+                if self.selected_native_task_idx >= self.native_tasks.len() && !self.native_tasks.is_empty() {
+                    self.selected_native_task_idx = self.native_tasks.len() - 1;
+                }
+            }
+        }
+    }
+
+    pub fn open_new_task_modal(&mut self) {
+        self.show_new_task_modal = true;
+        self.new_task_title.clear();
+        self.new_task_description.clear();
+        self.new_task_priority = 80;
+        self.new_task_field_idx = 0;
+    }
+
+    pub fn submit_new_task(&mut self, db: &Database) -> Result<(), String> {
+        let title = self.new_task_title.trim();
+        if title.is_empty() {
+            return Err("Task title cannot be empty".to_string());
+        }
+        let proj_name = self.projects.get(self.selected_project_idx)
+            .map(|p| p.name.clone())
+            .unwrap_or_else(|| "default".to_string());
+        let now = chrono::Utc::now().to_rfc3339();
+        let new_id = uuid::Uuid::now_v7().to_string();
+        let record = TaskRecord {
+            id: new_id,
+            collection_id: self.collection_id.clone(),
+            project: proj_name,
+            session_id: None,
+            title: title.to_string(),
+            description: self.new_task_description.trim().to_string(),
+            status: TaskState::Pending,
+            priority: self.new_task_priority,
+            created_at: now.clone(),
+            updated_at: now,
+            completed_at: None,
+            metadata_json: "{}".to_string(),
+        };
+        Queries::upsert_task(db.conn(), &record).map_err(|e| e.to_string())?;
+        self.show_new_task_modal = false;
+        self.status_message = Some(format!("✓ Created task: {}", record.title));
+        self.refresh_data(db);
+        Ok(())
+    }
+
+    pub fn verify_current_project_exit_criteria(&mut self, db: &Database) {
+        if let Some(proj) = self.projects.get(self.selected_project_idx) {
+            let p_name = proj.name.clone();
+            if proj.exit_criteria.is_some() {
+                match crate::core::StatusEngine::verify_exit_criteria(&self.root, &p_name) {
+                    Ok(res) if res.passed => {
+                        self.status_message = Some(format!("✔ Exit criteria passed for '{}'", p_name));
+                    }
+                    Ok(res) => {
+                        self.status_message = Some(format!("✖ Exit criteria failed (code {}) for '{}'", res.exit_code, p_name));
+                    }
+                    Err(e) => {
+                        self.status_message = Some(format!("✖ Error verifying exit criteria: {}", e));
+                    }
+                }
+                self.refresh_data(db);
+            } else {
+                self.status_message = Some("No exit criteria declared in status.md".to_string());
+            }
+        }
+    }
+
+    pub fn refresh_knowledge(&mut self, db: &Database) {
+        let kind_filter = self.knowledge_kind_filter;
+        if self.filter_query.trim().is_empty() {
+            if let Ok(items) = Queries::list_knowledge(
+                db.conn(),
+                &self.collection_id,
+                kind_filter,
+                None,
+                1000,
+            ) {
+                self.knowledge_items = items;
+            } else {
+                self.knowledge_items.clear();
+            }
+        } else {
+            if let Ok(items) = Queries::search_knowledge(
+                db.conn(),
+                &self.collection_id,
+                &self.filter_query,
+                kind_filter,
+                500,
+            ) {
+                self.knowledge_items = items;
+            } else {
+                self.knowledge_items.clear();
+            }
+        }
+        if self.selected_knowledge_idx >= self.knowledge_items.len() && !self.knowledge_items.is_empty() {
+            self.selected_knowledge_idx = self.knowledge_items.len() - 1;
+        }
+        self.sync_list_states();
+    }
+
+    pub fn toggle_knowledge_view_mode(&mut self, db: &Database) {
+        self.knowledge_view_mode = match self.knowledge_view_mode {
+            KnowledgeViewMode::Documents => KnowledgeViewMode::Living,
+            KnowledgeViewMode::Living => KnowledgeViewMode::Documents,
+        };
+        self.preview_scroll_offset = 0;
+        self.knowledge_preview_scroll = 0;
+        if self.knowledge_view_mode == KnowledgeViewMode::Living {
+            self.refresh_knowledge(db);
+        }
+    }
+
+    pub fn cycle_knowledge_kind_filter(&mut self, db: &Database) {
+        self.knowledge_kind_filter = match self.knowledge_kind_filter {
+            None => Some(KnowledgeKind::Warning),
+            Some(KnowledgeKind::Warning) => Some(KnowledgeKind::Pattern),
+            Some(KnowledgeKind::Pattern) => Some(KnowledgeKind::Decision),
+            Some(KnowledgeKind::Decision) => Some(KnowledgeKind::Note),
+            Some(KnowledgeKind::Note) => Some(KnowledgeKind::Preference),
+            Some(KnowledgeKind::Preference) => None,
+        };
+        self.selected_knowledge_idx = 0;
+        self.refresh_knowledge(db);
+    }
+
+    pub fn delete_selected_knowledge(&mut self, db: &Database) {
+        if let Some(item) = self.knowledge_items.get(self.selected_knowledge_idx) {
+            let title = item.title.clone();
+            if let Ok(_) = Queries::delete_knowledge(db.conn(), &item.id) {
+                self.status_message = Some(format!("✓ Deleted knowledge: {}", title));
+                self.refresh_knowledge(db);
+                if self.selected_knowledge_idx >= self.knowledge_items.len() && !self.knowledge_items.is_empty() {
+                    self.selected_knowledge_idx = self.knowledge_items.len() - 1;
+                }
+            }
+        }
     }
 
     pub fn cycle_work_tab_mode(&mut self, db: &Database) {
@@ -1276,7 +1537,15 @@ impl App {
                 match self.work_tab_mode {
                     WorkTabMode::Projects => {
                         if self.focused_pane == FocusedPane::Detail {
-                            if !self.project_tasks.is_empty() {
+                            if !self.native_tasks.is_empty() {
+                                if self.selected_native_task_idx < self.native_tasks.len() - 1 {
+                                    self.selected_native_task_idx += 1;
+                                    self.cockpit_preview_scroll = 0;
+                                } else {
+                                    let max = self.cockpit_preview_max_scroll();
+                                    self.cockpit_preview_scroll = (self.cockpit_preview_scroll + 2).min(max);
+                                }
+                            } else if !self.project_tasks.is_empty() {
                                 if self.selected_project_task_idx < self.project_tasks.len() - 1 {
                                     self.selected_project_task_idx += 1;
                                     self.cockpit_preview_scroll = 0;
@@ -1292,6 +1561,7 @@ impl App {
                             if self.selected_project_idx < self.projects.len() - 1 {
                                 self.selected_project_idx += 1;
                                 self.selected_project_task_idx = 0;
+                                self.selected_native_task_idx = 0;
                                 self.cockpit_preview_scroll = 0;
                             }
                         }
@@ -1317,7 +1587,14 @@ impl App {
                 }
             }
             ActiveTab::Explore => {
-                if self.focused_pane == FocusedPane::Detail {
+                if self.knowledge_view_mode == KnowledgeViewMode::Living {
+                    if self.focused_pane == FocusedPane::Detail {
+                        self.knowledge_preview_scroll = (self.knowledge_preview_scroll + 2).min(500);
+                    } else if !self.knowledge_items.is_empty() && self.selected_knowledge_idx < self.knowledge_items.len() - 1 {
+                        self.selected_knowledge_idx += 1;
+                        self.knowledge_preview_scroll = 0;
+                    }
+                } else if self.focused_pane == FocusedPane::Detail {
                     let max = self.preview_max_scroll();
                     self.preview_scroll_offset = (self.preview_scroll_offset + 2).min(max);
                 } else if self.explore_tree_mode {
@@ -1398,7 +1675,14 @@ impl App {
                 match self.work_tab_mode {
                     WorkTabMode::Projects => {
                         if self.focused_pane == FocusedPane::Detail {
-                            if !self.project_tasks.is_empty() {
+                            if !self.native_tasks.is_empty() {
+                                if self.selected_native_task_idx > 0 {
+                                    self.selected_native_task_idx -= 1;
+                                    self.cockpit_preview_scroll = 0;
+                                } else {
+                                    self.cockpit_preview_scroll = self.cockpit_preview_scroll.saturating_sub(2);
+                                }
+                            } else if !self.project_tasks.is_empty() {
                                 if self.selected_project_task_idx > 0 {
                                     self.selected_project_task_idx -= 1;
                                     self.cockpit_preview_scroll = 0;
@@ -1411,6 +1695,7 @@ impl App {
                         } else if !self.projects.is_empty() && self.selected_project_idx > 0 {
                             self.selected_project_idx -= 1;
                             self.selected_project_task_idx = 0;
+                            self.selected_native_task_idx = 0;
                             self.cockpit_preview_scroll = 0;
                         }
                     }
@@ -1433,7 +1718,14 @@ impl App {
                 }
             }
             ActiveTab::Explore => {
-                if self.focused_pane == FocusedPane::Detail {
+                if self.knowledge_view_mode == KnowledgeViewMode::Living {
+                    if self.focused_pane == FocusedPane::Detail {
+                        self.knowledge_preview_scroll = self.knowledge_preview_scroll.saturating_sub(2);
+                    } else if self.selected_knowledge_idx > 0 {
+                        self.selected_knowledge_idx -= 1;
+                        self.knowledge_preview_scroll = 0;
+                    }
+                } else if self.focused_pane == FocusedPane::Detail {
                     self.preview_scroll_offset = self.preview_scroll_offset.saturating_sub(2);
                 } else if self.explore_tree_mode {
                     let tree = self.build_explore_tree();
@@ -5205,6 +5497,126 @@ mod tests {
         app.tree_collapse_or_jump_parent();
         assert_eq!(app.build_explore_tree().len(), 1);
         assert_eq!(app.selected_tree_idx, 0);
+    }
+
+    #[test]
+    fn test_native_task_submission_and_lifecycle() {
+        let db = Database::open_in_memory("test_coll", "test_prof").unwrap();
+        let mut app = App::new("test_coll", "test_prof");
+
+        app.open_new_task_modal();
+        assert!(app.show_new_task_modal);
+        assert_eq!(app.new_task_field_idx, 0);
+        assert_eq!(app.new_task_priority, 80);
+
+        app.new_task_title = "Implement fast JSON streaming".to_string();
+        app.new_task_description = "Use serde_json raw value".to_string();
+        app.new_task_priority = 85;
+
+        app.submit_new_task(&db).unwrap();
+        assert!(!app.show_new_task_modal);
+        assert_eq!(app.native_tasks.len(), 1);
+        assert_eq!(app.native_tasks[0].title, "Implement fast JSON streaming");
+        assert_eq!(app.native_tasks[0].description, "Use serde_json raw value");
+        assert_eq!(app.native_tasks[0].priority, 85);
+        assert_eq!(app.native_tasks[0].status, TaskState::Pending);
+
+        app.bump_selected_task_priority(&db);
+        assert_eq!(app.native_tasks[0].priority, 90);
+
+        assert_eq!(app.native_task_filter, None);
+        app.cycle_native_task_filter(&db);
+        assert_eq!(app.native_task_filter, Some(TaskState::InProgress));
+        assert_eq!(app.native_tasks.len(), 0);
+
+        app.cycle_native_task_filter(&db);
+        assert_eq!(app.native_task_filter, Some(TaskState::Blocked));
+        assert_eq!(app.native_tasks.len(), 0);
+
+        app.cycle_native_task_filter(&db);
+        assert_eq!(app.native_task_filter, Some(TaskState::Pending));
+        assert_eq!(app.native_tasks.len(), 1);
+
+        app.cycle_native_task_filter(&db);
+        assert_eq!(app.native_task_filter, Some(TaskState::Completed));
+        assert_eq!(app.native_tasks.len(), 0);
+
+        app.cycle_native_task_filter(&db);
+        assert_eq!(app.native_task_filter, None);
+        assert_eq!(app.native_tasks.len(), 1);
+
+        app.delete_selected_native_task(&db);
+        assert_eq!(app.native_tasks.len(), 0);
+    }
+
+    #[test]
+    fn test_living_knowledge_view_mode_and_filtering() {
+        let db = Database::open_in_memory("test_coll", "test_prof").unwrap();
+        let mut app = App::new("test_coll", "test_prof");
+
+        let k1 = KnowledgeRecord {
+            id: "k-1".to_string(),
+            collection_id: "test_coll".to_string(),
+            project: "core".to_string(),
+            title: "Async Lock Hazard".to_string(),
+            content: "Never hold mutex across await".to_string(),
+            kind: KnowledgeKind::Warning,
+            tags: "async,locking".to_string(),
+            created_at: "2026-10-08T10:00:00Z".to_string(),
+            updated_at: "2026-10-08T10:00:00Z".to_string(),
+            metadata_json: "{}".to_string(),
+        };
+        let k2 = KnowledgeRecord {
+            id: "k-2".to_string(),
+            collection_id: "test_coll".to_string(),
+            project: "core".to_string(),
+            title: "Repository Pattern".to_string(),
+            content: "Separate storage from domain".to_string(),
+            kind: KnowledgeKind::Pattern,
+            tags: "patterns,architecture".to_string(),
+            created_at: "2026-10-08T10:01:00Z".to_string(),
+            updated_at: "2026-10-08T10:01:00Z".to_string(),
+            metadata_json: "{}".to_string(),
+        };
+        Queries::upsert_knowledge(db.conn(), &k1).unwrap();
+        Queries::upsert_knowledge(db.conn(), &k2).unwrap();
+
+        assert_eq!(app.knowledge_view_mode, KnowledgeViewMode::Documents);
+        app.toggle_knowledge_view_mode(&db);
+        assert_eq!(app.knowledge_view_mode, KnowledgeViewMode::Living);
+        assert_eq!(app.knowledge_items.len(), 2);
+
+        assert_eq!(app.knowledge_kind_filter, None);
+        app.cycle_knowledge_kind_filter(&db);
+        assert_eq!(app.knowledge_kind_filter, Some(KnowledgeKind::Warning));
+        assert_eq!(app.knowledge_items.len(), 1);
+        assert_eq!(app.knowledge_items[0].id, "k-1");
+
+        app.cycle_knowledge_kind_filter(&db);
+        assert_eq!(app.knowledge_kind_filter, Some(KnowledgeKind::Pattern));
+        assert_eq!(app.knowledge_items.len(), 1);
+        assert_eq!(app.knowledge_items[0].id, "k-2");
+
+        app.cycle_knowledge_kind_filter(&db);
+        assert_eq!(app.knowledge_kind_filter, Some(KnowledgeKind::Decision));
+        assert_eq!(app.knowledge_items.len(), 0);
+
+        app.cycle_knowledge_kind_filter(&db);
+        assert_eq!(app.knowledge_kind_filter, Some(KnowledgeKind::Note));
+        assert_eq!(app.knowledge_items.len(), 0);
+
+        app.cycle_knowledge_kind_filter(&db);
+        assert_eq!(app.knowledge_kind_filter, Some(KnowledgeKind::Preference));
+        assert_eq!(app.knowledge_items.len(), 0);
+
+        app.cycle_knowledge_kind_filter(&db);
+        assert_eq!(app.knowledge_kind_filter, None);
+        assert_eq!(app.knowledge_items.len(), 2);
+
+        app.delete_selected_knowledge(&db);
+        assert_eq!(app.knowledge_items.len(), 1);
+        app.delete_selected_knowledge(&db);
+        assert_eq!(app.knowledge_items.len(), 0);
     }
 }
 

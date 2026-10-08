@@ -258,5 +258,59 @@ CREATE TABLE IF NOT EXISTS directives (
 
 CREATE INDEX IF NOT EXISTS directives_collection ON directives(collection_id, status, category);
 
+CREATE TABLE IF NOT EXISTS tasks (
+  id TEXT PRIMARY KEY,
+  collection_id TEXT NOT NULL REFERENCES collections(id),
+  project TEXT NOT NULL,
+  session_id TEXT,
+  title TEXT NOT NULL,
+  description TEXT NOT NULL DEFAULT '',
+  status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending', 'in_progress', 'completed', 'blocked')),
+  priority INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  completed_at TEXT,
+  metadata_json TEXT NOT NULL DEFAULT '{}'
+);
+
+CREATE INDEX IF NOT EXISTS idx_tasks_coll_proj_status ON tasks(collection_id, project, status);
+CREATE INDEX IF NOT EXISTS idx_tasks_priority ON tasks(collection_id, priority DESC, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_tasks_session ON tasks(collection_id, session_id);
+
+CREATE TABLE IF NOT EXISTS knowledge (
+  id TEXT PRIMARY KEY,
+  collection_id TEXT NOT NULL REFERENCES collections(id),
+  project TEXT NOT NULL DEFAULT '',
+  title TEXT NOT NULL,
+  content TEXT NOT NULL,
+  kind TEXT NOT NULL DEFAULT 'note' CHECK(kind IN ('warning', 'pattern', 'decision', 'note', 'preference')),
+  tags TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  metadata_json TEXT NOT NULL DEFAULT '{}'
+);
+
+CREATE INDEX IF NOT EXISTS idx_knowledge_coll_kind ON knowledge(collection_id, kind);
+CREATE INDEX IF NOT EXISTS idx_knowledge_project ON knowledge(collection_id, project);
+
+CREATE VIRTUAL TABLE IF NOT EXISTS knowledge_fts USING fts5(
+  title, content, tags, content='knowledge', content_rowid='rowid', tokenize='porter unicode61'
+);
+
+CREATE TRIGGER IF NOT EXISTS knowledge_ai AFTER INSERT ON knowledge BEGIN
+  INSERT INTO knowledge_fts(rowid, title, content, tags) VALUES(new.rowid, new.title, new.content, new.tags);
+END;
+
+CREATE TRIGGER IF NOT EXISTS knowledge_ad AFTER DELETE ON knowledge BEGIN
+  INSERT INTO knowledge_fts(knowledge_fts, rowid, title, content, tags)
+  VALUES('delete', old.rowid, old.title, old.content, old.tags);
+END;
+
+CREATE TRIGGER IF NOT EXISTS knowledge_au AFTER UPDATE ON knowledge BEGIN
+  INSERT INTO knowledge_fts(knowledge_fts, rowid, title, content, tags)
+  VALUES('delete', old.rowid, old.title, old.content, old.tags);
+  INSERT INTO knowledge_fts(rowid, title, content, tags) VALUES(new.rowid, new.title, new.content, new.tags);
+END;
+
 
 

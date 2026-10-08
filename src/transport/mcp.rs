@@ -1,5 +1,5 @@
 use crate::core::{DecisionWorkflow, DirectiveWorkflow, Git, GrantStore, RiskWorkflow, SessionManager};
-use crate::domain::BrowseOptions;
+use crate::domain::{BrowseOptions, KnowledgeKind, KnowledgeRecord, TaskRecord, TaskState};
 use crate::storage::Queries;
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
@@ -421,17 +421,29 @@ impl McpServer {
             }),
             json!({
                 "name": "remember",
-                "description": "Save a local working note into private memory. Local notes stay private to human review and are never committed as shared decisions.",
+                "description": "Save a local working note, warning, decision, or pattern into living knowledge.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
                         "title": {
                             "type": "string",
-                            "description": "Title of the private note"
+                            "description": "Title of the note or insight"
                         },
                         "content": {
                             "type": "string",
-                            "description": "Content of the private note"
+                            "description": "Content of the note or insight"
+                        },
+                        "type": {
+                            "type": "string",
+                            "description": "Optional category: 'warning', 'pattern', 'decision', 'note', or 'preference' (default: note)"
+                        },
+                        "tags": {
+                            "type": "string",
+                            "description": "Optional comma-separated tags for search categorization"
+                        },
+                        "project": {
+                            "type": "string",
+                            "description": "Optional project association"
                         }
                     },
                     "required": ["title", "content"]
@@ -755,6 +767,120 @@ impl McpServer {
                         }
                     },
                     "required": ["peer", "prompt"]
+                }
+            }),
+            json!({
+                "name": "list_tasks",
+                "description": "List tactical engineering tasks from the native task queue with optional project and status filters.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "project": { "type": "string", "description": "Optional project name filter" },
+                        "status": { "type": "string", "description": "Optional status filter: 'in_progress', 'pending', 'blocked', 'completed', or 'all'" },
+                        "limit": { "type": "integer", "description": "Maximum number of tasks to return (default: 50)" }
+                    }
+                }
+            }),
+            json!({
+                "name": "create_task",
+                "description": "Create a new prioritized task in the native task queue that outlives the current session.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "title": { "type": "string", "description": "Short, actionable task title" },
+                        "project": { "type": "string", "description": "Optional project association (defaults to active project or 'global')" },
+                        "description": { "type": "string", "description": "Detailed task description, acceptance criteria, or reproduction steps" },
+                        "priority": { "type": "integer", "description": "Task priority from 0 (lowest) to 100 (highest, default: 0)" },
+                        "session_id": { "type": "string", "description": "Optional session ID association" }
+                    },
+                    "required": ["title"]
+                }
+            }),
+            json!({
+                "name": "update_task",
+                "description": "Update status, priority, or description of an existing task in the native task queue.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "id": { "type": "string", "description": "Task UUID" },
+                        "status": { "type": "string", "description": "New status: 'pending', 'in_progress', 'completed', 'blocked'" },
+                        "priority": { "type": "integer", "description": "New priority (0-100)" },
+                        "description": { "type": "string", "description": "Updated task description" }
+                    },
+                    "required": ["id"]
+                }
+            }),
+            json!({
+                "name": "search_knowledge",
+                "description": "Full-text search across living knowledge records (warnings, patterns, decisions, notes).",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "query": { "type": "string", "description": "Search query terms" },
+                        "kind": { "type": "string", "description": "Optional filter: 'warning', 'pattern', 'decision', 'note', 'preference'" },
+                        "limit": { "type": "integer", "description": "Maximum number of items to return (default: 10)" }
+                    },
+                    "required": ["query"]
+                }
+            }),
+            json!({
+                "name": "list_knowledge",
+                "description": "List living knowledge records filtered by category and tag.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "kind": { "type": "string", "description": "Optional filter: 'warning', 'pattern', 'decision', 'note', 'preference'" },
+                        "tag": { "type": "string", "description": "Optional tag filter" },
+                        "limit": { "type": "integer", "description": "Maximum number of items to return (default: 20)" }
+                    }
+                }
+            }),
+            json!({
+                "name": "get_session_context",
+                "description": "Get turn-zero warm-start context fusing active project governance, open tasks, and top warnings.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "project": { "type": "string", "description": "Optional project name" }
+                    }
+                }
+            }),
+            json!({
+                "name": "search_docs",
+                "description": "Search indexed repository documentation using full-text search. Drop-in parity with legacy documentation search tools.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "query": { "type": "string", "description": "Search query terms" },
+                        "limit": { "type": "integer", "description": "Maximum number of results to return (default: 10, max: 50)" }
+                    },
+                    "required": ["query"]
+                }
+            }),
+            json!({
+                "name": "get_context",
+                "description": "Get thin-pointer architectural context for files being edited: applicable directives, open cited risks, project governance milestones, and related living warnings.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "files": {
+                            "type": "array",
+                            "items": { "type": "string" },
+                            "description": "List of file paths currently being viewed, edited, or planned"
+                        }
+                    },
+                    "required": ["files"]
+                }
+            }),
+            json!({
+                "name": "delete_knowledge",
+                "description": "Delete a living knowledge record by its ID to prune obsolete warnings or stale patterns.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "id": { "type": "string", "description": "The unique identifier of the knowledge item to delete" }
+                    },
+                    "required": ["id"]
                 }
             }),
         ]
@@ -1485,7 +1611,7 @@ impl McpServer {
                 }))
             }
 
-            "search" => {
+            "search" | "search_docs" => {
                 let query = args
                     .get("query")
                     .and_then(|v| v.as_str())
@@ -1498,7 +1624,6 @@ impl McpServer {
 
                 let include_archived = args.get("include_archived").and_then(|v| v.as_bool()).unwrap_or(false);
 
-                // Note: include_private = false strictly withholds private memory from agents!
                 let hits = Queries::search(
                     conn,
                     &[collection_id.to_string()],
@@ -1651,20 +1776,49 @@ impl McpServer {
                     .get("content")
                     .and_then(|v| v.as_str())
                     .ok_or_else(|| "Missing required argument 'content' for remember".to_string())?;
+                let kind_str = args
+                    .get("type")
+                    .or_else(|| args.get("kind"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("note");
+                let tags = args
+                    .get("tags")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                let project = args
+                    .get("project")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
 
                 if let Some(ref sess_id) = current_sess_id {
                     let _ = SessionManager::record_tool_call(conn, sess_id, "remember", "", title);
                 }
 
                 let new_id = uuid::Uuid::now_v7().to_string();
-                Queries::remember(conn, &new_id, profile_id, title, content, "note")
-                    .map_err(|e| format!("Failed to save memory: {}", e))?;
+                let now = chrono::Utc::now().to_rfc3339();
+
+                let record = KnowledgeRecord {
+                    id: new_id.clone(),
+                    collection_id: collection_id.to_string(),
+                    project: project.to_string(),
+                    title: title.to_string(),
+                    content: content.to_string(),
+                    kind: KnowledgeKind::from_str_loose(kind_str),
+                    tags: tags.to_string(),
+                    created_at: now.clone(),
+                    updated_at: now,
+                    metadata_json: "{}".to_string(),
+                };
+
+                Queries::upsert_knowledge(conn, &record)
+                    .map_err(|e| format!("Failed to save knowledge: {}", e))?;
+                let _ = Queries::remember(conn, &new_id, profile_id, title, content, kind_str);
 
                 Ok(json!({
                     "content": [
                         {
                             "type": "text",
-                            "text": format!("Saved note '{}' (ID: {}) to private memory.", title, new_id)
+                            "text": format!("Saved {} '{}' (ID: {}) to living knowledge.", record.kind.as_str(), title, new_id)
                         }
                     ],
                     "isError": false
@@ -2474,6 +2628,376 @@ impl McpServer {
                 Ok(json!({
                     "content": [{ "type": "text", "text": serialized }],
                     "isError": !result.success
+                }))
+            }
+
+            "list_tasks" => {
+                let project = args.get("project").and_then(|v| v.as_str());
+                let status = args.get("status").and_then(|v| v.as_str());
+                let limit = args.get("limit").and_then(|v| v.as_u64()).unwrap_or(50) as usize;
+
+                if let Some(ref sess_id) = current_sess_id {
+                    let _ = SessionManager::record_tool_call(conn, sess_id, "list_tasks", "", "");
+                }
+
+                let tasks = Queries::list_tasks(conn, collection_id, project, status, limit)
+                    .map_err(|e| format!("Failed to list tasks: {}", e))?;
+
+                let serialized = serde_json::to_string_pretty(&tasks)
+                    .map_err(|e| format!("Serialization error: {}", e))?;
+
+                Ok(json!({
+                    "content": [{ "type": "text", "text": serialized }],
+                    "isError": false
+                }))
+            }
+
+            "create_task" => {
+                let title = args
+                    .get("title")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| "Missing required argument 'title' for create_task".to_string())?;
+                let project = args
+                    .get("project")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("global");
+                let description = args
+                    .get("description")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                let priority = args
+                    .get("priority")
+                    .and_then(|v| v.as_i64())
+                    .unwrap_or(0) as i32;
+                let session_id = args
+                    .get("session_id")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string())
+                    .or_else(|| current_sess_id.clone());
+
+                if let Some(ref sess_id) = current_sess_id {
+                    let _ = SessionManager::record_tool_call(conn, sess_id, "create_task", "", title);
+                }
+
+                let new_id = uuid::Uuid::now_v7().to_string();
+                let now = chrono::Utc::now().to_rfc3339();
+
+                let record = TaskRecord {
+                    id: new_id.clone(),
+                    collection_id: collection_id.to_string(),
+                    project: project.to_string(),
+                    session_id,
+                    title: title.to_string(),
+                    description: description.to_string(),
+                    status: TaskState::Pending,
+                    priority,
+                    created_at: now.clone(),
+                    updated_at: now,
+                    completed_at: None,
+                    metadata_json: "{}".to_string(),
+                };
+
+                Queries::upsert_task(conn, &record)
+                    .map_err(|e| format!("Failed to create task: {}", e))?;
+
+                let serialized = serde_json::to_string_pretty(&record)
+                    .map_err(|e| format!("Serialization error: {}", e))?;
+
+                Ok(json!({
+                    "content": [{ "type": "text", "text": serialized }],
+                    "isError": false
+                }))
+            }
+
+            "update_task" => {
+                let id = args
+                    .get("id")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| "Missing required argument 'id' for update_task".to_string())?;
+
+                let existing = Queries::get_task(conn, id)
+                    .map_err(|e| format!("Database error: {}", e))?
+                    .ok_or_else(|| format!("Task with id '{}' not found", id))?;
+
+                let new_status = if let Some(st) = args.get("status").and_then(|v| v.as_str()) {
+                    TaskState::from_str_loose(st)
+                } else {
+                    existing.status.clone()
+                };
+
+                let new_priority = args
+                    .get("priority")
+                    .and_then(|v| v.as_i64())
+                    .map(|p| p as i32)
+                    .unwrap_or(existing.priority);
+
+                let new_description = args
+                    .get("description")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or(&existing.description);
+
+                let now = chrono::Utc::now().to_rfc3339();
+                let completed_at = if new_status == TaskState::Completed {
+                    Some(now.clone())
+                } else if existing.status == TaskState::Completed {
+                    None
+                } else {
+                    existing.completed_at
+                };
+
+                let updated_record = TaskRecord {
+                    id: existing.id,
+                    collection_id: existing.collection_id,
+                    project: existing.project,
+                    session_id: existing.session_id,
+                    title: existing.title,
+                    description: new_description.to_string(),
+                    status: new_status,
+                    priority: new_priority,
+                    created_at: existing.created_at,
+                    updated_at: now,
+                    completed_at,
+                    metadata_json: existing.metadata_json,
+                };
+
+                Queries::upsert_task(conn, &updated_record)
+                    .map_err(|e| format!("Failed to update task: {}", e))?;
+
+                let serialized = serde_json::to_string_pretty(&updated_record)
+                    .map_err(|e| format!("Serialization error: {}", e))?;
+
+                Ok(json!({
+                    "content": [{ "type": "text", "text": serialized }],
+                    "isError": false
+                }))
+            }
+
+            "search_knowledge" => {
+                let query = args
+                    .get("query")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| "Missing required argument 'query' for search_knowledge".to_string())?;
+                let kind_opt = args
+                    .get("kind")
+                    .or_else(|| args.get("type"))
+                    .and_then(|v| v.as_str())
+                    .map(KnowledgeKind::from_str_loose);
+                let limit = args.get("limit").and_then(|v| v.as_u64()).unwrap_or(10) as usize;
+
+                if let Some(ref sess_id) = current_sess_id {
+                    let _ = SessionManager::record_tool_call(conn, sess_id, "search_knowledge", "", query);
+                }
+
+                let items = Queries::search_knowledge(conn, collection_id, query, kind_opt, limit)
+                    .map_err(|e| format!("Failed to search knowledge: {}", e))?;
+
+                let serialized = serde_json::to_string_pretty(&items)
+                    .map_err(|e| format!("Serialization error: {}", e))?;
+
+                Ok(json!({
+                    "content": [{ "type": "text", "text": serialized }],
+                    "isError": false
+                }))
+            }
+
+            "list_knowledge" => {
+                let kind_opt = args
+                    .get("kind")
+                    .or_else(|| args.get("type"))
+                    .and_then(|v| v.as_str())
+                    .map(KnowledgeKind::from_str_loose);
+                let tag = args.get("tag").or_else(|| args.get("tags")).and_then(|v| v.as_str());
+                let limit = args.get("limit").and_then(|v| v.as_u64()).unwrap_or(20) as usize;
+
+                if let Some(ref sess_id) = current_sess_id {
+                    let _ = SessionManager::record_tool_call(conn, sess_id, "list_knowledge", "", "");
+                }
+
+                let items = Queries::list_knowledge(conn, collection_id, kind_opt, tag, limit)
+                    .map_err(|e| format!("Failed to list knowledge: {}", e))?;
+
+                let serialized = serde_json::to_string_pretty(&items)
+                    .map_err(|e| format!("Serialization error: {}", e))?;
+
+                Ok(json!({
+                    "content": [{ "type": "text", "text": serialized }],
+                    "isError": false
+                }))
+            }
+
+            "get_session_context" => {
+                let project_filter = args.get("project").and_then(|v| v.as_str());
+
+                if let Some(ref sess_id) = current_sess_id {
+                    let _ = SessionManager::record_tool_call(conn, sess_id, "get_session_context", "", "");
+                }
+
+                let tasks = Queries::list_tasks(conn, collection_id, project_filter, None, 10).unwrap_or_default();
+                let warnings = Queries::list_knowledge(conn, collection_id, Some(KnowledgeKind::Warning), None, 5).unwrap_or_default();
+                let patterns = Queries::list_knowledge(conn, collection_id, Some(KnowledgeKind::Pattern), None, 3).unwrap_or_default();
+
+                let mut out = String::new();
+                out.push_str("=== TURN-ZERO SESSION CONTEXT ===\n");
+                if let Some(proj) = project_filter {
+                    if let Ok(st) = crate::core::StatusEngine::get_project_status(root, proj) {
+                        out.push_str(&format!("Project: `{}` | Health: `{}` | Status: `{}`\n", proj, st.health.as_str(), st.status.as_str()));
+                        out.push_str(&format!("Goal: {}\n", st.goal));
+                        if let Some(ref lock) = st.active_task {
+                            out.push_str(&format!("🔒 Critical Path: `{}`\n", lock));
+                        }
+                        out.push('\n');
+                    }
+                }
+
+                out.push_str("Open Tasks (Priority Order):\n");
+                if tasks.is_empty() {
+                    out.push_str("  (none)\n");
+                } else {
+                    for t in &tasks {
+                        out.push_str(&format!("  - [{}] (Pri {}) {} [{}]\n", t.status.as_str(), t.priority, t.title, t.id));
+                    }
+                }
+
+                out.push_str("\nRecent Warnings:\n");
+                if warnings.is_empty() {
+                    out.push_str("  (none)\n");
+                } else {
+                    for w in &warnings {
+                        out.push_str(&format!("  - ⚠️ {}\n", w.title));
+                    }
+                }
+
+                if !patterns.is_empty() {
+                    out.push_str("\nEstablished Patterns:\n");
+                    for p in &patterns {
+                        out.push_str(&format!("  - 📐 {}\n", p.title));
+                    }
+                }
+                out.push_str("=== END SESSION CONTEXT ===\n");
+
+                Ok(json!({
+                    "content": [{ "type": "text", "text": out }],
+                    "isError": false
+                }))
+            }
+
+            "delete_knowledge" => {
+                let id = args
+                    .get("id")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| "Missing required argument 'id' for delete_knowledge".to_string())?;
+
+                let deleted = Queries::delete_knowledge(conn, id)
+                    .map_err(|e| format!("Failed to delete knowledge item: {}", e))?;
+
+                if deleted {
+                    Ok(json!({
+                        "content": [{
+                            "type": "text",
+                            "text": format!("✓ Successfully deleted knowledge item '{}'", id)
+                        }],
+                        "isError": false
+                    }))
+                } else {
+                    Ok(json!({
+                        "content": [{
+                            "type": "text",
+                            "text": format!("No knowledge item found with ID '{}'", id)
+                        }],
+                        "isError": false
+                    }))
+                }
+            }
+
+            "get_context" => {
+                let files: Vec<String> = args
+                    .get("files")
+                    .and_then(|v| v.as_array())
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|val| val.as_str().map(|s| s.to_string()))
+                            .collect()
+                    })
+                    .unwrap_or_default();
+
+                let all_directives = Queries::list_directives(conn, collection_id, None, Some("active")).unwrap_or_default();
+                let relevant_directives = crate::domain::Directive::filter_relevant(&all_directives, &files, 5);
+                let matched_directives: Vec<Value> = relevant_directives.into_iter().map(|d| {
+                    json!({
+                        "id": d.id,
+                        "title": d.title,
+                        "category": d.category,
+                        "scope": d.scope,
+                        "content": d.content,
+                    })
+                }).collect();
+
+                let detected_project = files.iter().find_map(|f| detect_project_from_path(f));
+                let project_governance = if let Some(ref p_name) = detected_project {
+                    if let Ok(st) = crate::core::StatusEngine::get_project_status(root, p_name) {
+                        Some(json!({
+                            "project": p_name,
+                            "health": st.health.as_str(),
+                            "goal": st.goal,
+                            "active_task": st.active_task,
+                            "exit_criteria": st.exit_criteria,
+                        }))
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                };
+
+                let risk_pointers: Vec<Value> = if let Ok(check) = Queries::check_work(conn, collection_id, &files, None, None) {
+                    check.matches.iter()
+                        .filter(|m| !m.suppressed && !m.acknowledged)
+                        .take(5)
+                        .map(|m| json!({
+                            "title": m.document.title,
+                            "path": m.document.path,
+                            "matched_paths": m.matched_paths,
+                            "reason": m.reason,
+                        }))
+                        .collect()
+                } else {
+                    Vec::new()
+                };
+
+                let warnings = Queries::list_knowledge(conn, collection_id, Some(KnowledgeKind::Warning), None, 10)
+                    .unwrap_or_default();
+                let mut relevant_warnings = Vec::new();
+                for w in warnings {
+                    let matches_file = files.iter().any(|f| {
+                        let basename = Path::new(f).file_name().and_then(|n| n.to_str()).unwrap_or("");
+                        w.title.contains(basename) || w.content.contains(basename) || w.tags.contains(basename)
+                    });
+                    if matches_file || detected_project.as_ref().map_or(false, |p| w.project == *p) {
+                        relevant_warnings.push(json!({
+                            "id": w.id,
+                            "title": w.title,
+                            "content": w.content,
+                        }));
+                        if relevant_warnings.len() >= 5 {
+                            break;
+                        }
+                    }
+                }
+
+                let result = json!({
+                    "files": files,
+                    "project": project_governance,
+                    "applicable_directives": matched_directives,
+                    "cited_risks": risk_pointers,
+                    "relevant_warnings": relevant_warnings,
+                });
+
+                let serialized = serde_json::to_string_pretty(&result)
+                    .map_err(|e| format!("Serialization error: {}", e))?;
+
+                Ok(json!({
+                    "content": [{ "type": "text", "text": serialized }],
+                    "isError": false
                 }))
             }
 
@@ -3305,6 +3829,193 @@ mod tests {
         assert!(consult_resp.result.is_some());
         let consult_val: Value = serde_json::from_str(consult_resp.result.unwrap()["content"][0]["text"].as_str().unwrap()).unwrap();
         assert_eq!(consult_val["peer"], "claude");
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_mcp_collab_replacement_tools() {
+        let temp_dir = std::env::temp_dir().join(format!("hyperkb-mcp-collab-{}", uuid::Uuid::now_v7()));
+        let _ = std::fs::create_dir_all(temp_dir.join("projects/mon-proj"));
+        let root_str = temp_dir.to_str().unwrap();
+
+        std::fs::write(
+            temp_dir.join("projects/mon-proj/status.md"),
+            "---\nstatus: active\nhealth: healthy\ngoal: Implement truthful metrics\nactive_task: T1\n---\n# Status\nAll good.\n",
+        ).unwrap();
+
+        let db = Database::open_in_memory("coll_collab", "prof_collab").unwrap();
+
+        let create_task_req = JsonRpcRequest {
+            jsonrpc: "2.0".into(),
+            id: Some(json!(101)),
+            method: "tools/call".into(),
+            params: Some(json!({
+                "name": "create_task",
+                "arguments": {
+                    "title": "MDM direct DB sync",
+                    "project": "mon-proj",
+                    "priority": 80,
+                    "description": "Port Direct DB transfer"
+                }
+            })),
+        };
+        let create_resp = McpServer::handle_request(root_str, db.conn(), "coll_collab", "prof_collab", create_task_req).unwrap();
+        assert!(create_resp.result.is_some());
+        let task_json: Value = serde_json::from_str(create_resp.result.unwrap()["content"][0]["text"].as_str().unwrap()).unwrap();
+        assert_eq!(task_json["title"], "MDM direct DB sync");
+        let task_id = task_json["id"].as_str().unwrap().to_string();
+
+        let list_tasks_req = JsonRpcRequest {
+            jsonrpc: "2.0".into(),
+            id: Some(json!(102)),
+            method: "tools/call".into(),
+            params: Some(json!({
+                "name": "list_tasks",
+                "arguments": {
+                    "project": "mon-proj"
+                }
+            })),
+        };
+        let list_resp = McpServer::handle_request(root_str, db.conn(), "coll_collab", "prof_collab", list_tasks_req).unwrap();
+        let tasks_list: Value = serde_json::from_str(list_resp.result.unwrap()["content"][0]["text"].as_str().unwrap()).unwrap();
+        assert_eq!(tasks_list.as_array().unwrap().len(), 1);
+
+        let update_task_req = JsonRpcRequest {
+            jsonrpc: "2.0".into(),
+            id: Some(json!(103)),
+            method: "tools/call".into(),
+            params: Some(json!({
+                "name": "update_task",
+                "arguments": {
+                    "id": task_id,
+                    "status": "in_progress",
+                    "priority": 95
+                }
+            })),
+        };
+        let update_resp = McpServer::handle_request(root_str, db.conn(), "coll_collab", "prof_collab", update_task_req).unwrap();
+        let updated_val: Value = serde_json::from_str(update_resp.result.unwrap()["content"][0]["text"].as_str().unwrap()).unwrap();
+        assert_eq!(updated_val["status"], "in_progress");
+        assert_eq!(updated_val["priority"], 95);
+
+        let remember_req = JsonRpcRequest {
+            jsonrpc: "2.0".into(),
+            id: Some(json!(104)),
+            method: "tools/call".into(),
+            params: Some(json!({
+                "name": "remember",
+                "arguments": {
+                    "title": "UTF-8 Mojibake regression trap",
+                    "content": "Verify write path before declaring read-path done.",
+                    "type": "warning",
+                    "tags": "encoding,write-path",
+                    "project": "mon-proj"
+                }
+            })),
+        };
+        let remember_resp = McpServer::handle_request(root_str, db.conn(), "coll_collab", "prof_collab", remember_req).unwrap();
+        assert!(remember_resp.result.is_some());
+
+        let search_know_req = JsonRpcRequest {
+            jsonrpc: "2.0".into(),
+            id: Some(json!(105)),
+            method: "tools/call".into(),
+            params: Some(json!({
+                "name": "search_knowledge",
+                "arguments": {
+                    "query": "mojibake encoding",
+                    "kind": "warning"
+                }
+            })),
+        };
+        let search_resp = McpServer::handle_request(root_str, db.conn(), "coll_collab", "prof_collab", search_know_req).unwrap();
+        let search_hits: Value = serde_json::from_str(search_resp.result.unwrap()["content"][0]["text"].as_str().unwrap()).unwrap();
+        assert_eq!(search_hits.as_array().unwrap().len(), 1);
+
+        let list_know_req = JsonRpcRequest {
+            jsonrpc: "2.0".into(),
+            id: Some(json!(106)),
+            method: "tools/call".into(),
+            params: Some(json!({
+                "name": "list_knowledge",
+                "arguments": {
+                    "kind": "warning"
+                }
+            })),
+        };
+        let list_know_resp = McpServer::handle_request(root_str, db.conn(), "coll_collab", "prof_collab", list_know_req.clone()).unwrap();
+        let list_know_val: Value = serde_json::from_str(list_know_resp.result.unwrap()["content"][0]["text"].as_str().unwrap()).unwrap();
+        assert_eq!(list_know_val.as_array().unwrap().len(), 1);
+
+        let ctx_req = JsonRpcRequest {
+            jsonrpc: "2.0".into(),
+            id: Some(json!(107)),
+            method: "tools/call".into(),
+            params: Some(json!({
+                "name": "get_session_context",
+                "arguments": {
+                    "project": "mon-proj"
+                }
+            })),
+        };
+        let ctx_resp = McpServer::handle_request(root_str, db.conn(), "coll_collab", "prof_collab", ctx_req).unwrap();
+        let ctx_text = ctx_resp.result.unwrap()["content"][0]["text"].as_str().unwrap().to_string();
+        assert!(ctx_text.contains("TURN-ZERO SESSION CONTEXT"));
+        assert!(ctx_text.contains("MDM direct DB sync"));
+        assert!(ctx_text.contains("UTF-8 Mojibake regression trap"));
+
+        let know_id = search_hits[0]["id"].as_str().unwrap().to_string();
+
+        let get_ctx_req = JsonRpcRequest {
+            jsonrpc: "2.0".into(),
+            id: Some(json!(108)),
+            method: "tools/call".into(),
+            params: Some(json!({
+                "name": "get_context",
+                "arguments": {
+                    "files": ["projects/mon-proj/status.md"]
+                }
+            })),
+        };
+        let get_ctx_resp = McpServer::handle_request(root_str, db.conn(), "coll_collab", "prof_collab", get_ctx_req).unwrap();
+        let get_ctx_val: Value = serde_json::from_str(get_ctx_resp.result.unwrap()["content"][0]["text"].as_str().unwrap()).unwrap();
+        assert_eq!(get_ctx_val["project"]["project"], "mon-proj");
+        assert_eq!(get_ctx_val["project"]["health"], "healthy");
+        assert_eq!(get_ctx_val["relevant_warnings"].as_array().unwrap().len(), 1);
+
+        let search_docs_req = JsonRpcRequest {
+            jsonrpc: "2.0".into(),
+            id: Some(json!(109)),
+            method: "tools/call".into(),
+            params: Some(json!({
+                "name": "search_docs",
+                "arguments": {
+                    "query": "nonexistent_query_term_xyz"
+                }
+            })),
+        };
+        let search_docs_resp = McpServer::handle_request(root_str, db.conn(), "coll_collab", "prof_collab", search_docs_req).unwrap();
+        assert!(search_docs_resp.result.is_some());
+
+        let del_know_req = JsonRpcRequest {
+            jsonrpc: "2.0".into(),
+            id: Some(json!(110)),
+            method: "tools/call".into(),
+            params: Some(json!({
+                "name": "delete_knowledge",
+                "arguments": {
+                    "id": know_id
+                }
+            })),
+        };
+        let del_resp = McpServer::handle_request(root_str, db.conn(), "coll_collab", "prof_collab", del_know_req).unwrap();
+        let del_text = del_resp.result.unwrap()["content"][0]["text"].as_str().unwrap().to_string();
+        assert!(del_text.contains("Successfully deleted"));
+
+        let list_after_del = McpServer::handle_request(root_str, db.conn(), "coll_collab", "prof_collab", list_know_req).unwrap();
+        let list_after_val: Value = serde_json::from_str(list_after_del.result.unwrap()["content"][0]["text"].as_str().unwrap()).unwrap();
+        assert_eq!(list_after_val.as_array().unwrap().len(), 0);
 
         let _ = std::fs::remove_dir_all(&temp_dir);
     }

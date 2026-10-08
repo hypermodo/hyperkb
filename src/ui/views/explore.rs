@@ -1,5 +1,5 @@
-use crate::domain::{DocumentKind, DocumentStatus};
-use crate::ui::app::{App, ExploreTreeItem, FocusedPane};
+use crate::domain::{DocumentKind, DocumentStatus, KnowledgeKind};
+use crate::ui::app::{App, ExploreTreeItem, FocusedPane, KnowledgeViewMode};
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Modifier, Style},
@@ -21,12 +21,198 @@ impl ExploreView {
             .constraints([Constraint::Length(list_width), Constraint::Min(40)])
             .split(area);
 
-        if app.explore_tree_mode {
+        if app.knowledge_view_mode == KnowledgeViewMode::Living {
+            Self::render_living_knowledge_list(frame, app, chunks[0]);
+            Self::render_living_knowledge_preview(frame, app, chunks[1]);
+        } else if app.explore_tree_mode {
             Self::render_tree_view(frame, app, chunks[0]);
             Self::render_tree_preview(frame, app, chunks[1]);
         } else {
             Self::render_document_list(frame, app, chunks[0]);
             Self::render_document_preview(frame, app, chunks[1]);
+        }
+    }
+
+    fn render_living_knowledge_list(frame: &mut Frame, app: &mut App, area: Rect) {
+        let t = app.theme;
+        let border_color = if app.focused_pane == FocusedPane::List {
+            t.border_focused()
+        } else {
+            t.border()
+        };
+
+        let kind_label = match app.knowledge_kind_filter {
+            None => "ALL",
+            Some(KnowledgeKind::Warning) => "⚠️ WARNINGS",
+            Some(KnowledgeKind::Pattern) => "📐 PATTERNS",
+            Some(KnowledgeKind::Decision) => "⚖️ DECISIONS",
+            Some(KnowledgeKind::Note) => "📝 NOTES",
+            Some(KnowledgeKind::Preference) => "⚙️ PREFERENCES",
+        };
+        let title = format!(
+            " Living Knowledge ({}) [Filter [f]: {} | View [m]: Living] ",
+            app.knowledge_items.len(),
+            kind_label
+        );
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(border_color))
+            .style(Style::default().bg(t.bg_panel()).fg(t.text_primary()))
+            .padding(Padding::new(1, 1, 0, 0))
+            .title(Span::styled(title, t.title()));
+
+        if app.knowledge_items.is_empty() {
+            let empty_p = Paragraph::new(vec![
+                Line::from(""),
+                Line::from(Span::styled(
+                    "No living knowledge items match the current filter.",
+                    Style::default().fg(t.text_muted()),
+                )),
+                Line::from(""),
+                Line::from(vec![
+                    Span::styled("Press ", Style::default().fg(t.text_muted())),
+                    Span::styled("[f]", t.key_badge()),
+                    Span::styled(" to cycle category filter or ", Style::default().fg(t.text_muted())),
+                    Span::styled("[m]", t.key_badge()),
+                    Span::styled(" to view curated documents.", Style::default().fg(t.text_muted())),
+                ]),
+            ])
+            .block(block);
+            frame.render_widget(empty_p, area);
+            return;
+        }
+
+        let selected_idx = app.selected_knowledge_idx;
+        let items: Vec<ListItem> = app
+            .knowledge_items
+            .iter()
+            .enumerate()
+            .map(|(idx, item)| {
+                let is_sel = idx == selected_idx;
+                let (badge_text, badge_style) = match item.kind {
+                    KnowledgeKind::Warning => (" ⚠️ WARNING ", t.badge_risk()),
+                    KnowledgeKind::Pattern => (" 📐 PATTERN ", t.badge_accepted()),
+                    KnowledgeKind::Decision => (" ⚖ DECISION ", t.badge_accepted()),
+                    KnowledgeKind::Note => (" 📝 NOTE ", t.badge_proposed()),
+                    KnowledgeKind::Preference => (" ⚙ PREF ", t.badge_proposed()),
+                };
+
+                let title_span = Span::styled(
+                    format!(" {}", item.title),
+                    if is_sel {
+                        t.selected_row()
+                    } else {
+                        Style::default().fg(t.text_primary()).add_modifier(Modifier::BOLD)
+                    },
+                );
+
+                let tags_str = if item.tags.is_empty() {
+                    item.project.clone()
+                } else {
+                    format!("{} • {}", item.project, item.tags)
+                };
+
+                let subline = Span::styled(
+                    format!("    {} • {}", &item.updated_at[..10.min(item.updated_at.len())], tags_str),
+                    Style::default().fg(t.text_muted()),
+                );
+
+                ListItem::new(vec![
+                    Line::from(vec![Span::styled(badge_text, badge_style), title_span]),
+                    Line::from(subline),
+                ])
+            })
+            .collect();
+
+        let list = List::new(items)
+            .block(block)
+            .highlight_style(t.selected_row());
+        frame.render_stateful_widget(list, area, &mut app.knowledge_list_state);
+
+        let total = app.knowledge_items.len();
+        if total > 0 {
+            let mut scrollbar_state = ScrollbarState::new(total.saturating_sub(1))
+                .position(app.selected_knowledge_idx);
+            let scrollbar = Scrollbar::default()
+                .orientation(ScrollbarOrientation::VerticalRight)
+                .begin_symbol(Some("▲"))
+                .end_symbol(Some("▼"))
+                .track_symbol(Some("│"))
+                .thumb_symbol("█");
+            frame.render_stateful_widget(scrollbar, area, &mut scrollbar_state);
+        }
+    }
+
+    fn render_living_knowledge_preview(frame: &mut Frame, app: &App, area: Rect) {
+        let t = app.theme;
+        let border_color = if app.focused_pane == FocusedPane::Detail {
+            t.border_focused()
+        } else {
+            t.border()
+        };
+
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(border_color))
+            .style(Style::default().bg(t.bg_panel()).fg(t.text_primary()))
+            .padding(Padding::new(2, 2, 0, 0))
+            .title(Span::styled(" Living Knowledge Intelligence [Scroll: PgUp/PgDn/Wheel] ", t.title()));
+
+        if let Some(item) = app.knowledge_items.get(app.selected_knowledge_idx) {
+            let preview_width = area.width.saturating_sub(6) as usize;
+            let formatted_lines = crate::ui::markdown::MarkdownFormatter::format_markdown_with_theme(&item.content, preview_width, &t);
+            let total_lines = formatted_lines.len();
+            let visible_lines = area.height.saturating_sub(4) as usize;
+            let max_scroll = total_lines.saturating_sub(visible_lines);
+            let scroll_offset = app.knowledge_preview_scroll.min(max_scroll);
+
+            let (badge_text, badge_style) = match item.kind {
+                KnowledgeKind::Warning => (" ⚠️ WARNING ", t.badge_risk()),
+                KnowledgeKind::Pattern => (" 📐 PATTERN ", t.badge_accepted()),
+                KnowledgeKind::Decision => (" ⚖ DECISION ", t.badge_accepted()),
+                KnowledgeKind::Note => (" 📝 NOTE ", t.badge_proposed()),
+                KnowledgeKind::Preference => (" ⚙ PREF ", t.badge_proposed()),
+            };
+
+            let mut preview_lines = vec![
+                Line::from(vec![
+                    Span::styled(badge_text, badge_style),
+                    Span::styled(format!(" {} ", item.title), Style::default().fg(t.accent()).add_modifier(Modifier::BOLD)),
+                ]),
+                Line::from(vec![
+                    Span::styled("Project: ", Style::default().fg(t.text_muted()).add_modifier(Modifier::BOLD)),
+                    Span::styled(&item.project, Style::default().fg(t.text_primary())),
+                    Span::styled("   Tags: ", Style::default().fg(t.text_muted()).add_modifier(Modifier::BOLD)),
+                    Span::styled(&item.tags, Style::default().fg(t.accent())),
+                    Span::styled(format!("   Updated: {}", item.updated_at), Style::default().fg(t.text_muted())),
+                ]),
+                Line::from(""),
+            ];
+
+            for line in formatted_lines.iter().skip(scroll_offset).take(visible_lines) {
+                preview_lines.push(line.clone());
+            }
+
+            let p = Paragraph::new(preview_lines).block(block).wrap(Wrap { trim: false });
+            frame.render_widget(p, area);
+
+            if total_lines > visible_lines {
+                let mut scrollbar_state = ScrollbarState::new(max_scroll).position(scroll_offset);
+                let scrollbar = Scrollbar::default()
+                    .orientation(ScrollbarOrientation::VerticalRight)
+                    .begin_symbol(Some("▲"))
+                    .end_symbol(Some("▼"))
+                    .track_symbol(Some("│"))
+                    .thumb_symbol("█");
+                frame.render_stateful_widget(scrollbar, area, &mut scrollbar_state);
+            }
+        } else {
+            let empty_preview = Paragraph::new(vec![
+                Line::from(""),
+                Line::from(Span::styled("No living knowledge item selected.", Style::default().fg(t.text_muted()))),
+            ])
+            .block(block);
+            frame.render_widget(empty_preview, area);
         }
     }
 

@@ -12,11 +12,13 @@ pub mod query;
 pub mod risk_engine;
 pub mod risks;
 pub mod scanner;
+pub mod collab_importer;
 pub mod session_manager;
 pub mod status_engine;
 pub mod model_router;
 
 pub use archeology::{Archeology, ArcheologyCandidate, ArcheologyReport, IncidentCommit};
+pub use collab_importer::{CollabImportReport, CollabImporter};
 pub use decisions::{DecisionDraft, DecisionReview, DecisionWorkflow};
 pub use directives::{DirectiveAuditReport, DirectiveWorkflow};
 pub use git::{FileHygieneReport, Git};
